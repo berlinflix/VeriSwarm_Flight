@@ -252,6 +252,16 @@ negotiate this — a demo that works and is rehearsed beats a better demo that i
 
 ## Member plans
 
+| | Who | Platform | Owns |
+|---|---|---|---|
+| **M1** | **Suyash** | WSL + Jetson | Protocol integration, live mission loop, event bus, attack surface, OP-TEE, cross-machine networking |
+| **M2** | **Abhijan** | **Mac** | Console (Streamlit) + the Python half of the simulator, driven over the LAN |
+| **M3** | **Pratik** | **Windows** | Unreal/AirSim install, scene, obstacle, b1 patch plane → then demo operations |
+| **M4** | *[TBD]* | any | Problem statement, deck, pitch, judge Q&A, run-of-show |
+
+The Windows/Mac split is not preference, it is a constraint: **only one machine runs
+Unreal and it has to be Windows.** Everything else is platform-agnostic Python.
+
 ### M1 — Suyash: Core, Integration, Hardware
 Owns everything on the critical path. Assume the others' output may arrive late or broken.
 
@@ -293,53 +303,79 @@ order, ports, IPs, and what to do when each piece fails. Support rehearsals.
 
 ---
 
-### M2 — Console (Streamlit, not React)
-Beginner-appropriate: Streamlit is Python, no JS, and readable output in days. Ugly is
-fine; **legible from three metres is not optional.**
+### M2 — Abhijan (Mac): Console + the Python half of the simulator
 
-**Week 1** — Install Streamlit. Work through the tutorial. Build a static layout with
-fake numbers: header strip (swarm size, round #, verdict banner), left panel (node
-cards), centre (live receipt stream), right (vote matrix). Point it at
-`tools/mock_events.py`. *Deliverable: layout renders and refreshes at 2 Hz.*
+Owns everything pure-Python and platform-agnostic. **Does not install Unreal.** AirSim's
+macOS support was never first-class, Microsoft archived it in 2022, and on Apple Silicon
+it becomes a multi-day plugin-compilation problem with no community trail to follow.
 
-**Week 2** — Make every panel live from the event stream: receipt rows appear as they
-arrive; vote matrix cells turn green/red on ACK/DISPUTE; **verdict banner is huge** —
-ACCEPTED green, REJECTED red, NO_QUORUM amber; reputation bars per node. *Deliverable:
-full attack sequence legible end to end from mock events.*
+He doesn't need it: the `airsim` pip package is **just an RPC client**, pure Python, works
+fine on macOS. He drives Pratik's sim **over the LAN on port 41451** — which is exactly how
+AirSim was designed to be used.
 
-**Week 3** — Add swarm map (2D top-down from `pose` events, with co-visibility links
-drawn between overlapping nodes), latency ticker, isolation banner. Then the **3-metre
-test**: display on a TV or projector, stand 3 m back, have someone who has never seen it
-narrate what's happening. Fix whatever they can't read. Fonts ≥ 24 pt.
+#### Console — the main build (Streamlit, not React)
+Python, no JS, readable output in days. Ugly is fine; **legible from three metres is not.**
 
-**Week 4** — Add a live frame panel (from `frame` events) so judges see what each drone
-sees. Integrate against M1's real backend. **Freeze.**
+**Week 1** — Install Streamlit, work the tutorial. Static layout with fake numbers: header
+strip (swarm size, round #, verdict banner), left panel (node cards), centre (live receipt
+stream), right (vote matrix). Point it at `tools/mock_events.py`. *Deliverable: layout
+renders and refreshes at 2 Hz.*
 
-**Weeks 5–6** — Colour/contrast polish only. No new panels.
+**Week 2** — Every panel live from the event stream: receipt rows appear as they arrive;
+vote matrix cells turn green/red on ACK/DISPUTE; **verdict banner huge** — ACCEPTED green,
+REJECTED red, NO_QUORUM amber; reputation bars per node. **Plus the seven attack buttons**,
+which write `attack.json` for the nodes to pick up. *Deliverable: full attack sequence
+legible end to end from mock events.*
 
-*Fallback if M2 stalls:* M1 ships a terminal console using `rich` — coloured tables in a
-terminal, 2 hours of work, and honestly still readable. Decide at end of Week 2.
+**Week 3** — Swarm map (2D top-down from `pose` events, co-visibility links drawn between
+overlapping nodes), latency ticker, isolation banner. Then the **3-metre test**: put it on
+a TV, stand 3 m back, have someone who has never seen it narrate what's happening. Fix
+whatever they can't read. Fonts ≥ 24 pt.
+
+**Week 4** — Live frame panel (from `frame` events) so judges see what each drone sees.
+Integrate against M1's real backend. **Freeze.**
+
+**Weeks 5–6** — Colour and contrast polish only. No new panels.
+
+#### Simulator Python side — secondary, ~200 lines total, Weeks 2–4
+Written against Pratik's sim over the LAN, or against recorded frames when it's down.
+
+- **Waypoint flight** — `moveToPositionAsync()`. Fifteen minutes of API calls. Not a research problem, and nobody is judging your navigation.
+- **Frame capture** — `simGetImages()` per vehicle at 2 Hz, 640×360, written to `sim/demo_frames/<node>/`.
+- **Attack trigger** — `simSetObjectPose()` raising the b1 patch plane into the scene.
+- **Week 4** — the `get_frame(vehicle)` / `set_velocity(vehicle, action)` wrapper M1 consumes.
+
+> **Verify in Week 1, not Week 3:** that AirSim's RPC accepts a connection from another
+> machine on the switch. Depending on the build it may bind to localhost only. Ten minutes
+> now versus a blocked week later.
+
+*Fallback if the console stalls:* M1 ships a `rich` terminal console — coloured tables, ~2
+hours, honestly still readable. Decide at the end of Week 2.
 
 ---
 
-### M3 — Simulator and Flight
-Highest-uncertainty role, so it is deliberately **off the critical path**: M3's output is
-recorded frames, which M1 consumes through `FileSource`. If AirSim never works, M1 loses
-nothing.
+### M3 — Pratik (Windows): Unreal, the scene, and demo operations
+
+Owns the **only machine that runs Unreal** — it must be Windows, and it should be the
+strongest GPU on the team. Highest-uncertainty role, so it is deliberately **off the
+critical path**: his output is a folder of recorded frames that M1 replays through
+`FileSource`. If AirSim never works, nobody else is blocked.
+
+**Check two prerequisites before anything else:**
+- **Visual Studio 2022, C++ desktop workload** (~10 GB) — required to build the AirSim plugin on Windows. Not optional.
+- **100 GB+ free disk** — Epic Launcher + UE5 + a built plugin. Finding this out mid-install turns a 2-day timebox into a week.
 
 **Week 1** — **Timeboxed 2-day AirSim/Colosseum spike.** Install Unreal + AirSim, run the
-Blocks environment, get *one* frame out via `simGetImage()` in Python. If not working by
-end of Day 2, **stop and switch to Gazebo** — it already flies 3 drones with measured
+Blocks environment, get *one* frame out via `simGetImage()`. If it isn't working by the end
+of Day 2, **stop and switch to Gazebo** — it already flies 3 drones with measured
 co-visibility (`sim/multi_drone.py`). Report the decision at the Week-1 sync; do not
 silently keep debugging.
 
-**Week 2** — Waypoint A→B with `moveToPositionAsync()`. Place **one large, close,
-frame-dominating obstacle** wearing a COCO-class photo texture (bus/truck — the trick
-that already worked in Gazebo; YOLOv8n does not detect a gray Unreal cube). Then build
-**b1**: the parallax occluder plane, parked below the ground plane, raised by
-`simSetObjectPose()`. Capture frames at 2 Hz, 640×360, into `sim/demo_frames/<node>/`.
-*Deliverable: a folder of frames M1 can replay — the integration point is a folder, not
-an API.*
+**Week 2** — Build the scene: **one large, close, frame-dominating obstacle** wearing a
+COCO-class photo texture (bus or truck — the trick that already worked in Gazebo; YOLOv8n
+does not detect a gray Unreal cube). Then **b1**: the parallax occluder plane, parked below
+the ground plane, ready to be raised. **Hand Abhijan a running sim to connect to** — that
+handoff is the week's real deliverable, alongside a folder of captured frames for M1.
 
 > **The obstacle must dominate the frame.** In the Gazebo run the patch attack silently
 > failed on the ring-of-cubes scene: small distant obstacles → weak avoidance action →
@@ -352,21 +388,25 @@ view**. Peers at the measured 3 m and 6 m offsets. Verify `o(i,j)` actually clea
 assumes nadir, and if the gate silently fails the semantic layer switches off and the
 patch demo dies quietly. Run in SimpleFlight mode — no PX4.
 
-**Week 4** — Expose `get_frame(vehicle)` / `set_velocity(vehicle, action)` as a thin
-Python wrapper for M1. Attempt **b2** (trained patch textured onto the b1 plane). Then
-**record the backup video**: full crash-vs-caught run, screen-captured, edited, 90
-seconds. *This video is a deliverable, not a nice-to-have.* If b2 misbehaves, b1 ships —
-it is a complete world-space attack on its own.
+**Week 4** — Attempt **b2** (trained patch textured onto the b1 plane). Then **record the
+backup video**: full crash-vs-caught run, screen-captured, edited, 90 seconds. *This video
+is a deliverable, not a nice-to-have.* If b2 misbehaves, b1 ships — it is a complete
+world-space attack on its own.
 
-**Weeks 5–6** — Re-record the backup after freeze. Test on the actual venue machine.
+**Weeks 5–6 — his Unreal load drops here, so he takes demo operations.** Re-record the
+backup after freeze, test on the actual venue machine, **drive the demo while M4 narrates**,
+and own cable setup and teardown against `RUNBOOK.md`.
 
-*Hard rule:* graphics settings low, 640×360, 2 Hz. Nobody scores you on frame rate.
+*Hard rule:* graphics settings low, 640×360, 2 Hz. Nobody scores you on frame rate, and
+slower is more legible to a judge anyway.
 
 ---
 
-### M4 — Problem Statement, Deck, Demo Operations
-Not a lesser role. At internal rounds the deck and the narration decide as much as the
-build, and this person runs the room on demo day.
+### M4 — [NAME TBD]: Problem Statement, Deck, Pitch
+
+**Assign this person now — this is the last unfilled seat.** Not a lesser role: at internal
+rounds the deck and the narration decide as much as the build, and with Suyash driving the
+system and Pratik driving the sim, someone else has to own the room and do the talking.
 
 **Week 1**
 1. Pull all SIH problem statements; build a scoring sheet: *does it name swarms/autonomy?
