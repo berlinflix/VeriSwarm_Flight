@@ -1,0 +1,2 @@
+canonical_bytes,sig_bytes,wire_bytes,serialize_us_mean,serialize_us_std,n
+282,64,437,35.24,2.382,1000

@@ -1,0 +1,16 @@
+swarm_size,scenario,expected,observed,match
+3,honest,ACCEPTED,ACCEPTED,True
+3,model_swap,REJECTED,REJECTED,True
+3,adversarial_patch,REJECTED,REJECTED,True
+5,honest,ACCEPTED,ACCEPTED,True
+5,model_swap,REJECTED,REJECTED,True
+5,adversarial_patch,REJECTED,REJECTED,True
+7,honest,ACCEPTED,ACCEPTED,True
+7,model_swap,REJECTED,REJECTED,True
+7,adversarial_patch,REJECTED,REJECTED,True
+9,honest,ACCEPTED,ACCEPTED,True
+9,model_swap,REJECTED,REJECTED,True
+9,adversarial_patch,REJECTED,REJECTED,True
+11,honest,ACCEPTED,ACCEPTED,True
+11,model_swap,REJECTED,REJECTED,True
+11,adversarial_patch,REJECTED,REJECTED,True

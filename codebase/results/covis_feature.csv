@@ -1,0 +1,13 @@
+section,left,right,expect_covisible,mean_inliers,stdev_inliers,good_matches
+metric,sim_a,sim_a  (identical),True,1194.00,0.00,1194
+metric,sim_a,"sim_b  (same scene, other drone)",True,597.00,0.00,610
+metric,sim_a,warp 12deg (peer at 3 m),True,559.00,0.00,567
+metric,sim_a,warp 23deg (peer at 6 m),True,228.00,0.00,241
+metric,sim_a,bus.jpg (different scene),False,4.00,0.00,9
+metric,sim_a,zidane.jpg (different scene),False,0.00,0.00,1
+metric,sim_b,bus.jpg (different scene),False,5.00,0.00,8
+metric,bus.jpg,zidane.jpg (different scenes),False,4.00,0.00,7
+scenario,"A honest pose, geometric gate",,,DISPUTE,semantic_disagreement,DISPUTE
+scenario,"B spoofed pose, no fallback",,,ACK,ok_no_covisibility,ACK
+scenario,"C spoofed pose, feature fallback",,,DISPUTE,semantic_disagreement,DISPUTE
+scenario,"D non-covisible frames, honest abstain",,,ACK,ok_no_covisibility,ACK

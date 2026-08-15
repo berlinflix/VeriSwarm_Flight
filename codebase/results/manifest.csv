@@ -1,0 +1,3 @@
+run,feeds,csv,status,n_rows
+R7,Table 4.8,isolation.csv,filled,1
+R7,Section 3.6 (CTI-SF mechanism),isolation_event.csv,filled,1

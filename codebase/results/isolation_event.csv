@@ -1,0 +1,2 @@
+W,alpha,isolated_drone,round_isolated,rho_at_isolation,n_active_before,n_active_after,k_before,k_after,ack_thresh_before,ack_thresh_after,rej_thresh_before,rej_thresh_after,event_logged,event_announced,false_isolations
+10,0.5,alpha,6,0.6,5,4,4,3,3,3,2,2,1,1,0

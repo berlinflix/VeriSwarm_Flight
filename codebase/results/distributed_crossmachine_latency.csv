@@ -1,0 +1,6 @@
+swarm_size,voting_peers,consensus_ms_mean,consensus_ms_std,total_ms_mean,sign_ms,rounds,transport
+3,2,6.158,1.044,6.298,0.123,30,gRPC/LAN (x86-64 host <-> Jetson)
+5,4,8.243,1.251,8.349,0.087,30,gRPC/LAN (x86-64 host <-> Jetson)
+7,6,12.71,2.142,12.956,0.255,30,gRPC/LAN (x86-64 host <-> Jetson)
+9,8,13.731,1.434,13.908,0.21,30,gRPC/LAN (x86-64 host <-> Jetson)
+11,10,19.339,3.61,19.629,0.114,30,gRPC/LAN (x86-64 host <-> Jetson)

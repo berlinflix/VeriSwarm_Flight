@@ -1,0 +1,3 @@
+condition,n_seeds,trials_per_seed,fp_rate_mean,fp_rate_ci95,fp_rate_min,fp_rate_max
+no_covisibility_gate,20,200,0.955,0.0056,0.925,0.975
+with_covisibility_gate,20,200,0.0,0.0,0.0,0.0

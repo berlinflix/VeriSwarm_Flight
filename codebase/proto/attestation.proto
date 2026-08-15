@@ -1,0 +1,101 @@
+// VeriSwarm gRPC service definitions.
+//
+// Drones exchange SignedReceipt and SignedVote messages over this
+// service. The wire format mirrors the canonical JSON encoding used
+// for signing, so signatures verify regardless of whether a peer was
+// reached via JSON-over-anything or this protobuf service.
+//
+// All `_hex` fields are lowercase hexadecimal without 0x prefix.
+
+syntax = "proto3";
+
+package veriswarm.v1;
+
+
+// ---------------------------------------------------------------------------
+// Receipt and vote payloads
+// ---------------------------------------------------------------------------
+
+
+message Receipt {
+  string drone_id      = 1;
+  int64  timestamp_ns  = 2;
+  string input_hash    = 3;   // hex SHA-256 of canonical input bytes
+  string model_hash    = 4;   // hex SHA-256 of model weight bytes
+  repeated double output = 5; // action vector
+  string nonce         = 6;   // hex 16 random bytes
+}
+
+
+message SignedReceipt {
+  Receipt receipt       = 1;
+  string  signature_hex = 2;  // Ed25519 signature over canonical(receipt)
+}
+
+
+enum Vote {
+  VOTE_UNSPECIFIED = 0;
+  ACK              = 1;
+  DISPUTE          = 2;
+}
+
+
+message PeerVote {
+  string voter_id              = 1;
+  string target_receipt_hash   = 2;   // hex SHA-256 of canonical(receipt)
+  Vote   decision              = 3;
+  string reason                = 4;   // short machine-readable label
+  int64  timestamp_ns          = 5;
+}
+
+
+message SignedVote {
+  PeerVote vote          = 1;
+  string   signature_hex = 2;   // Ed25519 signature over canonical(vote)
+}
+
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+
+// AttestationService runs on each drone. Peers push their SignedReceipt
+// objects to it; the service replies with the peer's SignedVote.
+//
+// One-receipt-one-vote semantics: calling SubmitReceipt twice for the
+// same receipt is idempotent — the same SignedVote is returned. The
+// caller may also stream votes to peers as they accumulate, separately
+// from this synchronous RPC, to handle network drops.
+
+service AttestationService {
+
+  // Synchronous: peer submits a SignedReceipt and gets this drone's
+  // signed vote on it back. Used in the steady-state protocol.
+  rpc SubmitReceipt(SignedReceipt) returns (SignedVote);
+
+  // Asynchronous push: a peer broadcasts a SignedVote it produced for
+  // some receipt (so the receiving drone can fold it into its own
+  // tally). The reply is a simple ACK message — see PushVoteAck.
+  rpc PushVote(SignedVote) returns (PushVoteAck);
+
+  // Health probe used by the supervisor / sim launcher.
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+
+message PushVoteAck {
+  bool   accepted = 1;
+  string reason   = 2;   // "ok" | "unknown_voter" | "bad_signature" | ...
+}
+
+
+message PingRequest {
+  string from_drone_id = 1;
+}
+
+
+message PingResponse {
+  string this_drone_id = 1;
+  int64  timestamp_ns  = 2;
+}

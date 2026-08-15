@@ -1,0 +1,7 @@
+scene,scenario,outcome,expected,match,action_l2,reason,orig_action,peer_action
+sim_a.jpg,honest,ACCEPTED,ACCEPTED,True,0.0,ok,"(0.811, 0.028, 0.044)","(0.811, 0.028, 0.044)"
+sim_a.jpg,model_swap,REJECTED,REJECTED,True,0.0397,model_hash_not_approved:2790b51f22171fb8,"(0.847, 0.03, 0.027)","(0.811, 0.028, 0.044)"
+sim_a.jpg,adversarial_patch,ACCEPTED,REJECTED,False,0.0976,ok,"(0.892, -0.012, 0.006)","(0.811, 0.028, 0.044)"
+sim_b.jpg,honest,ACCEPTED,ACCEPTED,True,0.0,ok,"(0.794, 0.065, 0.053)","(0.794, 0.065, 0.053)"
+sim_b.jpg,model_swap,REJECTED,REJECTED,True,0.0257,model_hash_not_approved:2790b51f22171fb8,"(0.795, 0.042, 0.041)","(0.794, 0.065, 0.053)"
+sim_b.jpg,adversarial_patch,ACCEPTED,REJECTED,False,0.1341,ok,"(0.892, -0.013, 0.006)","(0.794, 0.065, 0.053)"

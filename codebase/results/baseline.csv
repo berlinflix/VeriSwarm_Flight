@@ -1,0 +1,5 @@
+metric,majority_vote,veriswarm
+model_swap_detection,0.0,1.0
+adversarial_patch_detection,1.0,1.0
+vote_forgery_resistance,0.0,1.0
+colluding_voter_resistance,0.0,1.0

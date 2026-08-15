@@ -1,0 +1,4 @@
+drone_i,drone_j,separation_m,alt_i_m,alt_j_m,covisibility_iou,co_visible
+iris_1,iris_2,3.01,14.02,13.97,0.643,True
+iris_1,iris_3,5.99,14.02,14.07,0.3995,True
+iris_2,iris_3,2.98,13.97,14.07,0.645,True

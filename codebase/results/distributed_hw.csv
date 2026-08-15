@@ -1,0 +1,2 @@
+swarm_size,voting_peers,alpha_backend,hw_sign_ms_mean,hw_sign_ms_std,consensus_ms_mean,consensus_ms_std,total_ms_mean,rounds,transport
+3,2,op-tee,33.965,1.677,6.176,0.767,40.141,20,gRPC/localhost

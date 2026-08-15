@@ -1,0 +1,13 @@
+material VsObstacle/Image
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture vs_obstacle.jpg
+      }
+    }
+  }
+}

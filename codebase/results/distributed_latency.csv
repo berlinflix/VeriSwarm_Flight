@@ -1,0 +1,6 @@
+swarm_size,voting_peers,consensus_ms_mean,consensus_ms_std,total_ms_mean,sign_ms,rounds,transport
+3,2,3.204,0.505,3.343,0.112,30,gRPC/localhost
+5,4,3.731,1.558,3.868,0.09,30,gRPC/localhost
+7,6,5.343,1.652,5.487,0.149,30,gRPC/localhost
+9,8,6.766,2.342,6.902,0.096,30,gRPC/localhost
+11,10,7.006,2.407,7.139,0.092,30,gRPC/localhost

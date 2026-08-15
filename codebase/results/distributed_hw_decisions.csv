@@ -1,0 +1,4 @@
+scenario,observed,expected,match
+honest,ACCEPTED,ACCEPTED,True
+model_swap,REJECTED,REJECTED,True
+adversarial_patch,REJECTED,REJECTED,True

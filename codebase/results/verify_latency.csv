@@ -1,0 +1,5 @@
+check,latency_ms_mean,latency_ms_std,n
+signature,0.129714,0.00176,2000
+provenance,0.000369,4.5e-05,2000
+semantic_l2,0.004021,0.081196,2000
+covisibility,0.030953,0.001591,2000

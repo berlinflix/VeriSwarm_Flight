@@ -1,0 +1,5 @@
+scenario,N,outcome,expected,matches_table_4_4,detect_ms_mean,ack,dispute,missing
+honest,3,ACCEPTED,ACCEPTED,True,0.3477,2,0,0
+model_swap,3,REJECTED,REJECTED,True,0.3479,0,2,0
+adversarial_patch,3,REJECTED,REJECTED,True,0.3486,0,2,0
+message_drop,5,NO_QUORUM,NO_QUORUM,True,0.2028,1,0,3

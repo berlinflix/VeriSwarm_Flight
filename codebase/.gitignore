@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Data, models, simulator output (kept out of git)
+data/
+*.pt
+*.onnx
+sim/logs/
+sim/annotated/
+eval/results/
+
+# Keys — NEVER commit
+*.key
+*.pem
+keys/
+secrets/
+
+# Notebooks scratch
+.ipynb_checkpoints/
+*.ipynb

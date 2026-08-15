@@ -1,0 +1,17 @@
+config,scenario,detection_rate
+crypto_only,honest,0.0
+provenance,honest,0.0
+semantic,honest,0.0
+full,honest,0.0
+crypto_only,model_swap,0.0
+provenance,model_swap,1.0
+semantic,model_swap,1.0
+full,model_swap,1.0
+crypto_only,adversarial_patch,0.0
+provenance,adversarial_patch,0.0
+semantic,adversarial_patch,1.0
+full,adversarial_patch,1.0
+crypto_only,colluding_voter,0.0
+provenance,colluding_voter,0.0
+semantic,colluding_voter,0.0
+full,colluding_voter,1.0

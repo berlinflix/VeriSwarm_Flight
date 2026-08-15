@@ -1,0 +1,3 @@
+condition,honest_receipts,false_rej,fp_rate
+no_covisibility_gate,200,191,0.955
+with_covisibility_gate,200,0,0.0

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# SECRETS — generated manifests contain Ed25519 private key seeds.
+# Never commit these. Regenerate with node/common.py:generate_manifest().
+manifest*.json
+nodes/
+*.key
+*.pem
+
+# Runtime artifacts
+results/live_events.jsonl
+*.log
+
+# Captured frames — these grow fast. Keep them local.
+sim/demo_frames/
+sim/captured/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
