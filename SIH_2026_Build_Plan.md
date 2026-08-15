@@ -1,5 +1,9 @@
 # SIH 2026 — VeriSwarm Live Demo: 4-Member Build Plan
 
+> ### ⚠️ Read [`urgent_new_changes.md`](urgent_new_changes.md) before this file.
+> It carries newer decisions and **overrides anything here that contradicts it.** This plan
+> is not rewritten on every change — changes land in that file first and are folded in later.
+
 ## Context
 
 Smart India Hackathon internal selection at VIT Chennai: ~1000 applicants, few teams
