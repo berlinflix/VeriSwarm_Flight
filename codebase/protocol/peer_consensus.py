@@ -157,6 +157,34 @@ class SignedVote:
         )
 
 
+# ---------------------------------------------------------------------------
+# Vote reason taxonomy
+# ---------------------------------------------------------------------------
+#
+# The reason is part of the *signed* vote, so it is attributable: a peer cannot
+# later deny which evidence it voted on. The four ACK reasons are not
+# interchangeable, and the distinction is load-bearing:
+#
+#   REASON_OK               the peer co-observed the scene, compared its own
+#                           action against the claim, and they agreed. This is
+#                           the ONLY reason that constitutes semantic
+#                           verification.
+#   REASON_NO_COVISIBILITY  the peer abstained on the semantic clause because it
+#                           did not share the originator's view (neither the
+#                           geometric footprint test nor the image-feature
+#                           fallback confirmed a co-view).
+#   REASON_NO_OBSERVATION   the peer had no local perception to compare against
+#                           at all.
+#
+# The last two are ACKs on the cryptographic and provenance evidence *only*.
+# Counting them as verification is exactly the mistake that lets an unverified
+# receipt reach ACCEPTED — see `ConsensusResult.semantic_ack_count`.
+REASON_OK = "ok"
+REASON_NO_COVISIBILITY = "ok_no_covisibility"
+REASON_NO_OBSERVATION = "ok_no_observation"
+REASON_SEMANTIC_DISAGREEMENT = "semantic_disagreement"
+
+
 @dataclass(frozen=True)
 class ConsensusResult:
     """Outcome of tallying a set of SignedVotes."""
@@ -170,6 +198,14 @@ class ConsensusResult:
     reason: str
     ack_voter_ids: frozenset = frozenset()
     dispute_voter_ids: frozenset = frozenset()
+    #: ACKs that actually exercised the semantic layer (reason == REASON_OK).
+    #: An ACCEPTED result with `semantic_ack_count == 0` is cryptographically
+    #: sound but semantically *unverified*: every peer abstained because nobody
+    #: shared the originator's view. The tally deliberately does not suppress
+    #: such a result — the votes are legitimate — but the caller must not treat
+    #: it as though the scene was cross-checked. `fallback_action` degrades it.
+    semantic_ack_count: int = 0
+    semantic_voter_ids: frozenset = frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +246,44 @@ def receipt_digest(receipt: Receipt) -> str:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class CoVisDiagnostic:
+    """
+    Why this peer did or did not apply the semantic clause on one receipt.
+
+    This is **local telemetry, not an attestable claim**, and it is deliberately
+    kept out of the signed vote. The measured overlap is computed from poses the
+    peer itself chose to believe; a node could report any value it liked, so
+    signing it would add a lie surface without adding evidence. What *is* signed
+    is the conclusion (`REASON_NO_COVISIBILITY`), which is all a tally needs.
+
+    Its purpose is operational: a co-visibility gate that silently fails open is
+    the single most dangerous failure mode in this protocol, because every peer
+    ACKs and the swarm looks healthy while the semantic layer is switched off.
+    Surfacing `iou` and `orb_inliers` turns that from an invisible failure into a
+    readable one — "abstained, o=0.03 < 0.10" rather than an unexplained green.
+    """
+
+    covisible: bool
+    method: str                     # "geometric" | "features" | "none"
+    iou: Optional[float]            # measured footprint overlap, None if no poses
+    orb_inliers: Optional[int]      # RANSAC inliers, None if the fallback did not run
+    o_min: float
+    m_min: int
+
+    def describe(self) -> str:
+        """One-line human summary, for logs and the live console."""
+        if self.method == "geometric":
+            return f"co-visible (geometric): o={self.iou:.3f} >= {self.o_min}"
+        if self.method == "features":
+            verdict = "co-visible" if self.covisible else "NOT co-visible"
+            seen = f"o={self.iou:.3f}" if self.iou is not None else "no poses"
+            return (f"{verdict} (image fallback): {seen} < {self.o_min}, "
+                    f"orb_inliers={self.orb_inliers} vs m_min={self.m_min}")
+        seen = f"o={self.iou:.3f} < {self.o_min}" if self.iou is not None else "no poses"
+        return f"NOT co-visible: {seen}, no frames for the image fallback"
+
+
 class PeerVerifier:
     """
     Runs cryptographic + semantic verification on a peer's SignedReceipt
@@ -219,6 +293,11 @@ class PeerVerifier:
     Semantic verification (`outputs_agree`) is applied when the local
     drone has its own observation for the *same* logical timestep
     (i.e. overlapping field of view).
+
+    Pass `on_covis` to receive a :class:`CoVisDiagnostic` for every receipt this
+    peer votes on; the most recent one is also kept on :attr:`last_covis`. Both
+    exist so an operator can *see* the gate engaging, since a gate that abstains
+    silently is indistinguishable from a swarm that agrees.
     """
 
     def __init__(
@@ -231,6 +310,7 @@ class PeerVerifier:
         hfov: float = DEFAULT_HFOV,
         vfov: float = DEFAULT_VFOV,
         m_min: int = 15,
+        on_covis: Optional[Callable[["CoVisDiagnostic"], None]] = None,
     ):
         self.my_drone_id = my_drone_id
         self._signer = signer
@@ -240,6 +320,9 @@ class PeerVerifier:
         self._hfov = hfov
         self._vfov = vfov
         self._m_min = m_min
+        self._on_covis = on_covis
+        #: Diagnostic from the most recent vote that reached the co-visibility gate.
+        self.last_covis: Optional[CoVisDiagnostic] = None
 
     def _co_visible(
         self,
@@ -247,9 +330,10 @@ class PeerVerifier:
         originator_pose: Optional[Pose],
         my_frame,
         originator_frame,
-    ) -> bool:
+    ) -> CoVisDiagnostic:
         """
-        Decide whether this peer co-observed the originator's scene.
+        Decide whether this peer co-observed the originator's scene, and report
+        *how* it decided.
 
         Primary test is geometric: footprint overlap o(i, j) >= o_min from the
         two poses. When that test fails *and* both camera frames are available,
@@ -260,18 +344,31 @@ class PeerVerifier:
         genuine co-view from the geometric test, but it cannot make two frames
         of the same scene stop matching.
         """
+        iou: Optional[float] = None
         if my_pose is not None and originator_pose is not None:
-            overlap = covisibility(my_pose, originator_pose, self._hfov, self._vfov)
-            if overlap >= self._o_min:
-                return True
+            iou = covisibility(my_pose, originator_pose, self._hfov, self._vfov)
+            if iou >= self._o_min:
+                return CoVisDiagnostic(
+                    True, "geometric", iou, None, self._o_min, self._m_min
+                )
 
         if my_frame is not None and originator_frame is not None:
             # Lazy import so pure-consensus contexts never need OpenCV.
-            from .covis_features import covisible_by_features
+            from .covis_features import feature_match
 
-            return covisible_by_features(my_frame, originator_frame, m_min=self._m_min)
+            match = feature_match(my_frame, originator_frame)
+            return CoVisDiagnostic(
+                match.inliers >= self._m_min, "features", iou,
+                match.inliers, self._o_min, self._m_min,
+            )
 
-        return False
+        return CoVisDiagnostic(False, "none", iou, None, self._o_min, self._m_min)
+
+    def _record_covis(self, diag: CoVisDiagnostic) -> CoVisDiagnostic:
+        self.last_covis = diag
+        if self._on_covis is not None:
+            self._on_covis(diag)
+        return diag
 
     def vote_on(
         self,
@@ -310,22 +407,33 @@ class PeerVerifier:
         # gate on co-visibility; without any geometry, fall back to the legacy
         # behaviour of applying the check whenever a local observation exists.
         semantic_applicable = my_observation is not None
+        if not semantic_applicable:
+            # No local perception at all. This is an ACK on crypto + provenance
+            # only, and it is reported as such so a tally can tell it apart from
+            # a genuine cross-check.
+            return self._build_signed_vote(
+                signed_receipt.receipt,
+                decision=Vote.ACK,
+                reason=REASON_NO_OBSERVATION,
+            )
+
         geometry_supplied = (my_pose is not None and originator_pose is not None) or (
             my_frame is not None and originator_frame is not None
         )
-        if semantic_applicable and geometry_supplied:
-            if not self._co_visible(
-                my_pose, originator_pose, my_frame, originator_frame
-            ):
+        if geometry_supplied:
+            diag = self._record_covis(
+                self._co_visible(my_pose, originator_pose, my_frame, originator_frame)
+            )
+            if not diag.covisible:
                 # Not co-visible: abstain on the semantic clause and vote on the
                 # cryptographic and provenance evidence alone.
                 return self._build_signed_vote(
                     signed_receipt.receipt,
                     decision=Vote.ACK,
-                    reason="ok_no_covisibility",
+                    reason=REASON_NO_COVISIBILITY,
                 )
 
-        if semantic_applicable and not outputs_agree(
+        if not outputs_agree(
             signed_receipt.receipt.output,
             my_observation,
             threshold=self._agreement_threshold,
@@ -333,13 +441,13 @@ class PeerVerifier:
             return self._build_signed_vote(
                 signed_receipt.receipt,
                 decision=Vote.DISPUTE,
-                reason="semantic_disagreement",
+                reason=REASON_SEMANTIC_DISAGREEMENT,
             )
 
         return self._build_signed_vote(
             signed_receipt.receipt,
             decision=Vote.ACK,
-            reason="ok",
+            reason=REASON_OK,
         )
 
     def _build_signed_vote(
@@ -524,6 +632,7 @@ class ConsensusEngine:
 
         ack_voters: set[str] = set()
         dispute_voters: set[str] = set()
+        semantic_voters: set[str] = set()
 
         for sv in signed_votes:
             # Wrong target — vote isn't for this receipt.
@@ -544,6 +653,12 @@ class ConsensusEngine:
 
             if sv.vote.decision is Vote.ACK:
                 ack_voters.add(sv.vote.voter_id)
+                # Only an ACK carrying REASON_OK actually exercised the semantic
+                # layer. `ok_no_covisibility` and `ok_no_observation` are ACKs on
+                # crypto + provenance alone and must not be mistaken for a
+                # cross-check of what the originator claims to have seen.
+                if sv.vote.reason == REASON_OK:
+                    semantic_voters.add(sv.vote.voter_id)
             elif sv.vote.decision is Vote.DISPUTE:
                 dispute_voters.add(sv.vote.voter_id)
 
@@ -588,6 +703,8 @@ class ConsensusEngine:
             dispute_threshold=self.dispute_threshold,
             ack_voter_ids=frozenset(ack_voters),
             dispute_voter_ids=frozenset(dispute_voters),
+            semantic_ack_count=len(semantic_voters),
+            semantic_voter_ids=frozenset(semantic_voters),
         )
 
         if ack_ok:
@@ -623,19 +740,45 @@ class SafeAction(enum.Enum):
     """The fail-safe action Module 4 takes on a consensus outcome."""
 
     EXECUTE = "EXECUTE"              # ACCEPTED: run the action, log the receipt
+    EXECUTE_DEGRADED = "EXECUTE_DEGRADED"  # ACCEPTED but semantically unverified
     SAFE_FALLBACK = "SAFE_FALLBACK"  # REJECTED: hover / return-to-launch
     DEFER = "DEFER"                  # NO_QUORUM: re-request votes, cautious hold
 
 
-def fallback_action(outcome: ConsensusOutcome) -> SafeAction:
+def fallback_action(
+    outcome: ConsensusOutcome,
+    semantic_ack_count: Optional[int] = None,
+    min_semantic_acks: int = 1,
+) -> SafeAction:
     """
     Map a consensus outcome to its fail-safe action (Algorithm 4, lines 4-7).
 
     An ACCEPTED action is executed; a REJECTED one triggers a safe fallback
     (hover or return-to-launch); a NO_QUORUM result is deferred until the
     missing votes arrive or a cautious fallback fires on timeout.
+
+    Semantically-unverified accepts
+    ------------------------------
+    A receipt can reach ACCEPTED on cryptographic and provenance evidence alone,
+    with *every* peer having abstained on the semantic clause because none of
+    them shared the originator's view. Such a result says "this drone is who it
+    claims to be and ran an approved model" — it says nothing whatsoever about
+    whether what it reported seeing is real. An adversarial patch is invisible
+    to both of the layers that did vote.
+
+    Passing `semantic_ack_count` (from :class:`ConsensusResult`) makes that case
+    explicit: fewer than `min_semantic_acks` peers cross-checked the scene, so
+    the accept degrades to :attr:`SafeAction.EXECUTE_DEGRADED`. The action is
+    still executed — refusing to move whenever a drone flies alone would ground
+    the swarm — but the caller is told to execute it under a reduced-authority
+    envelope (lower speed, larger obstacle margin) rather than at full trust.
+
+    Omitting `semantic_ack_count` keeps the original three-way mapping, which is
+    what the pure-consensus tests and the eval harness use.
     """
     if outcome is ConsensusOutcome.ACCEPTED:
+        if semantic_ack_count is not None and semantic_ack_count < min_semantic_acks:
+            return SafeAction.EXECUTE_DEGRADED
         return SafeAction.EXECUTE
     if outcome is ConsensusOutcome.REJECTED:
         return SafeAction.SAFE_FALLBACK
