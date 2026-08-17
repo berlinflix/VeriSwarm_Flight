@@ -18,9 +18,9 @@ If `urgent_new_changes.md` and the build plan disagree, **the urgent file wins.*
 | | Who | Platform | Owns |
 |---|---|---|---|
 | M1 | Suyash | WSL + Jetson | Protocol integration, mission loop, event bus, attack surface, OP-TEE |
-| M2 | Abhijan | Mac | Console (Streamlit) + the Python half of the simulator |
-| M3 | Pratik | Windows | Unreal/AirSim, scene, patch plane → then demo operations |
-| M4 | *unassigned* | any | Problem statement, deck, pitch, judge Q&A |
+| M2 | Abhijan | Mac | Console (Streamlit), Cosys-AirSim RPC client, YOLO verification, dashboard presentation |
+| M3 | Pratik | Windows | Dark urban Unreal/Cosys-AirSim scene, rooftop/wall patches, primary live demo |
+| M4 | Samik | Windows / Unreal-capable PC | Light terrain Unreal/Cosys-AirSim scene, frame export, robustness demo |
 
 ## Repo layout
 
