@@ -17,20 +17,40 @@ ACK: Vote
 DISPUTE: Vote
 
 class Receipt(_message.Message):
-    __slots__ = ("drone_id", "timestamp_ns", "input_hash", "model_hash", "output", "nonce")
+    __slots__ = ("drone_id", "timestamp_ns", "input_hash", "model_hash", "output", "nonce", "protocol_version", "mission_id", "mission_epoch", "sequence", "runtime_hash", "action_frame", "valid_for_ns", "pose_enu", "pose_timestamp_ns", "pose_uncertainty_m")
     DRONE_ID_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMP_NS_FIELD_NUMBER: _ClassVar[int]
     INPUT_HASH_FIELD_NUMBER: _ClassVar[int]
     MODEL_HASH_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_FIELD_NUMBER: _ClassVar[int]
     NONCE_FIELD_NUMBER: _ClassVar[int]
+    PROTOCOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    MISSION_ID_FIELD_NUMBER: _ClassVar[int]
+    MISSION_EPOCH_FIELD_NUMBER: _ClassVar[int]
+    SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    RUNTIME_HASH_FIELD_NUMBER: _ClassVar[int]
+    ACTION_FRAME_FIELD_NUMBER: _ClassVar[int]
+    VALID_FOR_NS_FIELD_NUMBER: _ClassVar[int]
+    POSE_ENU_FIELD_NUMBER: _ClassVar[int]
+    POSE_TIMESTAMP_NS_FIELD_NUMBER: _ClassVar[int]
+    POSE_UNCERTAINTY_M_FIELD_NUMBER: _ClassVar[int]
     drone_id: str
     timestamp_ns: int
     input_hash: str
     model_hash: str
     output: _containers.RepeatedScalarFieldContainer[float]
     nonce: str
-    def __init__(self, drone_id: _Optional[str] = ..., timestamp_ns: _Optional[int] = ..., input_hash: _Optional[str] = ..., model_hash: _Optional[str] = ..., output: _Optional[_Iterable[float]] = ..., nonce: _Optional[str] = ...) -> None: ...
+    protocol_version: int
+    mission_id: str
+    mission_epoch: int
+    sequence: int
+    runtime_hash: str
+    action_frame: str
+    valid_for_ns: int
+    pose_enu: _containers.RepeatedScalarFieldContainer[float]
+    pose_timestamp_ns: int
+    pose_uncertainty_m: float
+    def __init__(self, drone_id: _Optional[str] = ..., timestamp_ns: _Optional[int] = ..., input_hash: _Optional[str] = ..., model_hash: _Optional[str] = ..., output: _Optional[_Iterable[float]] = ..., nonce: _Optional[str] = ..., protocol_version: _Optional[int] = ..., mission_id: _Optional[str] = ..., mission_epoch: _Optional[int] = ..., sequence: _Optional[int] = ..., runtime_hash: _Optional[str] = ..., action_frame: _Optional[str] = ..., valid_for_ns: _Optional[int] = ..., pose_enu: _Optional[_Iterable[float]] = ..., pose_timestamp_ns: _Optional[int] = ..., pose_uncertainty_m: _Optional[float] = ...) -> None: ...
 
 class SignedReceipt(_message.Message):
     __slots__ = ("receipt", "signature_hex")

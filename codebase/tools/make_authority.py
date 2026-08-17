@@ -38,10 +38,10 @@ from pathlib import Path
 
 import nacl.signing
 
-from node.common import authority_payload_bytes, file_model_hash
+from node.common import authority_payload_bytes, file_model_hash, runtime_bundle_hash
 
 
-def build_payload(weight_paths, issued_by: str) -> dict:
+def build_payload(weight_paths, issued_by: str, runtime_paths=()) -> dict:
     models = []
     for raw in weight_paths:
         path = Path(raw)
@@ -52,11 +52,19 @@ def build_payload(weight_paths, issued_by: str) -> dict:
             "sha256": file_model_hash(path),
             "size_bytes": path.stat().st_size,
         })
-    return {
+    payload = {
         "issued_by": issued_by,
         "issued_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "approved_models": models,
     }
+    runtime_paths = list(runtime_paths)
+    if runtime_paths:
+        payload["approved_runtimes"] = [{
+            "name": "runtime-bundle-v1",
+            "sha256": runtime_bundle_hash(runtime_paths),
+            "artifacts": sorted(Path(raw).name for raw in runtime_paths),
+        }]
+    return payload
 
 
 def sign_payload(payload: dict, seed_hex: str) -> dict:
@@ -86,6 +94,10 @@ def main() -> None:
     ap.add_argument("--issued-by", default=f"mission-authority@{socket.gethostname()}")
     ap.add_argument("--sign-key", default=None,
                     help="hex Ed25519 seed; omit to write an UNSIGNED file (dev only)")
+    ap.add_argument("--sign-key-file", default=None,
+                    help="file containing the hex seed (preferred; avoids process listings)")
+    ap.add_argument("--runtime", action="append", default=[],
+                    help="reviewed runtime/controller artifact; repeat for the bundle")
     ap.add_argument("--new-key", action="store_true",
                     help="generate an authority keypair and exit")
     args = ap.parse_args()
@@ -95,15 +107,20 @@ def main() -> None:
         return
     if not args.weights:
         ap.error("give at least one weight file, or use --new-key")
+    if args.sign_key and args.sign_key_file:
+        ap.error("use only one of --sign-key or --sign-key-file")
 
-    payload = build_payload(args.weights, args.issued_by)
-    doc = sign_payload(payload, args.sign_key) if args.sign_key else payload
+    seed = args.sign_key
+    if args.sign_key_file:
+        seed = Path(args.sign_key_file).read_text(encoding="ascii").strip()
+    payload = build_payload(args.weights, args.issued_by, args.runtime)
+    doc = sign_payload(payload, seed) if seed else payload
     Path(args.out).write_text(json.dumps(doc, indent=2))
 
-    print(f"wrote {args.out}  [{'signed' if args.sign_key else 'UNSIGNED'}]")
+    print(f"wrote {args.out}  [{'signed' if seed else 'UNSIGNED'}]")
     for model in payload["approved_models"]:
         print(f"  {model['name']:24} {model['sha256']}")
-    if not args.sign_key:
+    if not seed:
         print("\nWARNING: unsigned. Anyone who can write this file can add their "
               "own model hash and the provenance layer stops catching anything. "
               "Use --sign-key before flying.")

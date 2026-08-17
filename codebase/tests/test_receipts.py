@@ -110,8 +110,13 @@ def test_wire_serialization_roundtrip(alpha_signer, verifier):
         ("timestamp_ns", 999_999),
         ("input_hash", "f" * 64),
         ("model_hash", "e" * 64),
-        ("output", (9.9, 9.9, 9.9)),
+        ("output", (0.9, 0.9, 0.9)),
         ("nonce", "a" * 32),
+        ("mission_id", "other-mission"),
+        ("mission_epoch", 2),
+        ("sequence", 99),
+        ("runtime_hash", "d" * 64),
+        ("valid_for_ns", 1_000_000_000),
     ],
 )
 def test_tampered_receipt_fails(alpha_signer, verifier, field_to_tamper, new_value):
@@ -238,8 +243,8 @@ def test_nonces_unique_across_calls():
 
 def test_repeated_build_yields_distinct_receipts():
     """Even with the same input and same model, the nonce differs."""
-    a = build_receipt("alpha", b"x", APPROVED_MODEL_HASH, (0.0,))
-    b = build_receipt("alpha", b"x", APPROVED_MODEL_HASH, (0.0,))
+    a = build_receipt("alpha", b"x", APPROVED_MODEL_HASH, (0.0, 0.0, 0.0))
+    b = build_receipt("alpha", b"x", APPROVED_MODEL_HASH, (0.0, 0.0, 0.0))
     assert a.canonical() != b.canonical()
 
 
@@ -332,6 +337,72 @@ def test_receipt_inside_the_window_still_verifies(alpha_signer, verifier):
     signed = alpha_signer.sign(_sample_receipt("alpha"))
     just_inside = signed.receipt.timestamp_ns + DEFAULT_MAX_AGE_NS - 1
     assert verifier.verify(signed, now_ns=just_inside).ok
+
+
+def test_exact_replay_inside_window_is_rejected(alpha_signer, verifier):
+    signed = alpha_signer.sign(_sample_receipt("alpha"))
+    now = signed.receipt.timestamp_ns + 1
+    assert verifier.verify(signed, now_ns=now).ok
+    replay = verifier.verify(signed, now_ns=now + 1)
+    assert not replay.ok
+    assert replay.reason == "replayed_receipt"
+
+
+def test_mission_epoch_runtime_and_sequence_are_enforced(alpha_signer):
+    runtime_hash = sha256_hex(b"approved-runtime")
+    verifier = ReceiptVerifier(
+        peer_keys={"alpha": alpha_signer.public_key_hex},
+        approved_models={APPROVED_MODEL_HASH},
+        expected_mission_id="mission-red",
+        expected_mission_epoch=7,
+        approved_runtimes={runtime_hash},
+        enforce_sequence=True,
+    )
+
+    def signed(*, mission="mission-red", epoch=7, sequence=1, runtime=runtime_hash):
+        return alpha_signer.sign(build_receipt(
+            "alpha",
+            os.urandom(16),
+            APPROVED_MODEL_HASH,
+            (0.0, 0.0, 0.0),
+            mission_id=mission,
+            mission_epoch=epoch,
+            sequence=sequence,
+            runtime_hash=runtime,
+        ))
+
+    assert verifier.verify(signed()).ok
+    assert verifier.verify(signed(sequence=1)).reason == "duplicate_sequence"
+    assert verifier.verify(signed(mission="mission-blue", sequence=2)).reason == "wrong_mission"
+    assert verifier.verify(signed(epoch=8, sequence=2)).reason == "wrong_mission_epoch"
+    assert verifier.verify(signed(runtime="f" * 64, sequence=2)).reason.startswith(
+        "runtime_hash_not_approved"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("input_hash", "g" * 64),
+        ("model_hash", "A" * 64),
+        ("nonce", "z" * 32),
+        ("output", (0.0, 0.0)),
+        ("output", (float("nan"), 0.0, 0.0)),
+        ("output", (1.01, 0.0, 0.0)),
+    ],
+)
+def test_receipt_rejects_malformed_protocol_fields(field, value):
+    fields = {
+        "drone_id": "alpha",
+        "timestamp_ns": 1,
+        "input_hash": "a" * 64,
+        "model_hash": "b" * 64,
+        "output": (0.0, 0.0, 0.0),
+        "nonce": "c" * 32,
+    }
+    fields[field] = value
+    with pytest.raises(ValueError):
+        Receipt(**fields)
 
 
 def test_freshness_is_checked_before_the_signature(alpha_signer, verifier):

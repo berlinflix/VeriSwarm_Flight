@@ -17,11 +17,16 @@ nodes/
 
 # Runtime artifacts
 results/live_events.jsonl
+results/*.jsonl.lock
 *.log
 
 # Captured frames — these grow fast. Keep them local.
 sim/demo_frames/
 sim/captured/
+
+# Paper working notes. Private to Suyash — these discuss what is wrong with an
+# unpublished manuscript and must not reach teammates or a public clone.
+PAPER_CORRECTIONS.md
 
 # OS
 .DS_Store

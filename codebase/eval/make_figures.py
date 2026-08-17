@@ -90,7 +90,8 @@ def fig09_consensus_latency():
     if not rows:
         return _skip("fig09", "consensus_latency.csv missing")
     n = [int(r["N"]) for r in rows]
-    ms = [float(r["decision_ms_mean"]) for r in rows]
+    ms = [float(r.get("local_verify_and_tally_ms_mean", r.get("decision_ms_mean")))
+          for r in rows]
     fig, ax = plt.subplots(figsize=(3.4, 2.4))
     ax.plot(n, ms, marker="o", color=ACCENT, lw=1.6)
     ax.set_xlabel("Swarm size $N$")
@@ -131,7 +132,8 @@ def fig11_overhead():
     if not rows:
         return _skip("fig11", "overhead.csv missing")
     n = [r["N"] for r in rows]
-    by = [int(r["bytes_per_cycle"]) for r in rows]
+    by = [int(r.get("signed_payload_bytes_per_cycle", r.get("bytes_per_cycle")))
+          for r in rows]
     fig, ax = plt.subplots(figsize=(3.4, 2.4))
     ax.bar(n, by, facecolor="white", edgecolor=INK, linewidth=0.8, width=0.55)
     ax.set_xlabel("Swarm size $N$")

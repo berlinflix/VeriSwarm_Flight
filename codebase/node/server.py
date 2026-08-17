@@ -3,8 +3,8 @@ AttestationService gRPC server — one runs on each peer drone.
 
 On SubmitReceipt it runs the real `PeerVerifier` (crypto + provenance + the
 co-visibility-gated semantic check) and returns this drone's SignedVote. The
-originator's pose is looked up from the manifest by the receipt's drone_id, so
-the C2 gate engages exactly as in the in-process protocol.
+originator's signed current pose and a peer's atomic local perception snapshot
+feed the C2 gate. Static manifest values remain simulation scaffolding only.
 
 Independent tallies
 -------------------
@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import threading
 import time
+import math
+from collections import OrderedDict
 from concurrent import futures
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, Optional
@@ -51,7 +53,11 @@ from protocol.peer_consensus import (
     PeerVerifier,
     receipt_digest,
 )
+from protocol.geometry import Pose
 from . import common
+
+
+MAX_TRACKED_RECEIPTS = 4096
 
 
 class AttestationServicer(pb_grpc.AttestationServiceServicer):
@@ -71,6 +77,9 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
         *,
         on_event: Optional[Callable[[dict], None]] = None,
         broadcast_votes: bool = True,
+        observation_provider: Optional[Callable[[], object]] = None,
+        pose_provider: Optional[Callable[[], Optional[Pose]]] = None,
+        snapshot_provider: Optional[Callable[[], object]] = None,
     ):
         self.my_id = my_id
         self.manifest = manifest
@@ -80,12 +89,18 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
         self.vote_verifier = common.vote_verifier_for(manifest)
         self.peer_verifier = PeerVerifier(
             my_id, self.signer, self.receipt_verifier,
+            agreement_threshold=float(manifest.get("agreement_threshold", 0.5)),
             o_min=float(manifest.get("o_min", 0.1)),
             phi_min=float(manifest.get("phi_min", 0.0)),
+            hfov=math.radians(float(manifest.get("camera_hfov_deg", 69.0))),
+            vfov=math.radians(float(manifest.get("camera_vfov_deg", 53.0))),
             on_covis=self._emit_covis,
         )
         self.my_pose = common.pose_of(entry)
         self.observation = entry.get("observation")
+        self._observation_provider = observation_provider
+        self._pose_provider = pose_provider
+        self._snapshot_provider = snapshot_provider
         self.poses = {nid: common.pose_of(e) for nid, e in manifest["nodes"].items()}
 
         self.roster = set(manifest["nodes"])
@@ -94,8 +109,9 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
 
         self._vote_cache: Dict[str, object] = {}    # digest -> our own SignedVote
         self._receipts: Dict[str, object] = {}      # digest -> Receipt under vote
-        self._votes: Dict[str, Dict[str, object]] = {}   # digest -> voter_id -> SignedVote
+        self._votes: OrderedDict[str, Dict[str, object]] = OrderedDict()
         self._verdicts: Dict[str, ConsensusOutcome] = {}  # digest -> last announced
+        self._equivocation_evidence: Dict[str, Dict[str, tuple]] = {}
         self._lock = threading.Lock()
 
         # Lazily-built stubs for vote broadcast. Built on demand because peers
@@ -132,25 +148,92 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
 
     # -- RPCs ---------------------------------------------------------------
 
+    def _trim_locked(self) -> None:
+        """Bound attacker-controlled protocol state while holding ``_lock``."""
+        while len(self._votes) > MAX_TRACKED_RECEIPTS:
+            digest, _ = self._votes.popitem(last=False)
+            self._vote_cache.pop(digest, None)
+            self._receipts.pop(digest, None)
+            self._verdicts.pop(digest, None)
+            self._equivocation_evidence.pop(digest, None)
+
     def SubmitReceipt(self, request, context):
-        signed = signed_receipt_from_pb(request)
+        try:
+            signed = signed_receipt_from_pb(request)
+        except (KeyError, TypeError, ValueError) as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"invalid_receipt:{exc}")
         digest = receipt_digest(signed.receipt)
         with self._lock:
             cached = self._vote_cache.get(digest)  # idempotent: one receipt, one vote
         if cached is not None:
             return signed_vote_to_pb(cached)
 
-        originator_pose = self.poses.get(signed.receipt.drone_id)
+        if self._snapshot_provider is not None:
+            try:
+                snapshot = self._snapshot_provider()
+                captured_ns = int(snapshot.captured_ns)
+                max_skew_ns = int(
+                    self.manifest.get("max_observation_skew_ns", 250_000_000)
+                )
+                if abs(signed.receipt.timestamp_ns - captured_ns) > max_skew_ns:
+                    raise ValueError("local perception snapshot is not time-aligned")
+                my_observation = snapshot.action
+                my_pose = snapshot.pose
+            except Exception:
+                # A missing, malformed, or temporally mismatched snapshot is an
+                # abstention. Never inherit the preceding observation.
+                my_observation = None
+                my_pose = None
+        else:
+            try:
+                my_observation = (
+                    self._observation_provider()
+                    if self._observation_provider is not None
+                    else self.observation
+                )
+            except Exception:
+                my_observation = None
+            try:
+                my_pose = (
+                    self._pose_provider()
+                    if self._pose_provider is not None
+                    else self.my_pose
+                )
+            except Exception:
+                my_pose = None
+
+        receipt_pose = signed.receipt.pose_enu
+        pose_age_ns = abs(
+            signed.receipt.timestamp_ns - signed.receipt.pose_timestamp_ns
+        )
+        max_pose_age_ns = int(self.manifest.get("max_pose_age_ns", 200_000_000))
+        max_pose_uncertainty = float(
+            self.manifest.get("max_pose_uncertainty_m", 2.0)
+        )
+        if (
+            receipt_pose[2] > 0.0
+            and pose_age_ns <= max_pose_age_ns
+            and signed.receipt.pose_uncertainty_m <= max_pose_uncertainty
+        ):
+            originator_pose = Pose(*receipt_pose)
+        else:
+            originator_pose = (
+                self.poses.get(signed.receipt.drone_id)
+                if self.manifest.get("mode", "simulation") == "simulation"
+                else None
+            )
         vote = self.peer_verifier.vote_on(
             signed,
-            my_observation=self.observation,
-            my_pose=self.my_pose,
+            my_observation=my_observation,
+            my_pose=my_pose,
             originator_pose=originator_pose,
         )
         with self._lock:
             self._vote_cache[digest] = vote
             self._receipts[digest] = signed.receipt
             self._votes.setdefault(digest, {})[self.my_id] = vote
+            self._votes.move_to_end(digest)
+            self._trim_locked()
 
         self._emit(
             type="vote", target=signed.receipt.drone_id,
@@ -168,14 +251,42 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
         return signed_vote_to_pb(vote)
 
     def PushVote(self, request, context):
-        sv = signed_vote_from_pb(request)
+        try:
+            sv = signed_vote_from_pb(request)
+        except (KeyError, TypeError, ValueError) as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"invalid_vote:{exc}")
         ok = self.vote_verifier.verify(sv)
+        reason = "ok" if ok else "bad_signature"
         if ok:
             digest = sv.vote.target_receipt_hash
             with self._lock:
-                self._votes.setdefault(digest, {})[sv.vote.voter_id] = sv
+                evidence = self._equivocation_evidence.setdefault(digest, {})
+                votes = self._votes.setdefault(digest, {})
+                previous = votes.get(sv.vote.voter_id)
+                if sv.vote.voter_id in evidence:
+                    ok = False
+                    reason = "equivocation"
+                elif previous is not None and previous.vote != sv.vote:
+                    # Preserve any two distinct signed statements as attributable
+                    # evidence and count neither. Same-decision votes with
+                    # different semantic reasons are security-distinct too.
+                    evidence[sv.vote.voter_id] = (previous, sv)
+                    votes.pop(sv.vote.voter_id, None)
+                    ok = False
+                    reason = "equivocation"
+                # Exact retries are idempotent and retain the first vote.
+                elif previous is None:
+                    votes[sv.vote.voter_id] = sv
+                self._votes.move_to_end(digest)
+                self._trim_locked()
+            if reason == "equivocation":
+                self._emit(
+                    type="equivocation",
+                    voter=sv.vote.voter_id,
+                    digest=digest[:16],
+                )
             self._try_tally(digest)
-        return pb.PushVoteAck(accepted=ok, reason="ok" if ok else "bad_signature")
+        return pb.PushVoteAck(accepted=ok, reason=reason)
 
     def Ping(self, request, context):
         return pb.PingResponse(this_drone_id=self.my_id, timestamp_ns=time.time_ns())
@@ -186,7 +297,7 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
         with self._lock:
             stub = self._stubs.get(peer_id)
             if stub is None:
-                channel = grpc.insecure_channel(common.address_of(self.manifest, peer_id))
+                channel = common.channel_for(self.manifest, self.my_id, peer_id)
                 self._channels[peer_id] = channel
                 stub = pb_grpc.AttestationServiceStub(channel)
                 self._stubs[peer_id] = stub
@@ -253,6 +364,9 @@ def serve(
     max_workers: int = 8,
     on_event: Optional[Callable[[dict], None]] = None,
     broadcast_votes: bool = True,
+    observation_provider: Optional[Callable[[], object]] = None,
+    pose_provider: Optional[Callable[[], Optional[Pose]]] = None,
+    snapshot_provider: Optional[Callable[[], object]] = None,
 ):
     """Start (non-blocking) the AttestationService for `my_id`. Returns the
     grpc server; the manifest entry's port is updated to the actually-bound port
@@ -260,13 +374,31 @@ def serve(
 
     The servicer is attached to the returned server as `.servicer` so callers can
     read `local_verdict()` and close its broadcast channels."""
+    common.validate_manifest(manifest, local_node_id=my_id)
+    if manifest.get("mode", "simulation") == "production" and (
+        snapshot_provider is None
+    ):
+        raise ValueError(
+            "production server requires an atomic synchronized snapshot_provider"
+        )
     entry = manifest["nodes"][my_id]
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=max_workers),
+        options=common.GRPC_OPTIONS,
+    )
     servicer = AttestationServicer(
-        my_id, manifest, on_event=on_event, broadcast_votes=broadcast_votes
+        my_id,
+        manifest,
+        on_event=on_event,
+        broadcast_votes=broadcast_votes,
+        observation_provider=observation_provider,
+        pose_provider=pose_provider,
+        snapshot_provider=snapshot_provider,
     )
     pb_grpc.add_AttestationServiceServicer_to_server(servicer, server)
-    bound = server.add_insecure_port(f"0.0.0.0:{entry['port']}")
+    bound = common.add_server_listener(server, manifest, my_id)
+    if bound == 0:
+        raise RuntimeError(f"failed to bind AttestationService on port {entry['port']}")
     entry["port"] = bound
     server.start()
     server.servicer = servicer
@@ -285,7 +417,7 @@ def _main() -> None:
                     help="print vote / co-visibility / verdict events to stdout")
     args = ap.parse_args()
 
-    manifest = common.load_manifest(args.manifest)
+    manifest = common.load_manifest(args.manifest, local_node_id=args.id)
     on_event = (lambda e: print(f"[{args.id}] {e}", flush=True)) if args.verbose else None
     server = serve(args.id, manifest, on_event=on_event,
                    broadcast_votes=not args.no_broadcast)

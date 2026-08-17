@@ -11,6 +11,7 @@ drone whose receipt is under scrutiny.
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -158,3 +159,66 @@ def test_pushed_vote_with_a_bad_signature_is_refused():
         assert not servers[0].servicer._votes
     finally:
         _stop(servers)
+
+
+def test_pushed_same_decision_with_different_semantics_is_equivocation():
+    from protocol.peer_consensus import PeerVote, SignedVote, Vote
+    from protocol.proto_bridge import signed_vote_to_pb
+
+    ids = ["alpha", "bravo", "charlie"]
+    man = common.generate_manifest(ids, poses=_formation(ids))
+    servers = _start_peers(man, ["bravo"])
+    try:
+        signer = common.signer_for(man["nodes"]["charlie"])
+
+        def signed(reason, timestamp):
+            vote = PeerVote(
+                voter_id="charlie",
+                target_receipt_hash="a" * 64,
+                decision=Vote.ACK,
+                reason=reason,
+                timestamp_ns=timestamp,
+            )
+            return SignedVote(vote, signer.sign_bytes(vote.canonical()))
+
+        first = servers[0].servicer.PushVote(
+            signed_vote_to_pb(signed("ok", 1)), None
+        )
+        conflict = servers[0].servicer.PushVote(
+            signed_vote_to_pb(signed("ok_no_observation", 2)), None
+        )
+
+        assert first.accepted
+        assert not conflict.accepted
+        assert conflict.reason == "equivocation"
+        assert servers[0].servicer._votes["a" * 64] == {}
+        assert "charlie" in servers[0].servicer._equivocation_evidence["a" * 64]
+    finally:
+        _stop(servers)
+
+
+def test_stale_atomic_snapshot_abstains_instead_of_using_static_observation():
+    ids = ["alpha", "bravo"]
+    poses = _formation(ids)
+    observations = {nid: [0.1, 0.0, 0.0] for nid in ids}
+    man = common.generate_manifest(ids, poses=poses, observations=observations)
+    man["nodes"]["bravo"]["port"] = 0
+    stale = SimpleNamespace(
+        captured_ns=1,
+        action=(0.1, 0.0, 0.0),
+        pose=common.pose_of(man["nodes"]["bravo"]),
+    )
+    server = node_server.serve(
+        "bravo",
+        man,
+        broadcast_votes=False,
+        snapshot_provider=lambda: stale,
+    )
+    try:
+        originator = Originator(man, "alpha", ["bravo"])
+        result = originator.originate((0.1, 0.0, 0.0), common.APPROVED_MODEL)
+        originator.close()
+        assert result.outcome is ConsensusOutcome.ACCEPTED
+        assert result.consensus.semantic_ack_count == 0
+    finally:
+        _stop([server])

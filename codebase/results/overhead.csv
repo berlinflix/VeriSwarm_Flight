@@ -1,6 +1,6 @@
-N,msgs_per_cycle,bytes_per_cycle,overhead_pct_vs_raw
-3,4,1528,4993.3
-5,8,3053,4988.3
-7,12,4580,4988.9
-9,16,6106,4988.3
-11,20,7632,4988.0
+N,logical_messages_per_cycle,signed_payload_bytes_per_cycle,excludes,overhead_pct_vs_raw
+3,6,2852,"grpc,tcp,ip,tls,PushVoteAck",9406.7
+5,20,8316,"grpc,tcp,ip,tls,PushVoteAck",13760.0
+7,42,16404,"grpc,tcp,ip,tls,PushVoteAck",18126.7
+9,72,27104,"grpc,tcp,ip,tls,PushVoteAck",22486.7
+11,110,40420,"grpc,tcp,ip,tls,PushVoteAck",26846.7

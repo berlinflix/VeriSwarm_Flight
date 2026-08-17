@@ -17,11 +17,79 @@ compromised provisioning host a *catchable* attack:
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
 from node import common
 from protocol.receipts import build_receipt
+
+
+def test_node_scoped_manifest_contains_only_its_private_seed():
+    manifest = common.generate_manifest(["alpha", "bravo", "charlie"])
+    scoped = common.manifest_for_node(manifest, "bravo")
+    assert "seed" in scoped["nodes"]["bravo"]
+    assert "seed" not in scoped["nodes"]["alpha"]
+    assert "seed" not in scoped["nodes"]["charlie"]
+
+
+def test_runtime_bundle_hash_is_stable_and_content_addressed(tmp_path):
+    a = tmp_path / "controller.py"
+    b = tmp_path / "config.json"
+    a.write_text("safe-v1")
+    b.write_text("{}")
+    first = common.runtime_bundle_hash([a, b])
+    assert first == common.runtime_bundle_hash([b, a])
+    a.write_text("tampered")
+    assert common.runtime_bundle_hash([a, b]) != first
+
+
+def test_production_manifest_refuses_insecure_transport(monkeypatch):
+    monkeypatch.setenv("VERISWARM_AUTHORITY_PUBKEY", "a" * 64)
+    poses = {
+        "alpha": (0.0, 0.0, 14.0, 0.0),
+        "bravo": (0.0, 6.0, 14.0, 0.0),
+    }
+    manifest = common.generate_manifest(
+        ["alpha", "bravo"],
+        poses=poses,
+        phi_min=10.0,
+        authority="mission_authority.json",
+        mode="production",
+        mission_id="flight-test-001",
+        mission_epoch=1,
+    )
+    with pytest.raises(ValueError, match="mutual TLS"):
+        common.validate_manifest(
+            common.manifest_for_node(manifest, "alpha"), local_node_id="alpha"
+        )
+
+
+def test_production_manifest_refuses_plaintext_signing_seed(monkeypatch):
+    monkeypatch.setenv("VERISWARM_AUTHORITY_PUBKEY", "a" * 64)
+    poses = {
+        "alpha": (0.0, 0.0, 14.0, 0.0),
+        "bravo": (0.0, 6.0, 14.0, 0.0),
+    }
+    manifest = common.generate_manifest(
+        ["alpha", "bravo"],
+        poses=poses,
+        phi_min=10.0,
+        authority="mission_authority.json",
+        mode="production",
+        mission_id="flight-test-001",
+        mission_epoch=1,
+    )
+    manifest["transport"] = {
+        "mode": "mtls",
+        "ca_cert": "ca.pem",
+    }
+    for entry in manifest["nodes"].values():
+        entry["tls_cert"] = "node.pem"
+        entry["tls_key"] = "node-key.pem"
+    scoped = common.manifest_for_node(manifest, "alpha")
+    with pytest.raises(ValueError, match="plaintext signing seed"):
+        common.validate_manifest(scoped, local_node_id="alpha")
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +121,23 @@ def test_file_hash_changes_when_weights_are_swapped(tmp_path):
     weights.write_bytes(b"trojaned weights")
     after = common.file_model_hash(weights)
 
-    assert before != after, "cache must key on size/mtime, not path alone"
+    assert before != after, "provenance must track bytes, not the path"
+
+
+def test_file_hash_cannot_be_bypassed_by_same_size_restored_mtime(tmp_path):
+    weights = _write_weights(tmp_path, "model.pt", b"approved-bytes")
+    original_stat = weights.stat()
+    before = common.file_model_hash(weights)
+
+    weights.write_bytes(b"tampered-bytes")  # deliberately the same length
+    os.utime(
+        weights,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+
+    assert weights.stat().st_size == original_stat.st_size
+    assert weights.stat().st_mtime_ns == original_stat.st_mtime_ns
+    assert common.file_model_hash(weights) != before
 
 
 def test_label_hash_is_refused_when_an_authority_is_in_use(tmp_path):

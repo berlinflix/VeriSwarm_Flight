@@ -137,6 +137,16 @@ def auto_takeoff(link) -> str:
     return _result_str(_wait_ack(link, mavutil.mavlink.MAV_CMD_DO_SET_MODE))
 
 
+def land(link) -> str:
+    link.mav.command_long_send(
+        link.target_system,
+        link.target_component,
+        mavutil.mavlink.MAV_CMD_NAV_LAND,
+        0, 0, 0, 0, 0, 0, 0, 0,
+    )
+    return _result_str(_wait_ack(link, mavutil.mavlink.MAV_CMD_NAV_LAND))
+
+
 def main() -> None:
     ports = [int(p) for p in sys.argv[1:]] or [14541, 14542, 14543]
     links = {}
@@ -155,17 +165,31 @@ def main() -> None:
         return
 
     print("\nwaiting for healthy GPS/EKF on each drone...")
+    ready = True
     for p, link in links.items():
         fix = wait_position_ok(link)
         set_param(link, "MIS_TAKEOFF_ALT", TAKEOFF_ALT)
+        ready = ready and fix >= 3
         print(f"  {model_name(p)}: GPS fix_type={fix} "
               f"({'OK' if fix >= 3 else 'NOT READY'})")
+    if not ready:
+        print("refusing to arm: every vehicle must have a healthy position estimate")
+        return
 
     print("\narming + AUTO.TAKEOFF...")
+    takeoff_ok = True
     for p, link in links.items():
         a = arm(link)
-        t = auto_takeoff(link)
+        t = auto_takeoff(link) if a == "ACCEPTED" else "SKIPPED"
+        takeoff_ok = takeoff_ok and a == "ACCEPTED" and t in {
+            "ACCEPTED", "IN_PROGRESS"
+        }
         print(f"  {model_name(p)}: arm={a}  takeoff={t}")
+    if not takeoff_ok:
+        print("takeoff precondition failed; commanding LAND on every connected vehicle")
+        for link in links.values():
+            land(link)
+        return
 
     print(f"\nclimbing to ~{TAKEOFF_ALT:.0f} m (ground-truth altitude trace)...")
     for _ in range(8):
@@ -206,6 +230,10 @@ def main() -> None:
     if rows:
         H.write_csv("covisibility_real.csv", rows)
         print("\nwrote results/covisibility_real.csv")
+
+    print("\nmeasurement complete; commanding LAND...")
+    for p, link in links.items():
+        print(f"  {model_name(p)}: land={land(link)}")
 
 
 if __name__ == "__main__":

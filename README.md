@@ -17,10 +17,14 @@ If `urgent_new_changes.md` and the build plan disagree, **the urgent file wins.*
 
 | | Who | Platform | Owns |
 |---|---|---|---|
-| M1 | Suyash | WSL + Jetson | Protocol integration, mission loop, event bus, attack surface, OP-TEE |
-| M2 | Abhijan | Mac | Console (Streamlit), Cosys-AirSim RPC client, YOLO verification, dashboard presentation |
-| M3 | Pratik | Windows | Dark urban Unreal/Cosys-AirSim scene, rooftop/wall patches, primary live demo |
-| M4 | Samik | Windows / Unreal-capable PC | Light terrain Unreal/Cosys-AirSim scene, frame export, robustness demo |
+| M1 | Suyash | WSL + Jetson | Protocol/safety boundary, integration API, manifests/authority, review, final gates |
+| M2 | Abhijan | Mac | Attack delivery, adversarial campaigns, scenario manifests, evidence validation |
+| M3 | Pratik | Windows | CoSys AirSim world, dark urban scenario, cameras, RGB/depth/pose capture, calibration |
+| M4 | Samik | Windows / Unreal-capable PC | CoSys vehicle/SITL control, command adapter, failsafes, reset automation, repeated runs |
+
+Unreal work is organized as pinned scenario packs, not ad hoc shared-map editing. Pratik's
+primary pack is the dark urban / rooftop-patch world; a light-terrain pack is secondary
+evidence only after the same safety and replay gates pass.
 
 ## Repo layout
 
@@ -36,7 +40,7 @@ codebase/                The VeriSwarm implementation
   optee/                 Trusted Application (C) + host client
   sim/                   PX4/Gazebo flight, co-visibility measurement
   eval/                  Experiment harness, figures, adversarial-patch transfer study
-  tests/                 102 property tests
+  tests/                 286 property + security tests
   results/               Measured CSVs behind the paper's tables
 ```
 
@@ -59,7 +63,7 @@ Verify your checkout is sound before changing anything:
 cd codebase && python -m pytest
 ```
 
-All 102 tests should pass. That's your baseline.
+All 286 tests should pass. That's your baseline.
 
 ## Relationship to the research paper
 

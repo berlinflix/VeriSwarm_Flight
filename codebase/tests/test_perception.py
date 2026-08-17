@@ -25,8 +25,12 @@ def _l2(a, b):
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
 
-def test_clear_path_is_full_forward():
-    assert detections_to_action([]) == (1.0, 0.0, 0.0)
+def test_detector_silence_fails_closed():
+    assert detections_to_action([]) == (0.0, 0.0, 0.0)
+
+
+def test_independent_free_space_evidence_can_authorise_forward_motion():
+    assert detections_to_action([], free_space_confirmed=True) == (1.0, 0.0, 0.0)
 
 
 def test_action_components_in_range():
@@ -57,7 +61,8 @@ def test_fooled_drone_diverges_from_honest_peer():
     nothing. Their actions must differ by more than the semantic threshold."""
     honest = detections_to_action([Detection(0, 0.5, 0.7, 0.5, 0.5, 0.95)])
     fooled = detections_to_action([])  # patch made YOLO miss the obstacle
-    assert _l2(honest, fooled) > 0.5
+    assert fooled == (0.0, 0.0, 0.0)
+    assert honest != fooled
 
 
 def test_model_hash_is_deterministic_and_content_sensitive(tmp_path):

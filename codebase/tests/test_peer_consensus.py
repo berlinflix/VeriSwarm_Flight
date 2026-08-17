@@ -100,6 +100,42 @@ def test_rejects_zero_peers():
         ConsensusEngine(num_peers=0)
 
 
+@pytest.mark.parametrize("threshold", [0.0, -1.0, float("nan"), float("inf"), 4.0])
+def test_peer_verifier_rejects_unsafe_semantic_thresholds(threshold):
+    signers, _, rv, _ = _build_swarm(["alpha", "bravo"])
+    with pytest.raises(ValueError, match="agreement_threshold"):
+        PeerVerifier(
+            "bravo",
+            signers["bravo"],
+            rv,
+            agreement_threshold=threshold,
+        )
+
+
+def test_roster_cannot_silently_lower_or_raise_engine_quorum():
+    signers, _, _, vv = _build_swarm(["alpha", "bravo", "charlie"])
+    signed = _alpha_receipt(signers["alpha"])
+    with pytest.raises(ValueError, match="does not match expected roster"):
+        ConsensusEngine(num_peers=1).tally(
+            signed.receipt,
+            [],
+            vv,
+            expected_voters={"alpha", "bravo", "charlie"},
+        )
+
+
+def test_roster_must_include_originator():
+    signers, _, _, vv = _build_swarm(["alpha", "bravo"])
+    signed = _alpha_receipt(signers["alpha"])
+    with pytest.raises(ValueError, match="include the receipt originator"):
+        ConsensusEngine(num_peers=1).tally(
+            signed.receipt,
+            [],
+            vv,
+            expected_voters={"bravo"},
+        )
+
+
 # ---------------------------------------------------------------------------
 # Phase 2 (peer verifier) — vote_on() decision rules
 # ---------------------------------------------------------------------------
@@ -334,6 +370,52 @@ def test_duplicate_votes_collapsed():
     assert result.outcome is ConsensusOutcome.NO_QUORUM
 
 
+def test_conflicting_signed_votes_are_detected_as_equivocation():
+    """Packet order must not let a Byzantine voter show ACK and DISPUTE."""
+    signers, _, rv, vv = _build_swarm(["alpha", "bravo", "charlie"])
+    eng = ConsensusEngine(num_peers=2)
+    signed = _alpha_receipt(signers["alpha"], output=(0.0, 0.0, 0.0))
+    bravo = PeerVerifier("bravo", signers["bravo"], rv)
+    ack = bravo._build_signed_vote(signed.receipt, decision=Vote.ACK, reason="ok")
+    dispute = bravo._build_signed_vote(
+        signed.receipt, decision=Vote.DISPUTE, reason="semantic_disagreement"
+    )
+
+    result = eng.tally(
+        signed.receipt,
+        [ack, dispute],
+        vv,
+        expected_voters={"alpha", "bravo", "charlie"},
+    )
+    assert result.outcome is ConsensusOutcome.NO_QUORUM
+    assert result.ack_count == result.dispute_count == 0
+    assert result.equivocation_voter_ids == frozenset({"bravo"})
+
+
+def test_conflicting_ack_reasons_are_detected_as_equivocation():
+    """A peer cannot vary whether its ACK contains semantic evidence."""
+    signers, _, rv, vv = _build_swarm(["alpha", "bravo", "charlie"])
+    eng = ConsensusEngine(num_peers=2)
+    signed = _alpha_receipt(signers["alpha"], output=(0.0, 0.0, 0.0))
+    bravo = PeerVerifier("bravo", signers["bravo"], rv)
+    semantic = bravo._build_signed_vote(
+        signed.receipt, decision=Vote.ACK, reason="ok"
+    )
+    crypto_only = bravo._build_signed_vote(
+        signed.receipt, decision=Vote.ACK, reason="ok_no_observation"
+    )
+
+    result = eng.tally(
+        signed.receipt,
+        [semantic, crypto_only],
+        vv,
+        expected_voters={"alpha", "bravo", "charlie"},
+    )
+
+    assert result.ack_count == result.semantic_ack_count == 0
+    assert result.equivocation_voter_ids == frozenset({"bravo"})
+
+
 def test_forged_vote_signature_dropped():
     """A vote whose signature doesn't verify is silently dropped from the tally."""
     signers, _, rv, vv = _build_swarm(["alpha", "bravo", "charlie"])
@@ -545,6 +627,27 @@ def test_reputation_never_accepts_below_integer_floor():
                        expected_voters=set(swarm), reputation=rep)
     assert result.ack_count == 2
     assert result.outcome is not ConsensusOutcome.ACCEPTED
+
+
+def test_reputation_never_rejects_below_integer_floor():
+    """One high-weight dispute plus missing votes cannot reject a 5-node round."""
+    swarm = ["alpha", "bravo", "charlie", "delta", "echo"]
+    signers, _, rv, vv = _build_swarm(swarm)
+    eng = ConsensusEngine(num_peers=4)  # dispute threshold = 2
+    signed = _alpha_receipt(signers["alpha"], output=(1.0, 0.0, 0.0))
+    one_dispute = PeerVerifier("bravo", signers["bravo"], rv).vote_on(
+        signed, my_observation=(-1.0, 0.0, 0.0)
+    )
+
+    result = eng.tally(
+        signed.receipt,
+        [one_dispute],
+        vv,
+        expected_voters=set(swarm),
+        reputation=ReputationStore(),
+    )
+    assert result.dispute_count == 1
+    assert result.outcome is ConsensusOutcome.NO_QUORUM
 
 
 # ---------------------------------------------------------------------------

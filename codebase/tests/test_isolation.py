@@ -204,7 +204,7 @@ def test_no_quorum_not_counted_as_rejection():
 # Fail-safe action mapping + threshold helper
 # --------------------------------------------------------------------------- #
 def test_fallback_action_mapping():
-    assert fallback_action(ACC) is SafeAction.EXECUTE
+    assert fallback_action(ACC) is SafeAction.DEFER
     assert fallback_action(REJ) is SafeAction.SAFE_FALLBACK
     assert fallback_action(NQ) is SafeAction.DEFER
 

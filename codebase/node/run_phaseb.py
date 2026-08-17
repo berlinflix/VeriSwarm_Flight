@@ -1,11 +1,11 @@
 """
-Stage 3 / Phase B: hardware-rooted live distributed consensus.
+Stage 3 / Phase B: TEE-key live distributed tally experiment.
 
 Identical to run_distributed, but the originator (Alpha) signs its receipts with
 the OP-TEE Trusted Application on the Jetson instead of a software key — its
-private key never leaves the secure element. The software peers verify Alpha's
-hardware signatures over real gRPC and reach consensus exactly as before. This
-makes the live distributed result (paper Table 4.15) fully hardware-rooted.
+private key remains in OP-TEE secure storage. The software peers verify Alpha's
+TEE-produced signatures over real gRPC and tally exactly as before. This protects
+Alpha's signing operation; it does not attest Alpha's inference execution.
 
 Topology: all nodes on the Jetson's loopback (avoids the WSL2 NAT issue) — Alpha
 = OP-TEE signer, peers = software signers, real gRPC between separate processes.
@@ -28,7 +28,9 @@ from .run_distributed import swarm_ids, covisible_formation, peer_servers, _allo
 
 def _hw_manifest(ids, originator, poses, observations, tee_pubkey):
     """Software manifest, then make the originator hardware-rooted (OP-TEE)."""
-    man = common.generate_manifest(ids, poses=poses, observations=observations)
+    man = common.generate_manifest(
+        ids, poses=poses, observations=observations, phi_min=23.0
+    )
     _alloc_ports(man)
     a = man["nodes"][originator]
     a["backend"] = "optee"
@@ -44,7 +46,7 @@ def main(n: int = 3, rounds: int = 20) -> None:
 
     from signing.optee_backend import OPTEEReceiptSigner
     tee_pubkey = OPTEEReceiptSigner().public_key_hex
-    print(f"Alpha is hardware-rooted; OP-TEE public key {tee_pubkey[:16]}...")
+    print(f"Alpha uses a TEE-protected key; OP-TEE public key {tee_pubkey[:16]}...")
 
     lat_row = None
     dec = []
@@ -52,6 +54,7 @@ def main(n: int = 3, rounds: int = 20) -> None:
     # honest + model_swap (honest observations)
     obs = {nid: [0.1, 0.0, 0.0] for nid in ids}
     man = _hw_manifest(ids, originator, poses, obs, tee_pubkey)
+    common.assert_covisible_formation(man, originator)
     with peer_servers(man, peers, "phaseb_h"):
         orig = Originator(man, originator, peers)  # signer_for(alpha) -> OPTEEReceiptSigner
         if not orig.wait_ready():
@@ -80,6 +83,7 @@ def main(n: int = 3, rounds: int = 20) -> None:
     obs2 = {originator: [1.0, 0.0, 0.0]}
     obs2.update({p: [0.0, 0.0, 1.0] for p in peers})
     man2 = _hw_manifest(ids, originator, poses, obs2, tee_pubkey)
+    common.assert_covisible_formation(man2, originator)
     with peer_servers(man2, peers, "phaseb_p"):
         orig2 = Originator(man2, originator, peers)
         if not orig2.wait_ready():
@@ -101,7 +105,7 @@ def main(n: int = 3, rounds: int = 20) -> None:
               [{"scenario": s, "observed": o.value, "expected": e.value, "match": o is e}
                for s, o, e in dec])
     passed = sum(1 for _, o, e in dec if o is e)
-    print(f"\n{passed}/{len(dec)} hardware-rooted distributed decisions correct")
+    print(f"\n{passed}/{len(dec)} TEE-key distributed decisions matched expectations")
     print("wrote results/distributed_hw.csv and results/distributed_hw_decisions.csv")
 
 

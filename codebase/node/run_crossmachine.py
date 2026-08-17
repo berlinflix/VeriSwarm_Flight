@@ -10,9 +10,10 @@ network link instead of loopback. It records the end-to-end consensus latency an
 the decisions into results/distributed_crossmachine_latency.csv and
 results/distributed_crossmachine_decisions.csv.
 
-Peer servers are started/stopped on the Jetson over SSH; the manifest (with each
-node's keypair) is generated here and copied across, so both ends are
-cryptographically identical. Run after syncing node/ and protocol/ to the Jetson:
+Peer servers are started/stopped on the Jetson over SSH. Each process receives a
+node-scoped manifest containing only its own software seed and peer public keys;
+the originator's private key is never copied to the peer host. Run after syncing
+node/ and protocol/ to the Jetson:
 
     python -m node.run_crossmachine --jetson user@192.168.1.13 \
         --peer-host 192.168.1.13 --orig-host 172.17.252.142 \
@@ -40,23 +41,16 @@ DRONE_NAMES = [
 ]
 
 _base_port = 52000
-_SSH = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"]
+_SSH = ["ssh", "-o", "BatchMode=yes"]
 
 
 def swarm_ids(n):
     return DRONE_NAMES[:n] if n <= len(DRONE_NAMES) else [f"drone{i}" for i in range(n)]
 
 
-def covisible_formation(ids, alt: float = 14.0, spacing: float = 3.0):
-    """Originator centred, peers symmetric around it, all within one altitude of
-    separation so every peer is co-visible (matches run_distributed.py)."""
-    offs = [0.0]
-    y = spacing
-    while len(offs) < len(ids):
-        offs.append(y)
-        offs.append(-y)
-        y += spacing
-    return {nid: (0.0, offs[i], alt, 0.0) for i, nid in enumerate(ids)}
+def covisible_formation(ids, alt: float = 14.0, spacing: float = 5.5):
+    """Backward-compatible name for the inward-facing mission ring."""
+    return common.ring_formation(ids, radius_m=spacing, altitude_m=alt)
 
 
 def _place(manifest: dict, peers, peer_host: str, orig_host: str) -> None:
@@ -72,21 +66,33 @@ def _place(manifest: dict, peers, peer_host: str, orig_host: str) -> None:
 @contextmanager
 def remote_peer_servers(manifest, peer_ids, jetson, remote_dir, tag):
     """Start the k peer servers on the Jetson over SSH; tear them down after."""
-    local = Path(tempfile.gettempdir()) / f"cross_manifest_{tag}.json"
-    common.save_manifest(manifest, local)
-    remote_manifest = f"cross_manifest_{tag}.json"
-    subprocess.run(["scp", "-o", "StrictHostKeyChecking=no", str(local),
-                    f"{jetson}:{remote_dir}/{remote_manifest}"], check=True)
+    local_manifests = {}
+    remote_manifests = {}
+    for pid in peer_ids:
+        local = Path(tempfile.gettempdir()) / f"cross_manifest_{tag}_{pid}.json"
+        remote = f"cross_manifest_{tag}_{pid}.json"
+        common.save_manifest(common.manifest_for_node(manifest, pid), local)
+        subprocess.run(
+            ["scp", "-o", "BatchMode=yes", str(local),
+             f"{jetson}:{remote_dir}/{remote}"],
+            check=True,
+        )
+        local_manifests[pid] = local
+        remote_manifests[pid] = remote
     procs = []
     try:
         for pid in peer_ids:
             cmd = (f"cd {remote_dir} && exec python3 -m node.server "
-                   f"--manifest {remote_manifest} --id {pid}")
+                   f"--manifest {remote_manifests[pid]} --id {pid}")
             procs.append(subprocess.Popen(_SSH + [jetson, cmd]))
         yield
     finally:
-        subprocess.run(_SSH + [jetson, f"pkill -f 'node.server --manifest {remote_manifest}'"],
-                       check=False)
+        for pid in peer_ids:
+            subprocess.run(
+                _SSH + [jetson,
+                        f"pkill -f 'node.server --manifest {remote_manifests[pid]}'"],
+                check=False,
+            )
         for p in procs:
             p.terminate()
         for p in procs:
@@ -94,6 +100,11 @@ def remote_peer_servers(manifest, peer_ids, jetson, remote_dir, tag):
                 p.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 p.kill()
+        for local in local_manifests.values():
+            try:
+                local.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _dec(n, scenario, observed, expected):
@@ -110,7 +121,10 @@ def run(jetson, peer_host, orig_host, remote_dir, sizes=(3, 5, 7), rounds: int =
 
         # honest + model_swap share one server set (honest observations)
         obs = {nid: [0.1, 0.0, 0.0] for nid in ids}
-        man = common.generate_manifest(ids, poses=poses, observations=obs)
+        man = common.generate_manifest(
+            ids, poses=poses, observations=obs, phi_min=23.0
+        )
+        common.assert_covisible_formation(man, originator)
         _place(man, peers, peer_host, orig_host)
         with remote_peer_servers(man, peers, jetson, remote_dir, f"n{n}h"):
             orig = Originator(man, originator, peers)
@@ -137,7 +151,10 @@ def run(jetson, peer_host, orig_host, remote_dir, sizes=(3, 5, 7), rounds: int =
         # adversarial patch: peers observe an avoidance action the originator missed
         obs2 = {originator: [1.0, 0.0, 0.0]}
         obs2.update({p: [0.0, 0.0, 1.0] for p in peers})
-        man2 = common.generate_manifest(ids, poses=poses, observations=obs2)
+        man2 = common.generate_manifest(
+            ids, poses=poses, observations=obs2, phi_min=23.0
+        )
+        common.assert_covisible_formation(man2, originator)
         _place(man2, peers, peer_host, orig_host)
         with remote_peer_servers(man2, peers, jetson, remote_dir, f"n{n}p"):
             orig2 = Originator(man2, originator, peers)

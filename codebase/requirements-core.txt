@@ -1,0 +1,7 @@
+PyNaCl==1.6.2
+grpcio==1.80.0
+protobuf==6.33.6
+numpy==2.2.6
+opencv-python==4.13.0.92
+pytest==9.0.3
+grpcio-tools==1.80.0
