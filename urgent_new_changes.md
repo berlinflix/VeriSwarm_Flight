@@ -42,6 +42,83 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
+### 2026-08-18 — The crash demo is protected; do not remove it again
+**Status:** OPEN
+**Changed:** the unprotected controller is now an explicitly named module,
+`perception/baseline_controller.py`, with `naive_action()`. It commands **full
+forward on an empty detection set** — the unsafe behaviour is deliberate and it is
+the demo.
+
+Background: the safe controller `detections_to_action` used to do this, was
+correctly flagged as a P0 hazard (empty detections also mean a dead camera, glare,
+blur, or crashed inference), and was changed to hold. That fix is right and stays.
+But it silently deleted **Act 1**, because the judge-facing contrast depends on
+seeing an unprotected drone act on a lie:
+
+> **Run A** patch raised → detector sees nothing → full forward → the drone flies
+> into the obstacle. *"This is what happens today."*
+> **Run B** same patch → co-observing peers still see the obstacle → DISPUTE →
+> REJECTED → the drone holds and is isolated, mission continues.
+
+Delete Run A and both runs stop, and a judge learns nothing about what the
+protocol bought. A defence is only legible next to the failure it prevents. It is
+also the paper's Table 4.14 baseline.
+
+New file [`docs/DEMO_INVARIANTS.md`](codebase/docs/DEMO_INVARIANTS.md) lists every
+deliberate behaviour that looks like a bug, why it must stay, and which path to
+harden instead. `tests/test_baseline_controller.py` pins it.
+
+**Makes stale:** any plan text implying the crash comes from `detections_to_action`.
+**Who must act:**
+* **M2 Abhijan** — Run A uses `naive_action()`. Never wire it to `SafetySupervisor`
+  or `MissionRunner`; it is the control arm, not a flight controller.
+* **M4 / whoever narrates** — Act 1 is intact, but say *"this is a conventional
+  controller, not a broken one"* — the two policies agree on every input where the
+  detector sees anything. Run A crashes because it was **lied to**, not because it
+  is bad.
+* **Everyone, and any AI tool** — read `docs/DEMO_INVARIANTS.md` before
+  "hardening" perception. This behaviour has been removed once already by a tool
+  acting in good faith.
+**Why:** the safe path and the baseline answer different questions. Conflating
+them costs either safety or the demo. Separating them costs neither.
+
+---
+
+### 2026-08-18 — Known defect: semantic blind band at 0.5–0.6 frame occupancy
+**Status:** OPEN — **not yet fixed**
+**Changed:** nothing yet. Recording a measured defect so nobody rediscovers it on
+stage.
+
+With the protected fallback, a patched drone emits `(0,0,0)`. So does an honest
+peer facing a *moderate* obstacle, because the avoidance action passes through the
+origin as threat rises. Measured at θ = 0.5:
+
+| obstacle (frame fraction) | peer action | L2 | patch caught? |
+|---|---|---|---|
+| 0.4 × 0.4 | (0.568, 0, 0.144) | 0.586 | ✅ |
+| **0.5 × 0.5** | (0.325, 0, 0.225) | **0.395** | ❌ |
+| **0.6 × 0.6** | (0.028, 0, 0.324) | **0.325** | ❌ |
+| 0.7 × 0.7 | (−0.323, 0, 0.441) | 0.547 | ✅ |
+
+Root cause: `(0,0,0)` means both *"I see nothing"* and *"I see a moderate threat
+and chose to slow."* The semantic layer compares **control outputs**, and control
+outputs are a non-injective projection of what was perceived — two different
+world-states map to the same command.
+
+**Who must act:**
+* **M3 Pratik** — until this is fixed, build the scene with a **frame-dominating**
+  obstacle (≥ 0.7 of frame height). Anything in the 0.5–0.6 band demos as a
+  silent miss. This reinforces the existing scene-design rule for a second,
+  independent reason.
+* **M1 Suyash** — the fix is to attest the perception claim (detection count /
+  extent / confidence) rather than the control output. Cheapest interim: carry a
+  `detections_present` flag in the attested output so absence and hold stop
+  colliding.
+**Why:** worth stating plainly because it is also the strongest argument in the
+paper for attesting perception rather than control — and it is a measured result,
+not a hypothesis. `tests/test_baseline_controller.py` pins the band so the fix
+announces itself by turning those tests red.
+
 None as of 2026-08-18. Add the next OPEN entry directly below this line.
 
 ## Recent folded overrides

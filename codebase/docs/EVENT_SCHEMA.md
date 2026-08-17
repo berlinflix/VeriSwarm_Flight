@@ -169,10 +169,30 @@ What the drone actually did about the verdict.
 
 | `action` | meaning |
 |---|---|
-| `EXECUTE` | verified accept — fly the commanded action |
+| `EXECUTE` | verified accept — the supervisor released the commanded action |
+| `HOLD` | **the supervisor refused to release a command.** The most common non-nominal outcome by far — build this state first. |
 | `EXECUTE_DEGRADED` | legacy display value; must not authorize motion |
 | `SAFE_FALLBACK` | rejected — hover |
 | `DEFER` | no quorum or no semantic quorum — cautious hold |
+
+`outcome` is normally the consensus result (`ACCEPTED` / `REJECTED` /
+`NO_QUORUM`), but carries **`NO_DECISION`** when the round never reached consensus
+at all — a frame that failed to arrive, perception that raised, depth that failed,
+or attestation that errored. In that case `reason` names the specific failure
+(`frame_unavailable`, `perception_failure`, `depth_failure`,
+`attestation_failure`, `invalid_action`).
+
+`safe_action` also carries `reason`, plus `requested` and `released` on a
+completed round. **`requested` is what perception asked for; `released` is what
+the supervisor allowed.** Showing both side by side is the clearest single view of
+the safety boundary doing its job — and when they differ, `reason` says why.
+
+Reasons the supervisor emits: `authorized`, `operator_abort`,
+`autopilot_guard_unhealthy`, `state_estimate_unhealthy`, `perception_unhealthy`,
+`geofence_blocked`, `consensus_rejected`, `consensus_no_quorum`,
+`semantic_quorum_missing`, `forward_clearance_unproven`,
+`all_axis_clearance_unproven`, `command_expired`, `command_freshness_unproven`,
+`invalid_action`, `invalid_consensus`, `invalid_health_evidence`.
 
 ## `reputation`
 

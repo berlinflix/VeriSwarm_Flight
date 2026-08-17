@@ -36,7 +36,7 @@ codebase/                The VeriSwarm implementation
   optee/                 Trusted Application (C) + host client
   sim/                   PX4/Gazebo flight, co-visibility measurement
   eval/                  Experiment harness, figures, adversarial-patch transfer study
-  tests/                 102 property tests
+  tests/                 286 property + security tests
   results/               Measured CSVs behind the paper's tables
 ```
 
@@ -59,7 +59,7 @@ Verify your checkout is sound before changing anything:
 cd codebase && python -m pytest
 ```
 
-All 102 tests should pass. That's your baseline.
+All 286 tests should pass. That's your baseline.
 
 ## Relationship to the research paper
 
