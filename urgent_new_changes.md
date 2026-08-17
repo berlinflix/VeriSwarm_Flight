@@ -42,6 +42,67 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
+### 2026-08-18 — Two independent scenarios; use a PREBUILT environment; new webcam rig
+**Status:** OPEN
+**Changed:** three things, all affecting Pratik and Samik directly.
+
+**1. Two scenarios, not one split in half.** Pratik designs Scenario 1 *and*
+writes the procedure Samik follows to reproduce it. Samik designs Scenario 2 *and*
+writes the procedure Pratik follows. Each ships a pinned environment build,
+`settings.json`, asset/version manifest, seeded initial state, expected-outcome
+sheet, and a reproduction procedure written for the other operator. A scenario
+that runs only on the PC it was built on is an anecdote, not a result — and
+writing instructions precise enough for someone else forces the version-pinning
+gaps out in Week 2 instead of on stage.
+
+**2. Do NOT model a world. Start from a prebuilt environment.** CoSys AirSim /
+Colosseum ship ready-made environments (Blocks, Neighborhood, City, Landscape,
+Mountains, Forest, Africa). Building terrain in Unreal is days of work worth zero
+marks, and the shipped ones look better.
+
+**The catch that will otherwise waste a week:** the obstacle must be a **COCO
+class**. YOLOv8n detects 80 categories — person, car, bus, truck, boat, bench. It
+does **not** detect mountain, rock, cliff, building, or tree. Fly at a beautiful
+mountain and every drone honestly reports zero detections, every action is
+`(0,0,0)`, and the whole perception layer sits idle with nothing wrong. The Gazebo
+run already hit exactly this: a grey cube was invisible until a bus texture was
+applied.
+
+* Prefer **Neighborhood** or **City** — they already contain parked **cars and
+  trucks**, which YOLOv8n detects reliably and which are plausible UAV obstacles.
+* Want mountains for the look? Fine — **place a vehicle-class object** as the
+  actual obstacle inside it.
+* **Verify detection first, before building anything else.** Fly to the rehearsal
+  distance/altitude, capture one frame per vehicle, run YOLO, confirm conf ≥ 0.25
+  from every viewpoint. If it fails there, the scenario is dead and no protocol
+  work will rescue it.
+* Obstacle must fill **≥ 0.7 of frame height** — needed for a strong avoidance
+  action *and* to stay out of the semantic blind band (entry below).
+
+**3. New deliverable — the physical two-webcam co-visibility rig.** Two identical
+USB webcams on the Jetson, both looking at one object from different angles,
+running the real `protocol/covis_features.py` on live frames. It is the only part
+of the demo a judge can physically interfere with, and it shares no machine, no
+network path, and no software with the simulator — so it stands on its own if
+AirSim will not start.
+
+**Makes stale:** any M3/M4 text implying one shared scenario, or implying a world
+must be modelled from scratch. The old "build a bounded five-vehicle world" task.
+**Who must act:**
+* **M3 Pratik** — own Scenario 1 end to end. Pick a prebuilt environment. Run the
+  detection check before anything else.
+* **M4 Samik** — own Scenario 2 end to end, same rules, independently. Do not
+  reuse Pratik's environment choice; two different environments is the point.
+* **M2 Abhijan** — you own the physical rig, the printed patch, and the attack
+  choreography for the webcam demo. Test the *actual print* at the rehearsed
+  distance; paper, scale and lighting all change whether it works.
+* **M1 Suyash** — writes `tools/covis_live.py` (calls protocol code, must not
+  fork the algorithm). Full wiring, static IPs, and start order now in
+  [`DEMO_TOPOLOGY.md`](DEMO_TOPOLOGY.md).
+**Why:** the simulator was the single point of failure for the entire demo. Two
+scenarios on two PCs plus a physical rig that needs neither means three
+independent things must fail before there is nothing to show.
+
 ### 2026-08-18 — The crash demo is protected; do not remove it again
 **Status:** OPEN
 **Changed:** the unprotected controller is now an explicitly named module,

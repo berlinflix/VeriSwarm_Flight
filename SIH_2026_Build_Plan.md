@@ -175,6 +175,60 @@ attacked run using the same world, route, detector, initial state, and seed.
 - All unexpected accepts, releases, collisions, crashes, and result disagreements fail
   the campaign and remain in the artifact bundle.
 
+## Scenario ownership — two independent scenarios
+
+**Pratik and Samik each own one complete scenario, end to end.** Not one scenario
+split between them. Each designs the scene *and* the tasks the other must perform
+to reproduce it on their own PC.
+
+| | Owner | Second operator |
+|---|---|---|
+| **Scenario 1** | Pratik designs it and defines what Samik must do to reproduce it | Samik |
+| **Scenario 2** | Samik designs it and defines what Pratik must do to reproduce it | Pratik |
+
+**Why two.** A scenario that only runs on the PC it was built on is not a result,
+it is an anecdote. Cross-reproduction is the check — and because each person had
+to write instructions precise enough for someone else to follow, the pinning,
+versioning, and export gaps surface during Week 2 rather than on stage. It also
+means a scene that breaks on the day is not the whole demo.
+
+Each scenario ships with: a pinned environment build, a `settings.json`, an asset
+and version manifest, a seeded initial state, an expected-outcome sheet, and a
+reproduction procedure written for the *other* operator.
+
+### Start from a prebuilt environment — do not model a world
+
+CoSys AirSim / Colosseum ship prebuilt environments (Blocks, Neighborhood, City,
+Landscape, Mountains, Forest, Africa). **Use one.** Building terrain in Unreal is
+days of work that earns zero marks, and a hand-built scene looks worse than the
+shipped ones.
+
+**But the obstacle must be a COCO class.** YOLOv8n detects 80 COCO categories —
+person, car, bus, truck, boat, bench, traffic light. It does **not** detect
+"mountain", "rock", "cliff", "building", or "tree". Fly at a beautiful mountain
+and every drone honestly reports zero detections, every action is `(0,0,0)`, and
+the entire perception layer sits idle. The Gazebo run already hit this: a plain
+grey cube was invisible until a bus texture was applied to it.
+
+So:
+
+* **Prefer Neighborhood or City** — they already contain parked **cars and
+  trucks**, which YOLOv8n detects reliably and which are genuinely plausible
+  obstacles for a low-flying UAV.
+* If you want mountains or open terrain for the look, **place a vehicle-class
+  object** as the actual obstacle within it.
+* **Verify detection before building anything else.** Fly to the rehearsal
+  distance and altitude, capture one frame per vehicle, run YOLO, confirm the
+  obstacle is detected with confidence ≥ 0.25 from every drone's viewpoint. If it
+  is not, the scenario is dead and no amount of protocol work will save it.
+* The obstacle must fill **≥ 0.7 of frame height** — required both for a strong
+  avoidance action and to stay clear of the semantic blind band (see
+  `urgent_new_changes.md`).
+
+What remains genuinely yours: `settings.json` for five vehicles, camera
+placement and calibration, the patch object, seeded reset, and version pinning.
+That is configuration and verification work, not world-building.
+
 ## M3 — Pratik: CoSys world, perception, and calibration
 
 ### Environment and world
@@ -182,8 +236,9 @@ attacked run using the same world, route, detector, initial state, and seed.
 1. Install CoSys AirSim on Pratik’s PC and pin every relevant version. Export the exact
    settings and a one-command smoke test that connects, enumerates all vehicles, captures
    one RGB/depth pair per vehicle, reads pose/health, and resets cleanly.
-2. Build a bounded five-vehicle world with a close, frame-relevant obstacle, collision
-   detection, known dimensions, and independent ground-truth logging.
+2. Select a prebuilt environment per the section above and confirm the obstacle is a
+   detectable COCO class at the rehearsal geometry before anything else is built.
+   Record collision detection, known dimensions, and independent ground-truth logging.
 3. Place adversarial artifacts as physical 3-D scene objects/textures so viewpoint,
    lighting, occlusion, scale, antialiasing, and depth are produced by the renderer. Keep
    any 2-D pixel-patch harness only as a separate unit/evaluation test.
@@ -254,6 +309,45 @@ attacked run using the same world, route, detector, initial state, and seed.
 - Killing VeriSwarm, pausing it beyond TTL, or partitioning it from the command adapter
   causes HOLD without an operator action.
 - Campaign results reproduce on both Pratik’s and Samik’s PCs from the committed bundle.
+
+## Half B — the physical co-visibility rig (new deliverable)
+
+Everything above is simulated. This is the co-visibility algorithm running on
+**two real webcams**, in front of the judge, on hardware they can touch — and it
+is the only part of the demo a judge can interfere with directly.
+
+Two identical USB webcams, ~30 cm apart, both looking at the same object, wired
+into the Jetson. `tools/covis_live.py` runs the real `protocol/covis_features.py`
+(ORB + RANSAC, already unit-tested) on the live pair and displays: both feeds,
+the matches drawn between them, the inlier count against `m_min = 15`, and the
+co-visible verdict. With YOLO on both feeds it also shows each camera's action
+and the L2 between them against θ.
+
+Three judge-operable moments:
+
+1. **Slide one camera away** — inliers fall, verdict flips to *not co-visible*,
+   the semantic layer abstains. Shows why the false-positive rate is low.
+2. **Hold the printed patch in front of one camera** — its detections vanish, its
+   action diverges, L2 crosses θ, **DISPUTE**. A physical attack caught by a
+   second viewpoint.
+3. **Cover that camera completely** — detections vanish identically, but so does
+   the scene. Absence of evidence is not evidence of absence, which is exactly
+   the distinction the protected controller makes and the baseline does not.
+
+Rehearse (3): a sharp judge will ask it, and having the answer already on screen
+beats explaining it.
+
+**Ownership.** *Suyash* writes `tools/covis_live.py` — it calls protocol code
+directly and must not fork the algorithm. *Abhijan* owns the physical rig, the
+printed patch (print it, test the actual print at the rehearsed distance —
+paper, scale and lighting all matter), and the attack choreography, since he owns
+attack delivery.
+
+**Why it stands alone.** It shares no machine, no network path, and no software
+with the simulator. If AirSim will not start, this still tells a complete story
+about the core algorithm, on real photons.
+
+Full wiring, IPs, and start order: `DEMO_TOPOLOGY.md`.
 
 ## Schedule and handoffs
 
