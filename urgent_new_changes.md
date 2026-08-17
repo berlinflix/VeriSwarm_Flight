@@ -42,6 +42,50 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
+### 2026-08-18 — Explicit protected waypoint follower is Samik's critical path
+**Status:** FOLDED into [`SAMIK_EXECUTION_PLAN.md`](SAMIK_EXECUTION_PLAN.md),
+[`SUYASH_EXECUTION_PLAN.md`](SUYASH_EXECUTION_PLAN.md) and
+[`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+
+**Changed:** “waypoint layer” is no longer implicit inside planning. Samik explicitly owns
+`codebase/autonomy/waypoint_follower.py`. It consumes a versioned path, current estimator
+state and signed mission limits; produces deterministic bounded candidate velocities; uses
+look-ahead, braking-based approach, position-plus-velocity dwell arrival, progress/stuck
+detection and bounded replan; and returns HOLD on invalid/stale/changed inputs.
+
+The final combination rule is constraint-based, never
+`waypoint_velocity + YOLO_avoidance_velocity`. Mission/path creates intent; geometric
+depth/LiDAR/map/geofence/peer constraints eliminate unsafe candidates; semantic perception
+is separately attested; `AutonomyDecisionRecord` binds the exact selected candidate to its
+mission/path/map/estimator/perception evidence; `SafetySupervisor` gates that exact command
+and TTL before `CommandSink`.
+
+The current `MissionRunner` still treats `inference(frame)` as the requested action. Before
+protected A→B is accepted, Suyash must freeze separate `PerceptionClaim` and
+`WaypointProposal` contracts and Samik must refactor `AutonomyRunner` so detector output is
+not disguised as the waypoint command. An accepted perception certificate may not
+authorize an unrelated/unbound command.
+
+**Makes stale:** any claim that YOLO drives to B, any blind vector addition, any use of
+direct `moveToPositionAsync` after smoke tests, and any “swarm continues to B” narration
+before waypoint gates W0–W3 pass.
+
+**Who must act:** Samik implements the follower, local-safety integration, decision binding
+and protected A→B tests immediately after the Cosys adapter. Suyash freezes/reviews the
+claim/proposal/decision/supervisor contracts. Pratik's existing A/B/path/geofence/calibration
+handoff supplies the scenario inputs. Abhijan later injects stale path/map/pose, blocked
+route and rejected-perception cases without setting the output.
+
+**Definition of done:** deterministic replay reaches `ARRIVED`; one Cosys drone follows A→B
+through `SafetySupervisor → CommandSink` without direct movement calls; obstacle change
+causes versioned replan; complete blockage yields HOLD/`NO_PATH`; stale/rejected/missing
+evidence cannot release the command; and three cold protected repetitions retain complete
+mission-to-command evidence with zero collision/geofence violations.
+
+**Why:** the old perception loop could react when it saw something but had no component
+that continuously converted mission progress toward B into a safe requested velocity. This
+is the shortest path from a stationary/reactive demo to a functional autonomous product.
+
 ### 2026-08-18 — Jetson runs webcams first, then Alpha with OP-TEE; no shared swarm key
 **Status:** FOLDED into [`DEMO_TOPOLOGY.md`](DEMO_TOPOLOGY.md) and
 [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.

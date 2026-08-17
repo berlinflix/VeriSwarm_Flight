@@ -293,9 +293,14 @@ reset, API control and arming must be requested again.
    minimum separation and land sequentially.
 5. **F4 — adapter:** replace direct smoke commands with Samik’s `CommandSink`; prove TTL,
    wrong-frame, non-finite and API-loss cases yield HOLD/LAND.
-6. **F5 — mission path:** connect `AutonomyRunner → SafetySupervisor → CommandSink`.
+6. **F5 — waypoint follower:** implement `waypoint_follower.py`; follow a versioned path,
+   approach/stop at B using position-plus-velocity dwell, detect no progress, and request
+   bounded replan. Do not add a YOLO action vector.
+7. **F6 — protected mission path:** separate `PerceptionClaim` from `WaypointProposal`, bind
+   both to the selected command in `AutonomyDecisionRecord`, then connect
+   `AutonomyRunner → SafetySupervisor → CommandSink`.
    Direct `moveToPositionAsync` remains only in the isolated F0–F3 smoke utility.
-7. **F6 — attacks:** only after F5 is repeatable does Abhijan inject attacks at named route
+8. **F7 — attacks:** only after F6 is repeatable does Abhijan inject attacks at named route
    checkpoints. Never debug connectivity, navigation and an attack simultaneously.
 
 **F2 acceptance:** start from reset three times; `alpha` reaches B within the predeclared
@@ -510,6 +515,27 @@ YOLO avoidance contribution. Emergency collision/geofence constraints dominate m
 progress. Detector silence does not authorize forward motion without independent free-space
 evidence.
 
+**Explicit Samik deliverable:** `autonomy/waypoint_follower.py` consumes a versioned path
+plus current estimator state and mission limits, then produces a deterministic ordered set
+of bounded candidate velocities—not a supposedly safe actuator command. It must implement
+monotonic waypoint advancement, bounded look-ahead, braking-based approach speed,
+position-plus-velocity arrival with dwell, progress/stuck detection and bounded replan
+requests. Invalid/stale state or a changed/empty path produces HOLD, never reuse of the last
+motion request.
+
+The integration must separate three objects that the old code conflates:
+
+1. `PerceptionClaim` — what the detector observed and peers verified;
+2. `WaypointProposal` — how the local mission/path follower proposes progressing;
+3. `AutonomyDecisionRecord` — the exact path/map/estimator/perception evidence and selected
+   candidate submitted to `SafetySupervisor`.
+
+An accepted perception certificate cannot authorize an unrelated waypoint command. The
+decision record binds the exact selected candidate and all evidence versions; the
+supervisor gates that exact command and TTL. The current `MissionRunner` still treats
+`inference(frame)` as the requested action, so protected A→B is not accepted until this
+separation is implemented and its W0–W3 gates in `SAMIK_EXECUTION_PLAN.md` pass.
+
 ### 7. Detection, tracking, and alert fusion
 
 - Run the actual RGB detector on every accepted frame; retain input/model/runtime hashes.
@@ -589,7 +615,7 @@ These paths make ownership reviewable; new files should be created under `codeba
 | Suyash | `docs/AUTONOMY_CONTRACT.md`, `docs/COVIS_LIVE.md`, `tools/covis_live.py`, `tools/optee_preflight.py`, `tools/event_collector.py`, `console/app.py`, `autonomy/contracts.py`, `autonomy/decision_record.py`, `models/registry.json`, `node/mission.py`, `perception/safety_supervisor.py`, `docs/MODEL_SELECTION_REPORT.md` approval and final `RUNBOOK.md` |
 | Abhijan | `attacks/scenarios/*.json`, `attacks/runner.py`, `attacks/oracle.py`, adversarial tests, the printed/webcam attack rig and attack artifacts outside `models/approved/` |
 | Pratik | `sim/cosys/contested_border/` scenario bundle, explicit `settings.json`, calibration/sensor/world manifests, truth exporter and local ignored `data/model_selection/` captures |
-| Samik | `tools/fetch_models.py`, `eval/model_selection.py`, `autonomy/mission_manager.py`, `autonomy/state_estimator.py`, `autonomy/mapper.py`, `autonomy/planner.py`, `autonomy/task_allocator.py`, `autonomy/tracker.py`, `autonomy/local_safety.py`, `sim/cosys_adapter.py` and `tools/run_campaign.py` |
+| Samik | `tools/fetch_models.py`, `eval/model_selection.py`, `autonomy/mission_manager.py`, `autonomy/state_estimator.py`, `autonomy/mapper.py`, `autonomy/planner.py`, `autonomy/waypoint_follower.py`, `autonomy/task_allocator.py`, `autonomy/tracker.py`, `autonomy/local_safety.py`, `sim/cosys_adapter.py` and `tools/run_campaign.py` |
 
 ## M1 — Suyash deliverables
 
@@ -729,17 +755,20 @@ Samik’s deliverable is not “help Pratik with AirSim.” It is one concrete s
    distinctly, timestamps updates, and exposes a versioned planning grid.
 6. **Global planner** — A* route generation and deterministic replan on obstruction,
    task change, uncertainty change, or invalidated path.
-7. **Task allocator** — scored monotonic leases, heartbeat/health handling, deterministic
+7. **Waypoint follower** — consumes estimator state plus a versioned path and produces
+   bounded candidate velocities with look-ahead, braking approach, dwell-based arrival,
+   progress/stuck detection and bounded replan; it never adds a YOLO vector to a waypoint.
+8. **Task allocator** — scored monotonic leases, heartbeat/health handling, deterministic
    tie-breaks, unfinished-cell return, and confirmation-drone assignment.
-8. **Target tracker/fusion** — world-coordinate tracks, uncertainty, duplicate association,
+9. **Target tracker/fusion** — world-coordinate tracks, uncertainty, duplicate association,
    confirmation state, and alert lifecycle using validated detector outputs.
-9. **Local safety filter** — candidate velocity generation and rejection against depth,
+10. **Local safety filter** — candidate velocity generation and rejection against depth,
    map unknowns, geofence/no-fly areas, predicted peer separation, dynamics, braking,
    command continuity, and estimator uncertainty. Empty safe set means HOLD.
-10. **Supervisor-only command sink** — clamps and expires commands, rejects non-finite or
+11. **Supervisor-only command sink** — clamps and expires commands, rejects non-finite or
     wrong-frame/repeated input, streams at the required offboard rate, and proves link-loss
     HOLD/LAND behavior. No planner or consensus code may call Cosys/PX4 directly.
-11. **Campaign/model runner** — owns `tools/fetch_models.py`; validates all model/config
+12. **Campaign/model runner** — owns `tools/fetch_models.py`; validates all model/config
     hashes, cold-starts the system, waits for preflight,
     runs one named scenario, stops safely, resets all transient state, and gathers/hashes
     every artifact.
@@ -747,7 +776,9 @@ Samik’s deliverable is not “help Pratik with AirSim.” It is one concrete s
 ### Samik acceptance
 
 - **A→B:** in an empty known corridor, the drone reaches the waypoint within the declared
-  tolerance and stops; it does not drift forever or overshoot without a bound.
+  position and velocity tolerances for the required dwell and stops; it does not drift,
+  oscillate, reuse a stale path or overshoot without a bound. The decision trace binds
+  `PerceptionClaim`, `WaypointProposal`, path/map/estimator versions and released command.
 - **Replanning:** a new obstacle invalidates the route, A* returns a different collision-free
   path, and the executed path matches the approved route/constraint log.
 - **Unclassified geometry:** rocks, trees, walls and buildings that have no detector class
@@ -801,15 +832,19 @@ vehicle/sensor names, configuration hashes, candidate model hashes and smoke res
 
 ### Phase 1 — single-drone autonomy
 
-- Mission manager, sensor adapter, estimator interface, occupancy map, A*, local safety
-  filter, command sink and decision record.
+- Mission manager, sensor adapter, estimator interface, occupancy map, A*, explicit
+  waypoint follower, local safety filter, command sink and decision record.
+- Separate detector `PerceptionClaim` from `WaypointProposal`; bind both to the exact
+  selected command in `AutonomyDecisionRecord`. Do not add their vectors.
 - Demonstrate A→B, obstacle replan, blocked `NO_PATH`, TTL expiry and process-loss HOLD.
 - In parallel, Pratik freezes the model-selection tune/test split; Samik benchmarks
   `yolov8n/s/m`; Suyash approves at most one candidate and records the decision. This
   perception subtask does not block geometric navigation work.
 
 **Gate G1:** one drone completes a waypoint route using actual sensor-derived free space,
-with zero collision/geofence violations and full decision traceability.
+with dwell-based arrival, bounded overshoot/replan behavior, zero collision/geofence
+violations and full traceability from mission/path/perception evidence to the exact released
+command.
 
 ### Phase 2 — GPS-denied localization
 

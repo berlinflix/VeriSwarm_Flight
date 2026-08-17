@@ -204,10 +204,15 @@ Create reproducible cases for:
 - thin/small geometry;
 - fully blocked corridor;
 - planner timeout/resource cap;
+- stale/replayed path or map version;
+- modified/out-of-geofence waypoint and active-index rollback;
+- false progress, stuck/no-progress and repeated replan exhaustion;
 - false overhead clearance.
 
-The attack changes sensor/map/planner inputs, not the planner's return value. Verify that
-rocks/trees/walls/buildings affect navigation independently of YOLO labels.
+The attack changes sensor/map/planner/path inputs, not the planner/follower's return value.
+Verify that rocks/trees/walls/buildings affect navigation independently of YOLO labels and
+that no accepted perception certificate can be reused to authorize a substituted waypoint
+command.
 
 **Gate A6:** unsafe/unknown routes are never traversed; a complete blockage yields
 HOLD/`NO_PATH`; cleanup restores the clean map/scene state.

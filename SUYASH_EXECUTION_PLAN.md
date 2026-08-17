@@ -74,6 +74,10 @@ Define machine-readable types for:
 - `MapSnapshot`—frame, resolution/origin, version, timestamp, free/occupied/unknown;
 - `TaskLease`—task, owner, monotonic version, issue/expiry and completion state;
 - `TargetTrack`—class, state, covariance, observation IDs and confirmation status;
+- `PerceptionClaim`—frame/input/model/runtime identity plus detection presence/count,
+  supported classes, confidence/extent summary, supporting depth and validity;
+- `WaypointProposal`—path/map/estimator versions, active waypoint, candidate velocities,
+  progress/arrival/replan status and reason;
 - `AutonomyDecisionRecord`—mission/task/map/estimator/perception inputs, candidates,
   rejected constraints, requested action and reason;
 - `CommandRequest/Release/Acknowledgement`—vehicle, frame, timestamp, TTL, bounds,
@@ -95,12 +99,16 @@ the same conformance suite; malformed/unknown/stale samples are rejected determi
    cannot reach the raw command API.
 3. Bind authorization to exact requested/released action, vehicle, frame, mission/epoch,
    timestamp, TTL and decision evidence.
-4. Reject NaN/Inf, wrong dimensions/frames, stale/repeated requests, unhealthy state,
+4. Refactor the integration seam so `PerceptionClaim` is the attested/peer-verified scene
+   evidence and Samik's `WaypointProposal` is a separate mission-intent input. Bind their
+   versions/IDs and the exact selected candidate in `AutonomyDecisionRecord`; an accepted
+   perception certificate cannot authorize a different command.
+5. Reject NaN/Inf, wrong dimensions/frames, stale/repeated requests, unhealthy state,
    unknown clearance and out-of-envelope commands.
-5. Ensure expired/missing/rejected/no-quorum/unhealthy/unknown cases become HOLD; only a
+6. Ensure expired/missing/rejected/no-quorum/unhealthy/unknown cases become HOLD; only a
    separately validated recovery state may LAND.
-6. Ensure process death or simulator pause cannot repeat the last nonzero command.
-7. Record requested action, rejected constraints, released action and acknowledgement.
+7. Ensure process death or simulator pause cannot repeat the last nonzero command.
+8. Record requested action, rejected constraints, released action and acknowledgement.
 
 **Gate Y2:** deterministic tests show no bypass and every absent/invalid evidence path ends
 in a bounded safe result. The clean path still authorizes a valid command.
@@ -274,6 +282,8 @@ Suyash must own/add tests for:
 
 - schema bounds, unknown versions/enums and canonical serialization;
 - supervisor authorization and every fail-closed reason;
+- separation/binding of `PerceptionClaim`, `WaypointProposal` and the exact selected
+  command, including substitution and stale-version attempts;
 - command-path import/call-graph bypass attempts;
 - semantic presence/action alias sweep and cross-version receipts;
 - authority signature, wrong pinned key and model/runtime mismatch;
@@ -306,7 +316,8 @@ Never store the authority private key or an OP-TEE private key in evidence.
 
 ## 6. Suyash's immediate work queue
 
-1. Freeze the autonomy/sensor/task/track/command/attack/event contracts.
+1. Freeze the autonomy/sensor/task/track/command/attack/event contracts, including the
+   explicit `PerceptionClaim`/`WaypointProposal` separation required for protected A→B.
 2. Fix and test the semantic blind band.
 3. Complete model registry and independent candidate approval workflow.
 4. Deploy and execute OP-TEE preflight on the real Jetson.

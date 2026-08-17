@@ -60,6 +60,7 @@ bury workarounds in code.
 | `codebase/autonomy/state_estimator.py` | Estimator/VIO health and uncertainty interface |
 | `codebase/autonomy/mapper.py` | Timestamped occupied/free/unknown representation |
 | `codebase/autonomy/planner.py` | Coverage and deterministic A* route/replan logic |
+| `codebase/autonomy/waypoint_follower.py` | Convert a validated path into bounded mission-progress velocity candidates |
 | `codebase/autonomy/task_allocator.py` | Task leases, heartbeats, reassignment and tie-breaking |
 | `codebase/autonomy/tracker.py` | World-coordinate tracks, association and confirmation state |
 | `codebase/autonomy/local_safety.py` | Candidate-command filtering against all motion constraints |
@@ -128,7 +129,139 @@ client from a planner object.
 case produces a logged safe result. Run the S1 route through this adapter, not through a
 direct smoke command.
 
-### S3 — implement the campaign runner and Alpha placement
+### S3 — implement the protected waypoint-follower MVP
+
+This is the missing layer that makes “continue to B” real. It is the next functional
+product milestone after the command adapter and must not be hidden inside YOLO or the Cosys
+client.
+
+#### S3.1 Module boundary
+
+Implement `codebase/autonomy/waypoint_follower.py` as a deterministic, simulator-independent
+module. It must not import Cosys, PX4, YOLO, the attack runner or the command sink.
+
+Its validated input contains:
+
+- mission ID/epoch and current monotonic time;
+- one explicit command frame;
+- current estimator pose, velocity, covariance/uncertainty, timestamp and health;
+- path ID/version, map version and ordered 3-D waypoints;
+- current monotonic waypoint index;
+- geofence/altitude and vehicle speed/acceleration/braking limits from the signed mission;
+- previous released command and timestamp;
+- configured arrival position/velocity tolerances, dwell time, progress window and maximum
+  bounded replan attempts.
+
+Its output is a `WaypointProposal`, not an actuator command. It contains:
+
+- status: `TRACKING`, `ARRIVED`, `REPLAN_REQUIRED`, `HOLD_INVALID_PATH`,
+  `HOLD_STALE_STATE`, `HOLD_LOCALIZATION`, or `ABORTED`;
+- active waypoint index and look-ahead point;
+- a bounded, deterministically ordered set of candidate map-frame velocities, always
+  including HOLD;
+- along-track/cross-track error, distance remaining and progress since the last window;
+- path/map/estimator versions and reason code;
+- triggers requesting replan, task completion or mission abort.
+
+The follower never returns “safe.” Only the local safety filter and supervisor can make
+that determination.
+
+#### S3.2 Deterministic following algorithm
+
+For each control cycle:
+
+1. Validate mission/epoch, frames, finite values, estimator health/age, path/map versions,
+   nonempty route, waypoint bounds and all limits. Invalid or stale input returns HOLD with
+   a reason; it never reuses the last nonzero proposal.
+2. Project the estimated position onto the current path segment and compute along-track and
+   cross-track error. Waypoint index is monotonic; estimator noise cannot move ownership
+   backwards without a versioned replan.
+3. Choose a bounded look-ahead point on the validated path. Clamp look-ahead using current
+   speed, braking capability, path curvature, map resolution and estimator uncertainty.
+4. Compute the nominal direction toward that point in the declared map frame.
+5. Schedule speed using remaining stopping distance, curvature, uncertainty and signed
+   mission limits. Close to the goal, reduce speed so the vehicle can stop inside the
+   arrival envelope; never fly full speed until the position merely crosses B.
+6. Generate deterministic alternatives around the nominal request: slower versions and
+   bounded lateral/vertical candidates allowed by the path/mission. Do not assert that any
+   alternative is collision-free.
+7. Pass candidates plus their exact path/estimator/map versions to `local_safety.py`.
+8. The local safety filter rejects candidates violating current depth/LiDAR clearance,
+   occupied/unknown space, braking, overhead clearance, altitude, geofence, peer
+   separation, dynamics, continuity or uncertainty.
+9. Select the surviving candidate with lowest deterministic cost: first invariant safety,
+   then mission progress, path deviation, smoothness and energy. If none survives, HOLD
+   and request replan where appropriate.
+10. Declare a waypoint reached only when position **and** speed remain inside the configured
+    arrival envelope for the configured dwell time. Then advance exactly one index.
+11. Declare final `ARRIVED` only after the final waypoint satisfies the same dwell rule;
+    request HOLD/hover before land/next task.
+12. If progress remains below the configured bound for its window while commands were
+    actually released, request a versioned replan. After bounded failed replans, return
+    HOLD/`NO_PATH`; never oscillate indefinitely.
+
+All tolerances come from the signed mission/vehicle envelope. Do not invent universal
+numbers in source code.
+
+#### S3.3 Exact perception/waypoint combination rule
+
+Do **not** calculate `waypoint_velocity + YOLO_avoidance_velocity`.
+
+The integration rule is:
+
+1. The signed mission, estimator and current A*/coverage path create mission intent.
+2. The waypoint follower creates candidate motion requests toward the next path point.
+3. Depth/LiDAR, occupancy, geofence, dynamics and peer state remove geometrically unsafe
+   candidates.
+4. Semantic perception receipts/certificates establish whether the current scene evidence
+   is trustworthy and may create mission constraints, alerts or replans. They are not a
+   second velocity vector.
+5. `AutonomyDecisionRecord` binds the mission/task, path/map/estimator versions,
+   perception-certificate IDs, rejected constraints and exact selected candidate.
+6. `SafetySupervisor` evaluates that exact selected command, its current evidence and TTL.
+7. Only the supervisor-released command reaches `CommandSink`.
+
+The current `node.mission.MissionRunner` calls `inference(frame)` and treats that result as
+the requested action. Before the protected waypoint gate, refactor this seam so detector
+output becomes a versioned `PerceptionClaim` and waypoint output becomes the separate
+candidate command. Do not disguise a waypoint velocity as detector output, and do not let
+an accepted perception receipt automatically authorize an unrelated command. Suyash owns
+the versioned contract; Samik owns its implementation in `AutonomyRunner`.
+
+#### S3.4 Fast implementation sequence
+
+1. Implement pure waypoint/path/estimator dataclasses and validation.
+2. Implement straight-line and multi-segment following with HOLD/arrival/stuck states.
+3. Add look-ahead, braking-based speed schedule and monotonic waypoint advancement.
+4. Add deterministic candidate generation and integrate `local_safety.py`.
+5. Refactor `MissionRunner`/`AutonomyRunner` to separate `PerceptionClaim` from
+   `WaypointProposal` and bind both in `AutonomyDecisionRecord`.
+6. Connect the selected proposal through `SafetySupervisor → CommandSink`.
+7. Run an empty-corridor A→B route, then obstacle/replan, then five distinct routes.
+
+#### S3.5 Required waypoint tests and gates
+
+Unit tests must cover straight path, multi-segment path, altitude change, noisy cross-track
+pose, slow approach, overshoot prevention, dwell-based arrival, stale pose, unhealthy
+localization, wrong frame, empty/changed path, non-finite data, index monotonicity, command
+continuity, no progress, bounded replans and no safe candidate.
+
+Integration tests must prove:
+
+- **W0:** the pure follower reaches terminal `ARRIVED` in deterministic kinematic replay;
+- **W1:** one Cosys drone follows A→B through `SafetySupervisor → CommandSink`, stops inside
+  the declared position/velocity envelope and never uses direct `moveToPositionAsync`;
+- **W2:** a new obstacle invalidates the path, causes a versioned A* replan and produces a
+  different safe executed route; full blockage yields HOLD/`NO_PATH`;
+- **W3:** rejected/stale/missing perception evidence, expired command, estimator loss or
+  map uncertainty cannot release the selected waypoint command;
+- **W4:** five vehicles follow separate paths to distinct `B_i` goals while maintaining
+  the signed separation envelope.
+
+**Gate S3:** W0–W3 pass from three cold resets with complete decision/command evidence.
+Until then, the claim “the protected drone autonomously continues to B” is prohibited.
+
+### S4 — implement the campaign runner and Alpha placement
 
 Build `tools/run_campaign.py`; do not add a CLI to `node.mission` merely to hide missing
 integration. The runner must:
@@ -150,10 +283,10 @@ Provide `--dry-run`, `--preflight-only`, `--scenario`, `--seed`, `--attack-manif
 `--evidence-dir`, `--host` and explicit node-selection options. A dry run may inspect but
 must not arm.
 
-**Gate S3:** the runner cold-starts and safely terminates clean, OP-TEE-unavailable,
+**Gate S4:** the runner cold-starts and safely terminates clean, OP-TEE-unavailable,
 peer-missing, Cosys-missing and Ctrl-C cases without orphan motion or overwritten evidence.
 
-### S4 — state estimation and GPS-denied navigation
+### S5 — state estimation and GPS-denied navigation
 
 1. Select and pin one VIO implementation/configuration; record camera/IMU calibration and
    timestamp requirements.
@@ -165,11 +298,11 @@ peer-missing, Cosys-missing and Ctrl-C cases without orphan motion or overwritte
 6. Reduce speed or HOLD when uncertainty exceeds signed mission bounds; never mask VIO
    loss with true Cosys pose.
 
-**Gate S4:** healthy, GNSS-loss, gradual spoof, step spoof, VIO drift/reset/dropout and
+**Gate S5:** healthy, GNSS-loss, gradual spoof, step spoof, VIO drift/reset/dropout and
 timestamp-skew tests produce the declared modes and safe behavior. The GPS-denied route
 passes its predeclared error/uncertainty envelope or ends safely.
 
-### S5 — mapping, planning and local safety
+### S6 — mapping, planning and local safety
 
 1. Convert depth/LiDAR into a time-bounded map with distinct free, occupied and unknown
    states.
@@ -182,11 +315,11 @@ passes its predeclared error/uncertainty envelope or ends safely.
 6. Permit a climb only when upward clearance, altitude and geofence all pass; otherwise use
    a lateral route or HOLD/`NO_PATH`.
 
-**Gate S5:** clear route, new obstacle, moving obstacle, thin/small obstacle, stale map,
+**Gate S6:** clear route, new obstacle, moving obstacle, thin/small obstacle, stale map,
 fully blocked corridor and planner-timeout cases all match their invariant. No-path never
 becomes forward motion.
 
-### S6 — swarm mission autonomy
+### S7 — swarm mission autonomy
 
 1. Decompose the border corridor into versioned tasks/cells.
 2. Allocate deterministic leases using health, energy reserve, distance and capability.
@@ -198,11 +331,11 @@ becomes forward motion.
 8. Complete surveillance, GPS-denied, attack and SAR-diversion checkpoints inside the one
    scenario.
 
-**Gate S6:** killing or isolating one node returns its unfinished tasks, a healthy vehicle
+**Gate S7:** killing or isolating one node returns its unfinished tasks, a healthy vehicle
 completes them, all required traversable cells reach a declared terminal state and no
 collision/geofence/separation invariant fails.
 
-### S7 — perception model acquisition, tracking and alerts
+### S8 — perception model acquisition, tracking and alerts
 
 1. Implement registry-only staged acquisition for official `yolov8s.pt` and `yolov8m.pt`.
 2. Never auto-download during an accepted run; a missing or mismatched file fails startup.
@@ -215,11 +348,11 @@ collision/geofence/separation invariant fails.
 6. Make only validated person/common-vehicle claims unless a separately approved domain
    model passes its own evaluation.
 
-**Gate S7:** selected model/runtime fits the command deadline and held-out thresholds;
+**Gate S8:** selected model/runtime fits the command deadline and held-out thresholds;
 tracks survive declared occlusion; duplicate views fuse; false cues do not directly become
 confirmed alerts.
 
-### S8 — adversarial and reliability integration
+### S9 — adversarial and reliability integration
 
 Expose only reviewed, named fault-injection boundaries. For every attack manifest:
 
@@ -232,7 +365,7 @@ Expose only reviewed, named fault-injection boundaries. For every attack manifes
 Run clean baseline before each attack family, then model swap, perception, navigation,
 mapping, C2 and availability campaigns. Repeat on Pratik's and Samik's installations.
 
-**Gate S8:** zero unsafe release, protected collision, geofence or separation violation in
+**Gate S9:** zero unsafe release, protected collision, geofence or separation violation in
 the declared campaign; every run completes or enters its declared safe terminal state.
 
 ## 5. Test obligations
@@ -246,6 +379,10 @@ Samik must add tests for:
 - collision/geofence/separation/watchdog behavior;
 - VIO uncertainty, reset, dropout and GNSS-mode transitions;
 - occupied/free/unknown map semantics and stale-map rejection;
+- waypoint validation, progress, look-ahead, braking approach, arrival dwell, overshoot,
+  stuck/replan and candidate ordering;
+- separation of `PerceptionClaim` from `WaypointProposal`, including proof that an accepted
+  perception certificate cannot authorize a different/unbound command;
 - A* replan/no-path/timeout determinism;
 - lease replay/conflict/expiry and node death;
 - process startup rollback and cleanup idempotence;
@@ -278,18 +415,21 @@ teleport, truth leak, overwritten failure or undocumented setting.
 2. Deliver S0 reproduction report.
 3. Implement `cosys_smoke_flight.py` and pass F0–F3.
 4. Implement `cosys_adapter.py` and supervisor-only movement.
-5. Implement `run_campaign.py`, with the Alpha originator executing on the Jetson.
-6. Integrate state estimator/VIO.
-7. Implement map, A*, local safety and no-path behavior.
-8. Implement task allocation/reassignment and tracking.
-9. Benchmark the two candidate models.
-10. Integrate Abhijan's attacks only after clean gates pass.
+5. Implement `waypoint_follower.py`, the perception/command separation and pass W0–W3.
+6. Implement `run_campaign.py`, with the Alpha originator executing on the Jetson.
+7. Integrate state estimator/VIO.
+8. Complete map, A*, local safety and no-path behavior.
+9. Implement task allocation/reassignment and tracking.
+10. Benchmark the two candidate models.
+11. Integrate Abhijan's attacks only after clean gates pass.
 
 ## 8. Definition of done for Samik
 
 Samik is done only when the frozen mission starts cleanly on both simulator PCs; Alpha's
 originator runs on the post-webcam Jetson with verified OP-TEE signing; five vehicles
 complete or safely terminate their assigned work; geometric obstacles cause safe replan;
+the waypoint follower advances through versioned paths and reaches goals without blindly
+adding perception vectors or bypassing safety;
 GPS-denied operation uses measured VIO rather than truth; failed tasks are reassigned;
 supported targets become evidence-backed alerts; every command passes the supervisor and
 adapter; all declared attacks fail safely; and a teammate reproduces the run from the final
