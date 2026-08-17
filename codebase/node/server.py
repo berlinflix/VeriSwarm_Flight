@@ -81,6 +81,7 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
         self.peer_verifier = PeerVerifier(
             my_id, self.signer, self.receipt_verifier,
             o_min=float(manifest.get("o_min", 0.1)),
+            phi_min=float(manifest.get("phi_min", 0.0)),
             on_covis=self._emit_covis,
         )
         self.my_pose = common.pose_of(entry)
@@ -124,6 +125,8 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
             iou=diag.iou,
             orb_inliers=diag.orb_inliers,
             o_min=diag.o_min,
+            parallax_deg=diag.parallax_deg,
+            phi_min=diag.phi_min,
             detail=diag.describe(),
         )
 

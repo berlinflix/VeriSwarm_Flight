@@ -63,7 +63,13 @@ from .receipts import (
     VerificationResult,
     sha256_hex,
 )
-from .geometry import DEFAULT_HFOV, DEFAULT_VFOV, Pose, covisibility
+from .geometry import (
+    DEFAULT_HFOV,
+    DEFAULT_VFOV,
+    Pose,
+    covisibility,
+    parallax_angle,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -265,21 +271,29 @@ class CoVisDiagnostic:
     """
 
     covisible: bool
-    method: str                     # "geometric" | "features" | "none"
+    method: str                     # "geometric" | "features" | "low_parallax" | "none"
     iou: Optional[float]            # measured footprint overlap, None if no poses
     orb_inliers: Optional[int]      # RANSAC inliers, None if the fallback did not run
     o_min: float
     m_min: int
+    parallax_deg: Optional[float] = None  # inter-view angle at the shared patch
+    phi_min: float = 0.0                  # required parallax; 0 disables the check
 
     def describe(self) -> str:
         """One-line human summary, for logs and the live console."""
+        angle = (f", phi={self.parallax_deg:.1f} deg"
+                 if self.parallax_deg is not None else "")
         if self.method == "geometric":
-            return f"co-visible (geometric): o={self.iou:.3f} >= {self.o_min}"
+            return f"co-visible (geometric): o={self.iou:.3f} >= {self.o_min}{angle}"
+        if self.method == "low_parallax":
+            return (f"NOT co-visible (redundant viewpoint): o={self.iou:.3f} is fine, "
+                    f"but phi={self.parallax_deg:.1f} deg < {self.phi_min} deg — these "
+                    f"two see the same scene from effectively the same place")
         if self.method == "features":
             verdict = "co-visible" if self.covisible else "NOT co-visible"
             seen = f"o={self.iou:.3f}" if self.iou is not None else "no poses"
             return (f"{verdict} (image fallback): {seen} < {self.o_min}, "
-                    f"orb_inliers={self.orb_inliers} vs m_min={self.m_min}")
+                    f"orb_inliers={self.orb_inliers} vs m_min={self.m_min}{angle}")
         seen = f"o={self.iou:.3f} < {self.o_min}" if self.iou is not None else "no poses"
         return f"NOT co-visible: {seen}, no frames for the image fallback"
 
@@ -310,6 +324,7 @@ class PeerVerifier:
         hfov: float = DEFAULT_HFOV,
         vfov: float = DEFAULT_VFOV,
         m_min: int = 15,
+        phi_min: float = 0.0,
         on_covis: Optional[Callable[["CoVisDiagnostic"], None]] = None,
     ):
         self.my_drone_id = my_drone_id
@@ -320,6 +335,15 @@ class PeerVerifier:
         self._hfov = hfov
         self._vfov = vfov
         self._m_min = m_min
+        #: Minimum inter-view angle, in degrees, for a peer to count as an
+        #: independent observer. Defaults to 0.0 — the check is OFF unless a
+        #: mission asks for it, because switching it on retroactively would
+        #: disable the semantic layer for every formation flown at the 3 m / 14 m
+        #: spacing used in the published measurements (phi ~ 12 deg there). It is
+        #: a mission policy, not a silent protocol change. Section 4.3 measured
+        #: patch suppression falling away between 12 and 23 degrees, so 23.0 is
+        #: the value that makes that experiment load-bearing.
+        self._phi_min = phi_min
         self._on_covis = on_covis
         #: Diagnostic from the most recent vote that reached the co-visibility gate.
         self.last_covis: Optional[CoVisDiagnostic] = None
@@ -345,11 +369,30 @@ class PeerVerifier:
         of the same scene stop matching.
         """
         iou: Optional[float] = None
+        phi: Optional[float] = None
         if my_pose is not None and originator_pose is not None:
             iou = covisibility(my_pose, originator_pose, self._hfov, self._vfov)
             if iou >= self._o_min:
+                if self._phi_min <= 0.0:
+                    return CoVisDiagnostic(
+                        True, "geometric", iou, None, self._o_min, self._m_min,
+                        parallax_deg=None, phi_min=self._phi_min,
+                    )
+                phi = parallax_angle(
+                    my_pose, originator_pose, self._hfov, self._vfov
+                )
+                if phi >= self._phi_min:
+                    return CoVisDiagnostic(
+                        True, "geometric", iou, None, self._o_min, self._m_min,
+                        parallax_deg=phi, phi_min=self._phi_min,
+                    )
+                # Overlapping but redundant: this peer is looking at the scene
+                # from effectively where the originator is, so whatever fooled
+                # the originator's camera fools this one too. Abstaining is more
+                # honest than casting a vote that carries no new evidence.
                 return CoVisDiagnostic(
-                    True, "geometric", iou, None, self._o_min, self._m_min
+                    False, "low_parallax", iou, None, self._o_min, self._m_min,
+                    parallax_deg=phi, phi_min=self._phi_min,
                 )
 
         if my_frame is not None and originator_frame is not None:
@@ -360,9 +403,13 @@ class PeerVerifier:
             return CoVisDiagnostic(
                 match.inliers >= self._m_min, "features", iou,
                 match.inliers, self._o_min, self._m_min,
+                parallax_deg=phi, phi_min=self._phi_min,
             )
 
-        return CoVisDiagnostic(False, "none", iou, None, self._o_min, self._m_min)
+        return CoVisDiagnostic(
+            False, "none", iou, None, self._o_min, self._m_min,
+            parallax_deg=phi, phi_min=self._phi_min,
+        )
 
     def _record_covis(self, diag: CoVisDiagnostic) -> CoVisDiagnostic:
         self.last_covis = diag

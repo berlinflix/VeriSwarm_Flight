@@ -98,10 +98,46 @@ class AuthorityError(RuntimeError):
     """The mission authority file is missing, malformed, or unsafe."""
 
 
-def load_authority(path: str | Path) -> dict:
+def authority_payload_bytes(payload: dict) -> bytes:
+    """
+    Canonical bytes of an authority payload — what the mission authority signs.
+
+    Same discipline as `Receipt.canonical`: sorted keys, no whitespace, ASCII
+    escaping. Signer and verifier must serialise byte-identically or valid
+    signatures fail, and a single canonical form keeps the signed bytes readable
+    by a human auditing the file.
+    """
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+
+
+def load_authority(
+    path: str | Path, authority_pubkey: Optional[str] = None
+) -> dict:
     """
     Load the mission authority: the signed-off list of model hashes a node will
     accept from any peer.
+
+    Signing
+    -------
+    Pass `authority_pubkey` (hex Ed25519 verify key) and the file **must** carry
+    a valid signature over its payload or this raises. Without that, the list is
+    an ordinary file: anyone who can write to the drone's filesystem appends
+    their own hash and the entire provenance layer evaporates silently, since
+    every receipt then passes. The signature moves the trust from "nobody edited
+    this file" to "the authority's private key signed this content", which is the
+    only version that survives a compromised host.
+
+    Where the public key comes from matters. It must NOT come from the manifest,
+    which the provisioner writes — an attacker who can rewrite the allowlist can
+    equally rewrite the key it is checked against. In deployment it belongs in
+    OP-TEE secure storage beside the signing key; `VERISWARM_AUTHORITY_PUBKEY`
+    is the development stand-in.
+
+    Omitting `authority_pubkey` accepts an unsigned file. That is for local
+    development and the experiment harness, where there is no provisioner to
+    distrust; do not fly it.
 
     Why this is a separate file from the manifest
     ---------------------------------------------
@@ -116,7 +152,12 @@ def load_authority(path: str | Path) -> dict:
     Collapse the two files into one and that property is gone — the provisioner
     would simply add its own hash to the allowlist and the layer would pass.
 
-    Format::
+    Format — signed::
+
+        {"payload": {"issued_by": "...", "approved_models": [...]},
+         "signature": "<hex Ed25519 over authority_payload_bytes(payload)>"}
+
+    Format — unsigned (development)::
 
         {"issued_by": "...", "approved_models": [{"name": "...", "sha256": "..."}]}
 
@@ -136,7 +177,32 @@ def load_authority(path: str | Path) -> dict:
     except json.JSONDecodeError as exc:
         raise AuthorityError(f"mission authority {p} is not valid JSON: {exc}") from exc
 
-    entries = doc.get("approved_models")
+    signed = isinstance(doc.get("payload"), dict)
+    payload = doc["payload"] if signed else doc
+
+    if authority_pubkey:
+        if not signed or "signature" not in doc:
+            raise AuthorityError(
+                f"mission authority {p} is unsigned, but a public key was pinned. "
+                f"Refusing to trust it — an unsigned allowlist is writable by "
+                f"anyone with filesystem access. Re-mint with "
+                f"`python -m tools.make_authority --sign-key <hex> ...`"
+            )
+        import nacl.exceptions
+        import nacl.signing
+
+        try:
+            nacl.signing.VerifyKey(bytes.fromhex(authority_pubkey)).verify(
+                authority_payload_bytes(payload), bytes.fromhex(doc["signature"])
+            )
+        except (nacl.exceptions.BadSignatureError, ValueError) as exc:
+            raise AuthorityError(
+                f"mission authority {p} failed signature verification against "
+                f"{authority_pubkey[:16]}...: the file has been modified, or it "
+                f"was issued by a different authority. ({exc})"
+            ) from exc
+
+    entries = payload.get("approved_models")
     if not isinstance(entries, list) or not entries:
         raise AuthorityError(f"mission authority {p} lists no approved_models")
     for entry in entries:
@@ -154,10 +220,21 @@ def load_authority(path: str | Path) -> dict:
             raise AuthorityError(
                 f"mission authority {p}: {entry['sha256']!r} is not a 64-char SHA-256"
             )
-    return doc
+    return payload
 
 
-def approved_models_of(manifest: dict, authority_path: Optional[str | Path] = None) -> set:
+def authority_pubkey_from_env() -> Optional[str]:
+    """Development stand-in for a TEE-anchored authority key."""
+    import os
+
+    return os.environ.get("VERISWARM_AUTHORITY_PUBKEY") or None
+
+
+def approved_models_of(
+    manifest: dict,
+    authority_path: Optional[str | Path] = None,
+    authority_pubkey: Optional[str] = None,
+) -> set:
     """
     Resolve the approved-model allowlist for this node.
 
@@ -166,11 +243,17 @@ def approved_models_of(manifest: dict, authority_path: Optional[str | Path] = No
     the experiment harness, where the manifest is generated by the experiment
     itself and there is no provisioner to distrust. Any deployment that models a
     hostile provisioning host must set an authority file.
+
+    The verify key comes from the caller or `VERISWARM_AUTHORITY_PUBKEY`, never
+    from the manifest: the manifest is provisioner-written, so reading the key
+    from it would let whoever forged the allowlist supply the key that validates
+    it.
     """
     src = authority_path or manifest.get("authority")
     if src:
-        doc = load_authority(src)
-        return {e["sha256"] for e in doc["approved_models"]}
+        pubkey = authority_pubkey or authority_pubkey_from_env()
+        payload = load_authority(src, authority_pubkey=pubkey)
+        return {e["sha256"] for e in payload["approved_models"]}
     return set(manifest.get("approved_models", ()))
 
 
@@ -183,6 +266,7 @@ def generate_manifest(
     observations: Optional[Mapping[str, Sequence[float]]] = None,
     approved_models: Iterable[str] = (APPROVED_MODEL,),
     o_min: float = 0.1,
+    phi_min: float = 0.0,
     authority: Optional[str] = None,
 ) -> dict:
     """Build a manifest with a fresh software keypair per node.
@@ -205,7 +289,12 @@ def generate_manifest(
                 list(observations[nid]) if observations and nid in observations else None
             ),
         }
-    manifest = {"approved_models": list(approved_models), "o_min": o_min, "nodes": nodes}
+    manifest = {
+        "approved_models": list(approved_models),
+        "o_min": o_min,
+        "phi_min": phi_min,
+        "nodes": nodes,
+    }
     if authority:
         manifest["authority"] = str(authority)
     return manifest
@@ -236,11 +325,13 @@ def signer_for(entry: dict):
 
 
 def receipt_verifier_for(
-    manifest: dict, authority_path: Optional[str | Path] = None
+    manifest: dict,
+    authority_path: Optional[str | Path] = None,
+    authority_pubkey: Optional[str] = None,
 ) -> ReceiptVerifier:
     return ReceiptVerifier(
         peer_keys=peer_keys_of(manifest),
-        approved_models=approved_models_of(manifest, authority_path),
+        approved_models=approved_models_of(manifest, authority_path, authority_pubkey),
         max_age_ns=int(manifest.get("max_receipt_age_ns", DEFAULT_MAX_AGE_NS)),
     )
 
@@ -250,11 +341,16 @@ def vote_verifier_for(manifest: dict) -> VoteVerifier:
 
 
 def pose_of(entry: dict) -> Optional[Pose]:
+    """Build a Pose from a manifest entry's `[x, y, z, yaw, pitch]`.
+
+    `pitch` (camera tilt off nadir, radians) is optional and defaults to 0, so
+    four-element poses from earlier manifests keep their nadir meaning exactly.
+    """
     p = entry.get("pose")
     if not p:
         return None
-    x, y, z, yaw = (list(p) + [0.0, 0.0, 0.0, 0.0])[:4]
-    return Pose(x, y, z, yaw)
+    x, y, z, yaw, pitch = (list(p) + [0.0] * 5)[:5]
+    return Pose(x, y, z, yaw, pitch)
 
 
 def address_of(manifest: dict, node_id: str) -> str:
@@ -272,39 +368,45 @@ def covisibility_report(manifest: dict) -> List[dict]:
     Pairwise co-visibility o(i, j) for every node pair in the manifest, with the
     inter-view angle each pair subtends.
 
-    `angle_deg` is the disparity between the two viewpoints, atan(separation /
-    altitude). It is reported alongside the overlap because the two answer
-    different questions and a formation needs both: overlap says the peers are
-    looking at the same thing, angle says they are looking at it from *different
-    enough* places for the cross-check to carry information. Two drones flying
-    wingtip to wingtip have o ~ 1.0 and near-zero disparity — maximum overlap,
-    minimum independence, and an adversarial patch that fools one fools the
-    other. Section 4.3 measured patch suppression falling off between 12 deg
-    (3 m at 14 m) and 23 deg (6 m).
+    `angle_deg` is the parallax between the two viewpoints, measured at the patch
+    they actually share. It is reported alongside the overlap because the two
+    answer different questions and a formation needs both: overlap says the peers
+    are looking at the same thing, parallax says they are looking at it from
+    *different enough* places for the cross-check to carry information. Two
+    drones flying wingtip to wingtip have o ~ 1.0 and near-zero parallax —
+    maximum overlap, minimum independence, and an adversarial patch that fools
+    one fools the other. Section 4.3 measured patch suppression falling off
+    between 12 deg (3 m at 14 m) and 23 deg (6 m).
     """
+    from protocol.geometry import covisibility, parallax_angle
+
     rows: List[dict] = []
     poses = {nid: pose_of(e) for nid, e in manifest["nodes"].items()}
     ids = sorted(poses)
+    o_min = float(manifest.get("o_min", 0.1))
+    phi_min = float(manifest.get("phi_min", 0.0))
     for i, a_id in enumerate(ids):
         for b_id in ids[i + 1:]:
             a, b = poses[a_id], poses[b_id]
             if a is None or b is None:
                 rows.append({"i": a_id, "j": b_id, "iou": None, "angle_deg": None,
                              "separation_m": None, "co_visible": False,
-                             "note": "no pose in manifest"})
+                             "independent": False, "note": "no pose in manifest"})
                 continue
-            from protocol.geometry import covisibility
-
             sep = math.hypot(a.x - b.x, a.y - b.y)
-            alt = max(a.z, b.z)
             iou = covisibility(a, b)
+            phi = parallax_angle(a, b)
+            overlapping = iou >= o_min
             rows.append({
                 "i": a_id, "j": b_id,
                 "iou": round(iou, 4),
                 "separation_m": round(sep, 2),
-                "angle_deg": round(math.degrees(math.atan2(sep, alt)), 1) if alt > 0 else None,
-                "co_visible": iou >= float(manifest.get("o_min", 0.1)),
-                "note": "",
+                "angle_deg": round(phi, 1),
+                "co_visible": overlapping,
+                # A pair only verifies each other if they share a scene AND see
+                # it from meaningfully different places.
+                "independent": overlapping and phi >= phi_min,
+                "note": "" if phi >= phi_min else "parallax below phi_min",
             })
     return rows
 
@@ -327,19 +429,36 @@ def assert_covisible_formation(manifest: dict, originator_id: str) -> List[dict]
     """
     rows = covisibility_report(manifest)
     peers = [r for r in rows if originator_id in (r["i"], r["j"])]
-    covisible = [r for r in peers if r["co_visible"]]
-    if not covisible:
-        detail = "\n".join(
-            f"    {r['i']} <-> {r['j']}: o={r['iou']} "
-            f"(need >= {manifest.get('o_min', 0.1)}), "
-            f"sep={r['separation_m']} m, angle={r['angle_deg']} deg  {r['note']}"
-            for r in peers
-        ) or "    (no peers in manifest)"
-        raise RuntimeError(
+    verifying = [r for r in peers if r["independent"]]
+    if verifying:
+        return rows
+
+    detail = "\n".join(
+        f"    {r['i']} <-> {r['j']}: o={r['iou']} "
+        f"(need >= {manifest.get('o_min', 0.1)}), "
+        f"phi={r['angle_deg']} deg (need >= {manifest.get('phi_min', 0.0)}), "
+        f"sep={r['separation_m']} m  {r['note']}"
+        for r in peers
+    ) or "    (no peers in manifest)"
+
+    # Distinguish the two ways this fails, because the fixes are opposite.
+    overlapping = [r for r in peers if r["co_visible"]]
+    if overlapping:
+        why = (
+            f"every peer overlapping '{originator_id}' is flying too close to it "
+            f"to be an independent observer (parallax below phi_min="
+            f"{manifest.get('phi_min', 0.0)} deg). They see the same scene from "
+            f"the same place, so one adversarial patch fools all of them and "
+            f"their agreement proves nothing."
+        )
+        fix = "  Spread the formation OUT until parallax clears phi_min."
+    else:
+        why = (
             f"no peer is co-visible with '{originator_id}' — the semantic layer "
             f"would be inactive for the whole mission and every peer would ACK "
-            f"on crypto alone:\n{detail}\n"
-            f"  Fix the formation (move peers closer / raise altitude), or supply "
-            f"camera frames so the ORB image fallback can run."
+            f"on cryptographic evidence alone."
         )
-    return rows
+        fix = ("  Move peers CLOSER (or raise altitude), or supply camera frames "
+               "so the ORB image fallback can run.")
+
+    raise RuntimeError(f"{why}\n{detail}\n{fix}")

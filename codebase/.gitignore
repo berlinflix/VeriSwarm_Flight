@@ -28,6 +28,17 @@ sim/logs/
 sim/annotated/
 eval/results/
 
+# Generated figures. Rebuilt from results/*.csv with `python -m eval.make_figures`,
+# so committing them just puts 2 MB of derived binaries in everyone's checkout and
+# makes every re-run show up as a diff nobody can review.
+#
+# NOT ignored, and deliberately so:
+#   sim/sim_frames/*.jpg  - fixtures for tests/test_covis_features.py; the ORB
+#                           co-visibility tests skip themselves without them
+#   sim/gazebo/**/textures - the obstacle's surface texture. YOLOv8n does not
+#                           detect an untextured cube, so the sim scene needs it
+figures/
+
 # Keys — NEVER commit
 *.key
 *.pem

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 Point = Tuple[float, float]
 
@@ -38,38 +38,110 @@ class Pose:
 
     x, y, z : metres in a local ENU frame; z is altitude above ground (z > 0).
     yaw     : heading in radians — rotation of the camera footprint about nadir.
+    pitch   : camera tilt off nadir in radians. 0 is straight down (the default,
+              and the configuration every published measurement was taken in);
+              pi/2 would be horizontal. The tilt is applied along the heading, so
+              increasing ``pitch`` pushes the footprint forward and stretches it
+              away from the aircraft.
+
+    ``pitch`` exists because the rest of the stack is not nadir. The reactive
+    controller in ``perception.yolo_action`` reads a forward-looking scene ("climb
+    if the obstacle sits low in the frame"; an empty frame means full forward),
+    and the simulator captures from a tilted gimbal. A nadir-only footprint model
+    silently mis-reports overlap for those cameras, and because the co-visibility
+    gate abstains rather than errors when overlap looks low, the mis-report would
+    show up as a semantic layer that quietly stopped working.
     """
 
     x: float
     y: float
     z: float
     yaw: float = 0.0
+    pitch: float = 0.0
 
 
 # Default camera half-angles (radians): ~69 deg horizontal / ~53 deg vertical,
 # typical of a small UAV camera. Override per mission if the optics differ.
+#
+# Axis convention: ``hfov`` spans the aircraft's along-track (heading) axis and
+# ``vfov`` spans cross-track. That is the axis assignment the nadir model has
+# always used -- half-extent ``a = z*tan(hfov/2)`` lies along local x, which yaw
+# rotates onto the heading -- and keeping it means ``pitch`` tilts within the
+# hfov plane, which is what a forward-tilted gimbal actually does.
 DEFAULT_HFOV = math.radians(69.0)
 DEFAULT_VFOV = math.radians(53.0)
+
+#: Ground range beyond which a footprint corner is clipped, in metres.
+#:
+#: A tilted camera whose upper field of view reaches the horizon projects to a
+#: mathematically unbounded footprint, which would make IoU meaningless. Physics
+#: bounds it anyway: past a few hundred metres a ground feature occupies well
+#: under a pixel, so it cannot contribute to co-observation. Clipping keeps the
+#: footprint a bounded convex quadrilateral.
+DEFAULT_MAX_GROUND_RANGE = 200.0
 
 
 def camera_footprint(
     pose: Pose,
     hfov: float = DEFAULT_HFOV,
     vfov: float = DEFAULT_VFOV,
+    max_ground_range: float = DEFAULT_MAX_GROUND_RANGE,
 ) -> List[Point]:
     """
-    Ground footprint of a downward camera as four CCW corners.
+    Ground footprint of the camera as four CCW corners.
 
-    Half-extents on the ground scale with altitude: ``a = z*tan(hfov/2)`` and
-    ``b = z*tan(vfov/2)``. The rectangle is centred under the drone, rotated by
-    ``yaw``, then translated to ``(x, y)``. A non-positive altitude yields a
-    degenerate (zero-area) footprint, which the IoU treats as no overlap.
+    Each corner of the image plane is a ray through the pinhole; the footprint is
+    where those four rays strike the ground. For a camera tilted off nadir the
+    result is a trapezoid — narrow near the aircraft, spreading with distance —
+    not a rectangle.
+
+    Derivation
+    ----------
+    In camera coordinates a corner ray is ``(u, v, 1)`` with ``u = ±tan(hfov/2)``
+    and ``v = ±tan(vfov/2)``. Rotating the camera by ``pitch`` about the
+    cross-track axis and intersecting with the ground plane gives
+
+        x = z (u cos p + sin p) / (cos p - u sin p)
+        y = z  v               / (cos p - u sin p)
+
+    before yaw rotation and translation. At ``pitch = 0`` this collapses to
+    ``x = z*u``, ``y = z*v`` — that is, ``(±z tan(hfov/2), ±z tan(vfov/2))``, the
+    exact rectangle the nadir model has always produced. The generalisation is
+    therefore free of any discontinuity at nadir, and every previously measured
+    co-visibility number is reproduced bit for bit.
+
+    A non-positive altitude yields a degenerate (zero-area) footprint, which the
+    IoU treats as no overlap.
     """
     if pose.z <= 0.0:
         return []
-    a = pose.z * math.tan(hfov / 2.0)
-    b = pose.z * math.tan(vfov / 2.0)
-    local = [(-a, -b), (a, -b), (a, b), (-a, b)]  # CCW winding
+
+    u_max = math.tan(hfov / 2.0)
+    v_max = math.tan(vfov / 2.0)
+    cos_p, sin_p = math.cos(pose.pitch), math.sin(pose.pitch)
+
+    # CCW winding, matching the nadir model's corner order.
+    corners_uv = [(-u_max, -v_max), (u_max, -v_max), (u_max, v_max), (-u_max, v_max)]
+
+    local: List[Point] = []
+    for u, v in corners_uv:
+        # Downward component of the ray. Non-positive means the corner looks at
+        # or above the horizon and never meets the ground.
+        w = cos_p - u * sin_p
+        if w > 1e-9:
+            lx = pose.z * (u * cos_p + sin_p) / w
+            ly = pose.z * v / w
+        else:
+            # Above the horizon: place the corner at max range along the ray's
+            # ground-plane azimuth, so the polygon stays bounded and convex.
+            lx, ly = (u * cos_p + sin_p), v
+        # Clip anything past usable range back along its own azimuth.
+        radius = math.hypot(lx, ly)
+        if radius > max_ground_range and radius > 0.0:
+            scale = max_ground_range / radius
+            lx, ly = lx * scale, ly * scale
+        local.append((lx, ly))
+
     cos_y, sin_y = math.cos(pose.yaw), math.sin(pose.yaw)
     return [
         (pose.x + lx * cos_y - ly * sin_y, pose.y + lx * sin_y + ly * cos_y)
@@ -134,6 +206,31 @@ def _clip_convex(subject: Sequence[Point], clip: Sequence[Point]) -> List[Point]
     return output
 
 
+def footprint_intersection(
+    poly_a: Sequence[Point], poly_b: Sequence[Point]
+) -> List[Point]:
+    """The co-observed ground region: the intersection of two convex footprints."""
+    return _clip_convex(poly_a, poly_b)
+
+
+def polygon_centroid(poly: Sequence[Point]) -> Optional[Point]:
+    """Area centroid of a simple polygon, or None if it is degenerate."""
+    n = len(poly)
+    if n < 3:
+        return None
+    cx = cy = signed_double_area = 0.0
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        cross = x1 * y2 - x2 * y1
+        signed_double_area += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+    if abs(signed_double_area) < 1e-12:
+        return None
+    return (cx / (3.0 * signed_double_area), cy / (3.0 * signed_double_area))
+
+
 def footprint_iou(poly_a: Sequence[Point], poly_b: Sequence[Point]) -> float:
     """Intersection-over-union of two convex ground footprints, in [0, 1]."""
     area_a = polygon_area(poly_a)
@@ -161,3 +258,50 @@ def covisibility(
         camera_footprint(pose_a, hfov, vfov),
         camera_footprint(pose_b, hfov, vfov),
     )
+
+
+def parallax_angle(
+    pose_a: Pose,
+    pose_b: Pose,
+    hfov: float = DEFAULT_HFOV,
+    vfov: float = DEFAULT_VFOV,
+) -> float:
+    """
+    Angle in **degrees** subtended at the co-observed ground patch between the
+    two cameras — how differently the two drones are looking at the same thing.
+
+    Why this is not the same question as overlap
+    --------------------------------------------
+    Overlap asks whether two drones are looking at the same scene. Parallax asks
+    whether they are looking at it from meaningfully *different* places, and
+    cross-verification needs both. Two drones flying wingtip to wingtip have
+    o(i, j) close to 1 and a parallax near zero: maximum overlap, no independence.
+    They see the same pixels, so a single adversarial patch fools both, and the
+    second vote carries no information the first did not already contain. A gate
+    that checks only overlap will happily certify that pair as mutual verifiers.
+
+    Measured at the centroid of the actual intersection polygon rather than
+    approximated as atan(baseline / altitude), so it stays correct for tilted
+    cameras, unequal altitudes, and differing headings — none of which the
+    baseline approximation handles.
+
+    Returns 0.0 when the footprints do not intersect, which is the conservative
+    answer: no shared patch means no independent view of one.
+    """
+    fp_a = camera_footprint(pose_a, hfov, vfov)
+    fp_b = camera_footprint(pose_b, hfov, vfov)
+    shared = footprint_intersection(fp_a, fp_b)
+    target = polygon_centroid(shared)
+    if target is None:
+        return 0.0
+
+    ax, ay = pose_a.x - target[0], pose_a.y - target[1]
+    bx, by = pose_b.x - target[0], pose_b.y - target[1]
+    va = (ax, ay, pose_a.z)
+    vb = (bx, by, pose_b.z)
+    na = math.sqrt(sum(c * c for c in va))
+    nb = math.sqrt(sum(c * c for c in vb))
+    if na <= 0.0 or nb <= 0.0:
+        return 0.0
+    dot = sum(p * q for p, q in zip(va, vb)) / (na * nb)
+    return math.degrees(math.acos(max(-1.0, min(1.0, dot))))

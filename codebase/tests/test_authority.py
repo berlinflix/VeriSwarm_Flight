@@ -160,3 +160,87 @@ def test_manifest_allowlist_still_works_without_an_authority():
     """The harness path is unchanged: no authority means the manifest's list."""
     manifest = common.generate_manifest(["alpha", "bravo"])
     assert common.approved_models_of(manifest) == {common.APPROVED_MODEL}
+
+
+# ---------------------------------------------------------------------------
+# 3. Signing — tampering with the allowlist must be detectable
+# ---------------------------------------------------------------------------
+
+
+def _signed_authority(tmp_path, *hashes, name="mission_authority.json"):
+    """Mint a signed authority; returns (path, pubkey_hex)."""
+    import nacl.signing
+
+    from tools.make_authority import sign_payload
+
+    key = nacl.signing.SigningKey.generate()
+    payload = {
+        "issued_by": "test-authority",
+        "approved_models": [{"name": f"m{i}", "sha256": h} for i, h in enumerate(hashes)],
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(sign_payload(payload, bytes(key).hex())))
+    return path, bytes(key.verify_key).hex()
+
+
+def test_signed_authority_verifies(tmp_path):
+    path, pubkey = _signed_authority(tmp_path, common.APPROVED_MODEL)
+    payload = common.load_authority(path, authority_pubkey=pubkey)
+    assert payload["approved_models"][0]["sha256"] == common.APPROVED_MODEL
+
+
+def test_appending_a_hash_breaks_the_signature(tmp_path):
+    """
+    The attack this exists to stop: someone with filesystem write access adds
+    their own model hash so their trojaned weights pass provenance.
+    """
+    path, pubkey = _signed_authority(tmp_path, common.APPROVED_MODEL)
+
+    doc = json.loads(path.read_text())
+    doc["payload"]["approved_models"].append(
+        {"name": "attacker", "sha256": common.MALICIOUS_MODEL}
+    )
+    path.write_text(json.dumps(doc))
+
+    with pytest.raises(common.AuthorityError, match="failed signature verification"):
+        common.load_authority(path, authority_pubkey=pubkey)
+
+
+def test_a_different_authority_key_is_rejected(tmp_path):
+    """Signing it yourself does not make you the mission authority."""
+    import nacl.signing
+
+    path, _ = _signed_authority(tmp_path, common.APPROVED_MODEL)
+    impostor = bytes(nacl.signing.SigningKey.generate().verify_key).hex()
+
+    with pytest.raises(common.AuthorityError, match="failed signature verification"):
+        common.load_authority(path, authority_pubkey=impostor)
+
+
+def test_unsigned_file_is_refused_when_a_key_is_pinned(tmp_path):
+    """
+    Stripping the signature must not be a way to downgrade to the unsigned path.
+    """
+    path = _authority(tmp_path, common.APPROVED_MODEL)  # unsigned form
+
+    with pytest.raises(common.AuthorityError, match="unsigned"):
+        common.load_authority(path, authority_pubkey="ab" * 32)
+
+
+def test_unsigned_file_still_loads_for_local_development(tmp_path):
+    path = _authority(tmp_path, common.APPROVED_MODEL)
+    payload = common.load_authority(path)
+    assert payload["approved_models"][0]["sha256"] == common.APPROVED_MODEL
+
+
+def test_signature_is_checked_through_the_verifier_path(tmp_path):
+    """End to end: a tampered allowlist fails when a node builds its verifier."""
+    path, pubkey = _signed_authority(tmp_path, common.APPROVED_MODEL)
+    doc = json.loads(path.read_text())
+    doc["payload"]["approved_models"][0]["sha256"] = common.MALICIOUS_MODEL
+    path.write_text(json.dumps(doc))
+
+    manifest = common.generate_manifest(["alpha", "bravo"], authority=str(path))
+
+    with pytest.raises(common.AuthorityError):
+        common.receipt_verifier_for(manifest, authority_pubkey=pubkey)

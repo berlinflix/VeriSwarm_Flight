@@ -49,20 +49,33 @@ def _run(observations, output, model_hash, servers_out=None):
         outcome = orig.originate(output=output, model_hash=model_hash)
         orig.close()
         if servers_out is not None:
-            # Broadcast is fire-and-forget; give the pushes a moment to land.
-            _await_verdicts(servers, timeout=5.0)
+            assert _await_full_vote_sets(servers, {"bravo", "charlie"}), (
+                "peers never exchanged their votes"
+            )
             servers_out.extend(servers)
         return outcome
     finally:
         _stop(servers)
 
 
-def _await_verdicts(servers, timeout=5.0):
+def _await_full_vote_sets(servers, expected_voters, timeout=10.0):
+    """
+    Block until every peer holds a vote from every other peer.
+
+    The broadcast is deliberately fire-and-forget so it cannot delay the
+    SubmitReceipt reply, so the vote set converges shortly *after* originate()
+    returns. Polling for "any verdict" would not do: a node records NO_QUORUM the
+    moment it has its own vote, long before anyone else's arrives.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if all(s.servicer._verdicts for s in servers):
-            return
+        if all(
+            any(expected_voters <= set(votes) for votes in s.servicer._votes.values())
+            for s in servers
+        ):
+            return True
         time.sleep(0.05)
+    return False
 
 
 def test_distributed_honest_accepts():
