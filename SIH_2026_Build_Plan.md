@@ -572,6 +572,14 @@ No one writes directly into another owner’s truth domain. Abhijan cannot set e
 verdicts; Pratik cannot feed simulator truth to autonomy; Samik cannot bypass the
 supervisor; Suyash cannot treat UI output as acceptance evidence.
 
+Standalone, person-specific execution plans are authoritative for daily task ordering but
+do not override the shared interfaces or gates in this document:
+
+- [`SUYASH_EXECUTION_PLAN.md`](SUYASH_EXECUTION_PLAN.md)
+- [`ABHIJAN_EXECUTION_PLAN.md`](ABHIJAN_EXECUTION_PLAN.md)
+- [`PRATIK_EXECUTION_PLAN.md`](PRATIK_EXECUTION_PLAN.md)
+- [`SAMIK_EXECUTION_PLAN.md`](SAMIK_EXECUTION_PLAN.md)
+
 ### Planned implementation paths
 
 These paths make ownership reviewable; new files should be created under `codebase/`:
