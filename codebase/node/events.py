@@ -1,0 +1,297 @@
+"""
+The event bus: one append-only stream of everything the swarm decides.
+
+Why this exists
+---------------
+The protocol has always worked and never been watchable. `eval.run_all` prints
+CSVs after the fact; a live run prints nothing. In a judged demo that is fatal,
+because a defence nobody can see is indistinguishable from no defence at all.
+This module is the seam that makes the running protocol legible.
+
+Transport is a **JSONL file**, not a socket. Every producer appends one line per
+event; every consumer tails the file. That choice is deliberate:
+
+* it works with the network unplugged, which is a demo beat in its own right;
+* a crashed console loses nothing — the log is still on disk and replays;
+* the same file is the post-mortem artefact, so "what did the swarm decide" and
+  "what did the judge see" are literally the same bytes;
+* no extra dependency, no port to fight the venue firewall over.
+
+A WebSocket layer can sit on top later if a remote viewer is ever needed. It is
+not needed for a console running on the same LAN, and every additional moving
+part is another thing to fail on stage.
+
+Contract
+--------
+`docs/EVENT_SCHEMA.md` is frozen: producers may add event *types*, but must not
+rename or repurpose an existing field. Consumers are written against the schema
+and must ignore unknown types and unknown fields, so the two sides can move
+independently.
+
+Telemetry must never take down a voting node. Every emit path here swallows its
+own exceptions: a full disk or a locked file degrades the demo, it does not
+change a consensus decision.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from itertools import count
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterator, List, Optional
+
+#: Default location of the live stream. Gitignored — it is runtime output.
+DEFAULT_EVENT_LOG = Path("results/live_events.jsonl")
+
+#: Event types the schema defines. Producers should use these constants rather
+#: than string literals so a typo fails at import instead of silently emitting an
+#: event no console will ever render.
+ROUND = "round"
+RECEIPT = "receipt"
+COVISIBILITY = "covisibility"
+VOTE = "vote"
+VERDICT = "verdict"
+SAFE_ACTION = "safe_action"
+REPUTATION = "reputation"
+ISOLATION = "isolation"
+POSE = "pose"
+FRAME = "frame"
+DEPTH = "depth"
+ATTACK = "attack"
+LOG = "log"
+
+EVENT_TYPES = frozenset({
+    ROUND, RECEIPT, COVISIBILITY, VOTE, VERDICT, SAFE_ACTION,
+    REPUTATION, ISOLATION, POSE, FRAME, DEPTH, ATTACK, LOG,
+})
+
+
+def now_ms() -> int:
+    """Wall-clock milliseconds. Every event carries one as `t`."""
+    return time.time_ns() // 1_000_000
+
+
+class EventLog:
+    """
+    Append-only writer for the live event stream.
+
+    Thread-safe: nodes emit from their gRPC worker threads and from the mission
+    loop concurrently. Each event is serialised and written under one lock in a
+    single `write` call followed by a flush, so a tailing reader never sees half
+    an event.
+
+    `seq` is a monotonic counter stamped on every event. A consumer that sees a
+    gap knows it dropped something rather than silently rendering an incomplete
+    picture — which matters when the thing on screen is a security claim.
+    """
+
+    def __init__(
+        self,
+        path: str | Path = DEFAULT_EVENT_LOG,
+        *,
+        truncate: bool = False,
+        mirror: Optional[Callable[[dict], None]] = None,
+    ):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if truncate and self.path.exists():
+            self.path.unlink()
+        self._lock = threading.Lock()
+        self._seq = count(1)
+        self._subscribers: List[Callable[[dict], None]] = []
+        if mirror is not None:
+            self._subscribers.append(mirror)
+
+    def subscribe(self, fn: Callable[[dict], None]) -> None:
+        """Receive every event in-process, in addition to the file."""
+        with self._lock:
+            self._subscribers.append(fn)
+
+    def emit(self, type: str, **fields: Any) -> dict:
+        """
+        Append one event. Returns the event dict (useful in tests).
+
+        Never raises. A telemetry failure must not propagate into the consensus
+        path that called it.
+        """
+        event: Dict[str, Any] = {"seq": next(self._seq), "t": now_ms(), "type": type}
+        event.update(fields)
+        line = json.dumps(event, separators=(",", ":"), default=str)
+
+        with self._lock:
+            try:
+                with self.path.open("a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+                    fh.flush()
+            except OSError:
+                pass
+            subscribers = list(self._subscribers)
+
+        for fn in subscribers:
+            try:
+                fn(event)
+            except Exception:
+                pass
+        return event
+
+    # -- typed helpers -------------------------------------------------------
+    #
+    # Thin wrappers that pin the field names from the schema. Producers call
+    # these rather than emit(type, ...) with hand-written keys, so a rename shows
+    # up here once instead of drifting across the codebase.
+
+    # The wire field is `round`, but the Python parameters are `round_index` --
+    # a parameter named `round` shadows the builtin inside the method body, which
+    # turns any rounding call in the same function into a TypeError.
+
+    def round_start(self, round_index: int, **extra) -> dict:
+        return self.emit(ROUND, round=round_index, phase="start", **extra)
+
+    def round_end(self, round_index: int, **extra) -> dict:
+        return self.emit(ROUND, round=round_index, phase="end", **extra)
+
+    def receipt(self, node: str, action, model_hash: str, frame_hash: str,
+                backend: str, sign_ms: float, round_index: Optional[int] = None,
+                **extra) -> dict:
+        return self.emit(
+            RECEIPT, node=node, round=round_index, action=list(action),
+            model_hash=model_hash, frame_hash=frame_hash,
+            backend=backend, sign_ms=round_ms(sign_ms), **extra,
+        )
+
+    def covisibility(self, node: str, target: str, diag, **extra) -> dict:
+        """Emit a `protocol.peer_consensus.CoVisDiagnostic`."""
+        return self.emit(
+            COVISIBILITY, node=node, target=target,
+            covisible=diag.covisible, method=diag.method,
+            iou=diag.iou, parallax_deg=diag.parallax_deg,
+            orb_inliers=diag.orb_inliers,
+            o_min=diag.o_min, phi_min=diag.phi_min,
+            detail=diag.describe(), **extra,
+        )
+
+    def vote(self, node: str, target: str, decision: str, reason: str,
+             delta: Optional[float] = None, **extra) -> dict:
+        return self.emit(VOTE, node=node, target=target, decision=decision,
+                         reason=reason, delta=delta, **extra)
+
+    def verdict(self, node: str, target: str, outcome: str, acks: int,
+                disputes: int, semantic_acks: int,
+                consensus_ms: Optional[float] = None, **extra) -> dict:
+        """`node` is who tallied — every node tallies independently."""
+        return self.emit(
+            VERDICT, node=node, target=target, outcome=outcome,
+            acks=acks, disputes=disputes, semantic_acks=semantic_acks,
+            consensus_ms=round_ms(consensus_ms), **extra,
+        )
+
+    def safe_action(self, node: str, action: str, outcome: str,
+                    semantic_acks: int, **extra) -> dict:
+        return self.emit(SAFE_ACTION, node=node, action=action,
+                         outcome=outcome, semantic_acks=semantic_acks, **extra)
+
+    def reputation(self, node: str, value: float, **extra) -> dict:
+        return self.emit(REPUTATION, node=node, value=round(value, 4), **extra)
+
+    def isolation(self, node: str, round_index: int, rho: float,
+                  n_active_after: int, **extra) -> dict:
+        return self.emit(ISOLATION, node=node, round=round_index,
+                         rho=round(rho, 4),
+                         n_active_after=n_active_after, **extra)
+
+    def pose(self, node: str, xyz, yaw: float = 0.0, pitch: float = 0.0,
+             **extra) -> dict:
+        return self.emit(POSE, node=node, xyz=[round(float(v), 3) for v in xyz],
+                         yaw=round(yaw, 4), pitch=round(pitch, 4), **extra)
+
+    def frame(self, node: str, jpeg_b64: str, w: int, h: int, **extra) -> dict:
+        return self.emit(FRAME, node=node, jpeg_b64=jpeg_b64, w=w, h=h, **extra)
+
+    def depth(self, node: str, check, **extra) -> dict:
+        """Emit a `perception.depth_check.FreeSpaceCheck`."""
+        return self.emit(
+            DEPTH, node=node, contradicted=check.contradicted,
+            nearest_m=check.measured_range_m,
+            required_m=round(check.required_clear_m, 2),
+            commanded_forward=round(check.commanded_forward, 3),
+            reason=check.reason, detail=check.describe(), **extra,
+        )
+
+    def attack(self, name: str, armed: bool, targets=(), **extra) -> dict:
+        return self.emit(ATTACK, name=name, armed=armed,
+                         targets=list(targets), **extra)
+
+    def log(self, message: str, level: str = "info", **extra) -> dict:
+        return self.emit(LOG, message=message, level=level, **extra)
+
+
+def round_ms(value: Optional[float]) -> Optional[float]:
+    """Round a millisecond timing for display; passes None through."""
+    return None if value is None else round(float(value), 3)
+
+
+# ---------------------------------------------------------------------------
+# Consumer side
+# ---------------------------------------------------------------------------
+
+
+def read_events(path: str | Path = DEFAULT_EVENT_LOG) -> List[dict]:
+    """Read the whole log. Malformed lines are skipped, not raised on."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    events: List[dict] = []
+    with p.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # a torn final line from a writer mid-flush
+    return events
+
+
+def follow(
+    path: str | Path = DEFAULT_EVENT_LOG,
+    *,
+    from_start: bool = True,
+    poll_s: float = 0.1,
+    stop: Optional[threading.Event] = None,
+) -> Iterator[dict]:
+    """
+    Yield events as they are appended, `tail -f` style.
+
+    Waits for the file to appear rather than failing, so a console can be started
+    before the swarm — which is the order an operator will actually use, and
+    crashing on a missing file would send them hunting for a bug that isn't one.
+
+    Skips malformed lines: a reader may catch a writer mid-flush, and the next
+    poll will see the completed line.
+    """
+    p = Path(path)
+    pos = 0
+    if not from_start and p.exists():
+        pos = p.stat().st_size
+
+    while stop is None or not stop.is_set():
+        if not p.exists():
+            time.sleep(poll_s)
+            continue
+        with p.open("r", encoding="utf-8") as fh:
+            fh.seek(pos)
+            for line in fh:
+                if not line.endswith("\n"):
+                    break  # partial write; re-read it next poll
+                pos += len(line.encode("utf-8"))
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+        time.sleep(poll_s)
