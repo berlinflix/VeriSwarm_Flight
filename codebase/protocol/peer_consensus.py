@@ -65,6 +65,11 @@ from .receipts import (
     VerificationResult,
     sha256_hex,
 )
+from perception.claim import (
+    DEFAULT_OCCUPANCY_TOLERANCE,
+    PerceptionClaim,
+    claims_agree,
+)
 from .geometry import (
     DEFAULT_HFOV,
     DEFAULT_VFOV,
@@ -216,6 +221,10 @@ REASON_OK = "ok"
 REASON_NO_COVISIBILITY = "ok_no_covisibility"
 REASON_NO_OBSERVATION = "ok_no_observation"
 REASON_SEMANTIC_DISAGREEMENT = "semantic_disagreement"
+# Both the claim comparison and the legacy action comparison report under
+# REASON_SEMANTIC_DISAGREEMENT / REASON_OK. They are the same clause with
+# different evidence quality, and splitting the reason string would change
+# what every retained vote means without changing any decision.
 
 
 @dataclass(frozen=True)
@@ -404,6 +413,7 @@ class PeerVerifier:
         vfov: float = DEFAULT_VFOV,
         m_min: int = 15,
         phi_min: float = 0.0,
+        occupancy_tolerance: float = DEFAULT_OCCUPANCY_TOLERANCE,
         on_covis: Optional[Callable[["CoVisDiagnostic"], None]] = None,
     ):
         self.my_drone_id = my_drone_id
@@ -438,6 +448,7 @@ class PeerVerifier:
         #: patch suppression falling away between 12 and 23 degrees, so 23.0 is
         #: the value that makes that experiment load-bearing.
         self._phi_min = phi_min
+        self._occupancy_tolerance = occupancy_tolerance
         self._on_covis = on_covis
         #: Diagnostic from the most recent vote that reached the co-visibility gate.
         self.last_covis: Optional[CoVisDiagnostic] = None
@@ -534,6 +545,7 @@ class PeerVerifier:
         originator_pose: Optional[Pose] = None,
         my_frame=None,
         originator_frame=None,
+        my_claim: Optional[PerceptionClaim] = None,
     ) -> SignedVote:
         """
         Produce a signed vote on the given receipt.
@@ -598,11 +610,37 @@ class PeerVerifier:
                     reason=REASON_NO_COVISIBILITY,
                 )
 
-        if not outputs_agree(
+        # Compare OBSERVATIONS first, and fall back to control outputs only when
+        # one side carried no perception evidence.
+        #
+        # Comparing control outputs is a category error: the command is a lossy,
+        # non-injective projection of what was seen, so different world-states
+        # collapse onto the same vector. Measured: a blinded drone emits
+        # (0, 0, 0) and an honest peer facing a moderate obstacle emits
+        # (0.028, 0, 0.324) -- 0.325 apart, inside theta = 0.5, so the patch
+        # passes. No threshold fixes that; the information was destroyed before
+        # the comparison. `detections_present` restores it and is independent of
+        # obstacle size, range, and controller gains.
+        claim_verdict = claims_agree(
+            signed_receipt.receipt.perception,
+            my_claim,
+            occupancy_tolerance=self._occupancy_tolerance,
+        )
+        if claim_verdict is False:
+            return self._build_signed_vote(
+                signed_receipt.receipt,
+                decision=Vote.DISPUTE,
+                reason=REASON_SEMANTIC_DISAGREEMENT,
+            )
+        if claim_verdict is None and not outputs_agree(
             signed_receipt.receipt.output,
             my_observation,
             threshold=self._agreement_threshold,
         ):
+            # No perception evidence on one side: the legacy action-space
+            # comparison, which still carries the blind band. Live nodes always
+            # supply a claim, so this path is for the harness and for peers
+            # whose detector did not run.
             return self._build_signed_vote(
                 signed_receipt.receipt,
                 decision=Vote.DISPUTE,

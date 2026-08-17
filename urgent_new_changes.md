@@ -42,6 +42,74 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
+### 2026-08-18 — Protocol v3: the swarm now attests observations, not decisions
+**Status:** OPEN
+**Changed:** `PROTOCOL_VERSION` is **3**. Every `Receipt` carries a
+`PerceptionClaim` (`codebase/perception/claim.py`) describing what the detector
+*observed*, alongside the `output` command it *decided*. The semantic layer
+compares claims first and falls back to the old action comparison only when one
+side has no perception evidence.
+
+**This closes the blind band.** Comparing control outputs was a category error: a
+command is a lossy, non-injective projection of what was seen, so different
+world-states collapse onto the same vector. A blinded drone emitted `(0,0,0)` and
+an honest peer facing a moderate obstacle emitted `(0.028, 0, 0.324)` — 0.325
+apart, inside theta = 0.5, so the patch passed. No threshold fixes that; the
+information was destroyed before the comparison ran. `detections_present` differs
+regardless of obstacle size, range, or controller gains.
+
+Field choice is driven by viewpoint robustness, because peers sit at `phi_min` of
+parallax and anything strongly viewpoint-dependent would dispute *honest* peers:
+
+* `detections_present` — the primary signal, effectively viewpoint-invariant.
+* `occupancy` — compared with a wide tolerance (0.35), and only when both peers
+  see something.
+* `max_confidence`, `bearing` — carried for the console and forensics, **never
+  compared**. Two drones 6 m apart legitimately see one obstacle at different
+  bearings.
+
+`PerceptionClaim.unmeasured()` means *no evidence*, never *the scene was empty*,
+and `claims_agree` returns `None` for it rather than `True`. Collapsing those
+would reintroduce the same defect one layer up.
+
+**Evidence is now bound to the command it releases.** `SafetySupervisor.authorize`
+takes `evidence_binding` and `command_binding` (`CommandBinding`: mission_id,
+mission_epoch, sequence, receipt_digest) and refuses unless they match exactly —
+`evidence_command_mismatch`, or `evidence_binding_incomplete` if only one is
+supplied. A signature proves an observation is authentic; it does not prove the
+observation is *about this command*. Without the binding, an accept earned by
+round N's frame could release round M's waypoint command.
+
+**Makes stale:** any statement that the semantic layer compares action vectors;
+any retained evidence produced under protocol v2 (receipt canonicalization
+changed, so v2 artifacts no longer verify — re-run or version-tag them); any
+`authorize(...)` call site that does not pass both bindings.
+
+**Who must act:**
+* **M1 Suyash** — regenerate protocol vectors; re-run any retained closed-loop or
+  campaign evidence under v3; wire `MissionRunner` to build the claim from live
+  detections and to pass both bindings.
+* **M4 Samik** — `waypoint_follower.py` must produce a `CommandBinding` matching
+  the perception receipt that justifies its candidate. A waypoint command with no
+  matching perception evidence is refused, by design.
+* **M2 Abhijan** — two new refusal reasons for the oracle:
+  `evidence_command_mismatch`, `evidence_binding_incomplete`. A campaign that
+  replays a valid certificate onto a later round is now a *detectable* attack and
+  worth adding.
+* **M3 Pratik** — the `>= 0.7` frame-occupancy rule was partly motivated by the
+  blind band, which is now closed. Keep it anyway: it is still required for a
+  strong avoidance action.
+
+**Verification:** 346 tests pass (307 before). `tests/test_perception_claim.py`
+covers claim construction, comparison, signature coverage, wire round-trip and
+binding; `tests/test_baseline_controller.py` now asserts the band is closed
+through `claims_agree` across 0.3–0.9 occupancy while keeping the action-space
+failure as a standing witness.
+
+**Why:** the semantic layer's job is to check what a drone *says it saw*. It was
+checking what the drone *decided to do*, which is a different and strictly weaker
+question.
+
 ### 2026-08-18 — Explicit protected waypoint follower is Samik's critical path
 **Status:** FOLDED into [`SAMIK_EXECUTION_PLAN.md`](SAMIK_EXECUTION_PLAN.md),
 [`SUYASH_EXECUTION_PLAN.md`](SUYASH_EXECUTION_PLAN.md) and
@@ -304,7 +372,8 @@ them costs either safety or the demo. Separating them costs neither.
 ---
 
 ### 2026-08-18 — Known defect: semantic blind band at 0.5–0.6 frame occupancy
-**Status:** OPEN — **not yet fixed**
+**Status:** FIXED 2026-08-18 by the `PerceptionClaim` entry at the top of this file.
+Kept for the measurement and the reasoning; the defect itself is closed.
 **Changed:** nothing yet. Recording a measured defect so nobody rediscovers it on
 stage.
 

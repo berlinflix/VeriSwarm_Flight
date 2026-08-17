@@ -192,7 +192,14 @@ Reasons the supervisor emits: `authorized`, `operator_abort`,
 `geofence_blocked`, `consensus_rejected`, `consensus_no_quorum`,
 `semantic_quorum_missing`, `forward_clearance_unproven`,
 `all_axis_clearance_unproven`, `command_expired`, `command_freshness_unproven`,
-`invalid_action`, `invalid_consensus`, `invalid_health_evidence`.
+`invalid_action`, `invalid_consensus`, `invalid_health_evidence`,
+`evidence_command_mismatch`, `evidence_binding_incomplete`.
+
+The last two are protocol-v3 additions. A perception certificate authorizes
+exactly the command it was earned for; presenting one alongside a command from
+a different mission, epoch, round, or frame is refused. Worth surfacing
+distinctly on the console — it is a replay of *valid* evidence, which looks
+nothing like a signature failure and is far more interesting.
 
 ## `reputation`
 

@@ -17,6 +17,7 @@ import math
 import pytest
 
 from perception.baseline_controller import naive_action, naive_and_protected
+from perception.claim import PerceptionClaim, claims_agree
 from perception.yolo_action import Detection, detections_to_action
 from protocol.peer_consensus import outputs_agree
 
@@ -80,29 +81,59 @@ def test_run_a_patched_drone_diverges_far_enough_to_be_caught():
 
 
 @pytest.mark.parametrize("size", [0.5, 0.6])
-def test_protected_fallback_has_a_detection_blind_band(size):
+def test_action_space_alone_still_has_the_blind_band(size):
     """
-    Documents a REGRESSION, not a desired property.
+    The defect that motivated `PerceptionClaim`, kept as a standing witness.
 
-    With the protected fallback the fooled drone emits (0,0,0), which is also what
-    an honest peer emits at moderate threat — the avoidance action passes through
-    the origin as threat rises. So around 0.5-0.6 frame occupancy the two agree and
-    the patch is NOT caught.
+    Comparing control outputs, a fooled drone emits (0,0,0) and an honest peer
+    facing a moderate obstacle emits something very near it — the avoidance
+    action passes through the origin as threat rises. At 0.5-0.6 frame occupancy
+    they agree and the patch is NOT caught.
 
-    Root cause: (0,0,0) means both "I see nothing" and "I see a moderate threat and
-    chose to slow". The semantic layer compares control outputs, and control
-    outputs are a non-injective projection of what was perceived.
-
-    When this is fixed — by attesting the perception claim rather than the control
-    output — this test should start failing. That is the signal to invert it.
+    This is not fixable by tuning theta. `(0,0,0)` genuinely means both "I see
+    nothing" and "I see a moderate threat and chose to slow", so the information
+    needed to separate them was destroyed before the comparison ran. The fix was
+    to stop comparing decisions and start comparing observations — see the test
+    below, which covers the same geometry through `claims_agree`.
     """
     peer = detections_to_action([_obstacle(size)])
     fooled = detections_to_action([])
 
     assert math.dist(fooled, peer) < THETA
-    assert outputs_agree(fooled, peer, threshold=THETA), (
-        "blind band closed — invert this test and update DEMO_INVARIANTS.md"
-    )
+    assert outputs_agree(fooled, peer, threshold=THETA)
+
+
+@pytest.mark.parametrize("size", [0.3, 0.4, 0.5, 0.6, 0.7, 0.9])
+def test_perception_claims_close_the_blind_band(size):
+    """
+    The fix, over the whole range including the band the action comparison
+    misses. `detections_present` differs, so the dispute does not depend on
+    obstacle size, range, or controller gains at all.
+    """
+    peer_claim = PerceptionClaim.from_detections([_obstacle(size)])
+    fooled_claim = PerceptionClaim.from_detections([])
+
+    assert claims_agree(fooled_claim, peer_claim) is False
+
+
+def test_claims_do_not_dispute_honest_peers_that_agree():
+    """The band must not close by disputing everything."""
+    dets = [_obstacle(0.6)]
+    assert claims_agree(
+        PerceptionClaim.from_detections(dets),
+        PerceptionClaim.from_detections(dets),
+    ) is True
+
+
+def test_unmeasured_claim_draws_no_conclusion():
+    """
+    Absence of evidence is not agreement. Collapsing None to True here would
+    reintroduce the original blind band one layer up.
+    """
+    assert claims_agree(
+        PerceptionClaim.unmeasured(),
+        PerceptionClaim.from_detections([_obstacle(0.6)]),
+    ) is None
 
 
 @pytest.mark.parametrize("size", [0.3, 0.4, 0.7, 0.8, 0.9])

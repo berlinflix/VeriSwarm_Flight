@@ -74,6 +74,22 @@ the paper's limitations. **Do not regenerate it to make the rows pass.**
 
 ---
 
+## 5. `test_action_space_alone_still_has_the_blind_band` asserts a failure
+
+**Looks like:** a test that asserts the system does the wrong thing.
+
+**Is:** a standing witness for a defect that was fixed by changing *what* is
+compared, not by tuning a threshold. It pins the fact that comparing control
+outputs cannot separate "I see nothing" from "I see a moderate threat and chose
+to slow", which is why `PerceptionClaim` exists.
+
+**Why it must stay:** if someone later removes the claim comparison and reverts to
+action comparison, this test still passes and the adjacent
+`test_perception_claims_close_the_blind_band` starts failing — which is exactly
+the signal you want. Delete the witness and the regression becomes silent again.
+
+---
+
 ## Adding to this file
 
 An entry belongs here when the code is deliberately doing something an audit will

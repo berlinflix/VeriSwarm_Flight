@@ -40,6 +40,8 @@ from typing import Iterable, Mapping, Optional, Sequence
 import nacl.exceptions
 import nacl.signing
 
+from perception.claim import PerceptionClaim
+
 
 _HEX_64_RE = re.compile(r"[0-9a-f]{64}\Z")
 _HEX_32_RE = re.compile(r"[0-9a-f]{32}\Z")
@@ -47,7 +49,7 @@ _HEX_128_RE = re.compile(r"[0-9a-f]{128}\Z")
 _DRONE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _MISSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 ACTION_DIM = 3
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 DEFAULT_ACTION_FRAME = "BODY_FLU_NORMALIZED_VELOCITY"
 SUPPORTED_ACTION_FRAMES = frozenset({DEFAULT_ACTION_FRAME})
 UNMEASURED_RUNTIME_HASH = hashlib.sha256(b"unmeasured-runtime").hexdigest()
@@ -144,6 +146,11 @@ class Receipt:
     pose_enu: Sequence[float] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     pose_timestamp_ns: int = 0
     pose_uncertainty_m: float = 0.0
+    #: What the detector OBSERVED, as distinct from the command in `output`.
+    #: Embedded here rather than sent alongside so that signing the receipt
+    #: binds the observation to this exact frame, model, runtime and round --
+    #: a claim lifted from one receipt cannot be replayed into another.
+    perception: PerceptionClaim = PerceptionClaim()
 
     def __post_init__(self) -> None:
         if not _DRONE_ID_RE.fullmatch(self.drone_id):
@@ -193,6 +200,9 @@ class Receipt:
             raise ValueError("output values must be in [-1, 1]")
         object.__setattr__(self, "output", output)
 
+        if not isinstance(self.perception, PerceptionClaim):
+            raise ValueError("perception must be a PerceptionClaim")
+
     def canonical(self) -> bytes:
         """
         Canonical byte representation. **This is the byte string signed
@@ -237,8 +247,16 @@ class SignedReceipt:
         obj = json.loads(wire)
         if not isinstance(obj, dict) or set(obj) != {"receipt", "signature"}:
             raise ValueError("serialized receipt has unexpected fields")
+        fields = dict(obj["receipt"])
+        # `asdict` flattens the nested claim to a plain dict on the way out, so
+        # rebuild it on the way in. Constructing PerceptionClaim here also
+        # re-runs its range checks, so a malformed claim from the wire is
+        # rejected at parse time rather than reaching a comparison.
+        claim = fields.get("perception")
+        if isinstance(claim, dict):
+            fields["perception"] = PerceptionClaim(**claim)
         return cls(
-            receipt=Receipt(**obj["receipt"]),
+            receipt=Receipt(**fields),
             signature=obj["signature"],
         )
 
@@ -264,6 +282,7 @@ def build_receipt(
     pose_enu: Sequence[float] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
     pose_timestamp_ns: Optional[int] = None,
     pose_uncertainty_m: float = 0.0,
+    perception: Optional[PerceptionClaim] = None,
 ) -> Receipt:
     """
     Construct a Receipt from raw inference inputs.
@@ -294,6 +313,7 @@ def build_receipt(
         pose_enu=tuple(pose_enu),
         pose_timestamp_ns=stamp if pose_timestamp_ns is None else pose_timestamp_ns,
         pose_uncertainty_m=pose_uncertainty_m,
+        perception=perception if perception is not None else PerceptionClaim.unmeasured(),
     )
 
 
