@@ -43,14 +43,34 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 *None yet.*
 
-Suyash is currently redesigning the algorithm and the infrastructure. Until an entry appears
-below, [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) is authoritative in full.
+All current team-direction changes have been folded into
+[`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md). If no open override appears above, the
+build plan is authoritative.
 
 ---
 
 ## Change log
 
 <!-- Newest entries go directly below this line. -->
+
+### 2026-08-18 — Unreal environments split into separate scenario tracks
+**Status:** FOLDED
+**Changed:** the team will not co-edit one shared Unreal environment through Git. Pratik
+owns the dark urban / night-mode city scenario with buildings, rooftops, and adversarial
+patches on rooftops or walls. Samik owns the light terrain scenario with hills, mountains,
+desert, lakes, trees, and daylight visuals. Abhijan consumes both teams' live Cosys-AirSim
+endpoints or exported image folders and runs the same YOLO / action / dashboard
+verification pipeline.
+**Makes stale:** the older assumption that M3 owns the only Unreal scene and that M4 is
+unassigned deck-only support.
+**Who must act:** M2 Abhijan verifies all Pratik/Samik handoff frames with YOLO and feeds
+results to the dashboard. M3 Pratik delivers the primary dark urban live demo and backup
+frames/video. M4 Samik delivers the secondary light terrain scenario as recorded evidence
+or live Cosys-AirSim if ready. M1 Suyash keeps the protocol/event contract unchanged and
+consumes either environment through the same Python-facing interfaces.
+**Why:** Unreal maps/assets are binary and painful to merge. Separate scenario packs avoid
+Git synchronization conflicts while still proving the same VeriSwarm Python verifier works
+across multiple environments.
 
 ### 2026-08-15 — Member roles assigned; Windows/Mac split
 **Status:** FOLDED

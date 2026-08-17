@@ -25,9 +25,11 @@ judge**.
 Framing decision (locked): **drone swarm** (option 1). The fixed-camera path stays
 alive as configuration, because the tabletop camera node *is* a fixed node.
 
-Intended outcome: a single swarm containing simulated flying drones **and** a physical
+Intended outcome: a swarm demo containing simulated flying drones **and** a physical
 Jetson-rooted camera node, reaching one consensus verdict, with a judge able to press a
-button and watch an attack get caught.
+button and watch an attack get caught. Unreal work is now split into independent scenario
+packs rather than one shared map, because `.umap` / `.uasset` files are binary and are too
+easy to desynchronize during parallel edits.
 
 ---
 
@@ -185,7 +187,8 @@ the whole fleet, and it makes the reputation layer feel necessary instead of bol
 signed every receipt in its secure element, and this camera is a live node in the same
 swarm. There are four more attacks on the panel. Pick one."
 
-M4 owns this script. The invitation is deliberate: judges who press a button remember you.
+The assigned pitch owner owns this script. The invitation is deliberate: judges who press a
+button remember you.
 
 ### The patch is world-space, in two stages (decision locked)
 
@@ -211,6 +214,32 @@ just watched.
 
 `apply_patch()` in `perception/yolo_action.py` drops out of the live loop but stays for
 the eval harness — do not delete it.
+
+### Environment track strategy — no shared Unreal map
+
+The team will not co-edit one Unreal environment through Git. Each Unreal owner builds a
+separate, self-contained scenario pack and exports frames / video / Cosys-AirSim access for
+the same Python verification pipeline.
+
+| Track | Owner | Environment | Purpose | Handoff to M2 |
+|---|---|---|---|---|
+| **Dark urban** | **Pratik** | Night / dark-mode city scene with buildings, rooftops, alleys, and adversarial patches on rooftops or walls | Primary crash-vs-caught demo; strong visual story for rooftop patch attacks | Live Cosys-AirSim endpoint over LAN plus frame folders for patch lowered/raised |
+| **Light terrain** | **Samik** | Daylight hills, mountains, desert, lakes, trees, and open terrain | Robustness scenario showing the same verifier works outside the city map | Recorded frame folders first; live Cosys-AirSim endpoint if ready |
+
+These are **separate demonstrations**, not one stitched multi-world swarm. The same swarm
+logic, event contract, YOLO action conversion, consensus, and dashboard are reused across
+both. For judging, the safest run order is: Pratik's dark urban scene as the main live demo,
+then Samik's light terrain frames as the evidence that the pipeline generalizes.
+
+Each environment handoff must include:
+
+1. Patch lowered frames for every visible drone camera.
+2. Patch raised frames for the same drone positions.
+3. Pose / vehicle-name metadata, including the mapping to `alpha`, `bravo`, `charlie`, etc.
+4. At least one close, frame-dominating COCO-class obstacle or textured object that YOLOv8n
+   detects without the patch.
+5. A short note saying which drone is intended to be fooled by the patch and which peers
+   should still see the obstacle.
 
 ### Frame delivery for the ORB fallback (Tier 3, optional)
 
@@ -246,7 +275,8 @@ stream at 2 Hz. M2 builds the entire console against it and never waits for the 
 |---|---|---|---|
 | **T0** | Week 2 | 3 nodes, one laptop, replayed/webcam frames, live console, patch caught | **This + the deck qualifies you.** |
 | **T1** | Week 3 | Jetson = Alpha, real OP-TEE signing, over LAN | The hardware reveal works |
-| **T2** | Week 4 | AirSim flying A→B, crash-vs-caught | The money shot exists |
+| **T2** | Week 4 | Pratik dark-urban Cosys-AirSim A→B, crash-vs-caught | The money shot exists |
+| **T2b** | Week 4 | Samik light-terrain recorded/live frames through the same Python verifier | Robustness evidence exists |
 | **T3** | stretch | GPS-spoof + ORB fallback scene | Bonus only |
 
 **Week 4 is a hard feature freeze.** Weeks 5–6 are rehearsal and backup only. Do not
@@ -259,12 +289,13 @@ negotiate this — a demo that works and is rehearsed beats a better demo that i
 | | Who | Platform | Owns |
 |---|---|---|---|
 | **M1** | **Suyash** | WSL + Jetson | Protocol integration, live mission loop, event bus, attack surface, OP-TEE, cross-machine networking |
-| **M2** | **Abhijan** | **Mac** | Console (Streamlit) + the Python half of the simulator, driven over the LAN |
-| **M3** | **Pratik** | **Windows** | Unreal/AirSim install, scene, obstacle, b1 patch plane → then demo operations |
-| **M4** | *[TBD]* | any | Problem statement, deck, pitch, judge Q&A, run-of-show |
+| **M2** | **Abhijan** | **Mac** | Console (Streamlit), Cosys-AirSim RPC client, YOLO verification, and dashboard presentation for both environment tracks |
+| **M3** | **Pratik** | **Windows** | Dark urban Unreal/Cosys-AirSim environment, rooftop/wall patches, primary live demo operations |
+| **M4** | **Samik** | **Windows / Unreal-capable PC** | Light terrain Unreal/Cosys-AirSim environment: hills, mountains, desert, lakes, trees, and scenario export |
 
-The Windows/Mac split is not preference, it is a constraint: **only one machine runs
-Unreal and it has to be Windows.** Everything else is platform-agnostic Python.
+The Mac/Unreal split is not preference, it is a constraint: **Abhijan's Mac does not run
+Unreal.** Unreal owners work in separate environment tracks and hand off images / live
+Cosys-AirSim endpoints to the same platform-agnostic Python verifier.
 
 ### M1 — Suyash: Core, Integration, Hardware
 Owns everything on the critical path. Assume the others' output may arrive late or broken.
@@ -313,9 +344,10 @@ Owns everything pure-Python and platform-agnostic. **Does not install Unreal.** 
 macOS support was never first-class, Microsoft archived it in 2022, and on Apple Silicon
 it becomes a multi-day plugin-compilation problem with no community trail to follow.
 
-He doesn't need it: the `airsim` pip package is **just an RPC client**, pure Python, works
-fine on macOS. He drives Pratik's sim **over the LAN on port 41451** — which is exactly how
-AirSim was designed to be used.
+He doesn't need it: the `cosysairsim` / `airsim` pip package is **just an RPC client**, pure
+Python, works fine on macOS. He drives Pratik's and Samik's sims **over the LAN on port
+41451** when live access exists, and otherwise runs the same verifier over exported frame
+folders.
 
 #### Console — the main build (Streamlit, not React)
 Python, no JS, readable output in days. Ugly is fine; **legible from three metres is not.**
@@ -342,12 +374,16 @@ Integrate against M1's real backend. **Freeze.**
 **Weeks 5–6** — Colour and contrast polish only. No new panels.
 
 #### Simulator Python side — secondary, ~200 lines total, Weeks 2–4
-Written against Pratik's sim over the LAN, or against recorded frames when it's down.
+Written against Pratik's and Samik's sims over the LAN, or against recorded frames when
+they are down.
 
 - **Waypoint flight** — `moveToPositionAsync()`. Fifteen minutes of API calls. Not a research problem, and nobody is judging your navigation.
-- **Frame capture** — `simGetImages()` per vehicle at 2 Hz, 640×360, written to `sim/demo_frames/<node>/`.
+- **Frame capture** — `simGetImages()` per vehicle at 2 Hz, 640×360, written to `sim/demo_frames/<environment>/<node>/` or an equivalent per-environment folder.
 - **Attack trigger** — `simSetObjectPose()` raising the b1 patch plane into the scene.
 - **Week 4** — the `get_frame(vehicle)` / `set_velocity(vehicle, action)` wrapper M1 consumes.
+- **Environment verification** — for each handoff, run YOLO on patch-lowered and
+  patch-raised frames, record detections/actions, and confirm the victim diverges while
+  peers still detect the obstacle.
 
 > **Verify in Week 1, not Week 3:** that AirSim's RPC accepts a connection from another
 > machine on the switch. Depending on the build it may bind to localhost only. Ten minutes
@@ -358,12 +394,12 @@ hours, honestly still readable. Decide at the end of Week 2.
 
 ---
 
-### M3 — Pratik (Windows): Unreal, the scene, and demo operations
+### M3 — Pratik (Windows): Dark Urban Unreal Environment + Demo Operations
 
-Owns the **only machine that runs Unreal** — it must be Windows, and it should be the
-strongest GPU on the team. Highest-uncertainty role, so it is deliberately **off the
-critical path**: his output is a folder of recorded frames that M1 replays through
-`FileSource`. If AirSim never works, nobody else is blocked.
+Owns the primary **dark urban** environment: buildings, rooftops, alleys, a close
+YOLO-detectable obstacle, and adversarial patches placed on rooftops / walls. His output
+is either a live Cosys-AirSim endpoint for Abhijan or a folder of recorded frames that M1
+replays through `FileSource`. If live AirSim never works, nobody else is blocked.
 
 **Check two prerequisites before anything else:**
 - **Visual Studio 2022, C++ desktop workload** (~10 GB) — required to build the AirSim plugin on Windows. Not optional.
@@ -375,11 +411,12 @@ of Day 2, **stop and switch to Gazebo** — it already flies 3 drones with measu
 co-visibility (`sim/multi_drone.py`). Report the decision at the Week-1 sync; do not
 silently keep debugging.
 
-**Week 2** — Build the scene: **one large, close, frame-dominating obstacle** wearing a
-COCO-class photo texture (bus or truck — the trick that already worked in Gazebo; YOLOv8n
-does not detect a gray Unreal cube). Then **b1**: the parallax occluder plane, parked below
-the ground plane, ready to be raised. **Hand Abhijan a running sim to connect to** — that
-handoff is the week's real deliverable, alongside a folder of captured frames for M1.
+**Week 2** — Build the dark urban scene: **one large, close, frame-dominating obstacle**
+wearing a COCO-class photo texture (bus or truck — the trick that already worked in Gazebo;
+YOLOv8n does not detect a gray Unreal cube). Place visible adversarial patches on rooftops
+or walls. Then **b1**: the parallax occluder plane, parked below the ground plane, ready to
+be raised. **Hand Abhijan a running sim to connect to** — that handoff is the week's real
+deliverable, alongside a folder of captured frames for M1.
 
 > **The obstacle must dominate the frame.** In the Gazebo run the patch attack silently
 > failed on the ring-of-cubes scene: small distant obstacles → weak avoidance action →
@@ -398,46 +435,46 @@ is a deliverable, not a nice-to-have.* If b2 misbehaves, b1 ships — it is a co
 world-space attack on its own.
 
 **Weeks 5–6 — his Unreal load drops here, so he takes demo operations.** Re-record the
-backup after freeze, test on the actual venue machine, **drive the demo while M4 narrates**,
-and own cable setup and teardown against `RUNBOOK.md`.
+backup after freeze, test on the actual venue machine, **drive the primary dark urban demo
+while the pitch owner narrates**, and own cable setup and teardown against `RUNBOOK.md`.
 
 *Hard rule:* graphics settings low, 640×360, 2 Hz. Nobody scores you on frame rate, and
 slower is more legible to a judge anyway.
 
 ---
 
-### M4 — [NAME TBD]: Problem Statement, Deck, Pitch
+### M4 — Samik: Light Terrain Unreal Environment
 
-**Assign this person now — this is the last unfilled seat.** Not a lesser role: at internal
-rounds the deck and the narration decide as much as the build, and with Suyash driving the
-system and Pratik driving the sim, someone else has to own the room and do the talking.
+Owns the secondary **light terrain** environment: hills, mountains, desert, lakes, trees,
+open terrain, and bright daylight scenes. This is not merged into Pratik's map. It is a
+separate scenario pack that proves the same Python verifier and dashboard work outside the
+dark urban setting.
 
 **Week 1**
-1. Pull all SIH problem statements; build a scoring sheet: *does it name swarms/autonomy?
-   is the fleet ours (insider threat) or the enemy's (counter-UAS)? which ministry?
-   how literally does our demo answer the wording?*
-2. **Kill any counter-UAS PS.** VeriSwarm defends your own fleet; forcing it there loses
-   to a team with an RF detector.
-3. Recommend the top 2 to the team. Download the official SIH PPT template — **format
-   compliance is checked and teams get dropped for it.**
-4. Scan for what other teams will build for the same PS.
+1. Set up Unreal/Cosys-AirSim or align with Pratik's working setup.
+2. Create a minimal daylight terrain map with one close, YOLO-detectable obstacle.
+3. Export the first patch-lowered frame folder for Abhijan, even if the map is ugly.
+4. Write down vehicle names, camera names, and expected node mapping.
 
-**Week 2** — Deck v1 in the official template: problem, our approach, novelty (hardware
-root of trust + peer cross-verification — nobody else will have this), technical
-architecture, feasibility, impact, scalability. Build the **judge Q&A sheet** with
-honest answers to: *Why not just encrypt? What if the attacker owns the majority? Does
-this run on real drones? Did you build this during the hackathon? What's the latency
-cost?* Get answers from M1; write them in plain language.
+**Week 2** — Expand the terrain scene with hills / mountains / desert / lake / trees, but
+keep the demo geometry simple: victim drone sees a patch-obscured obstacle, peers see past
+it. Export patch-lowered and patch-raised frame folders for all vehicles. Do not wait for
+the map to look final before handing images to Abhijan.
 
-**Week 3** — Demo run-of-show: minute-by-minute script, who speaks, who drives, exact
-words for the hardware reveal. Rehearse narration against M2's console using mock events.
-Target 5 minutes with a 3-minute compressed version.
+**Week 3** — If live Cosys-AirSim access is ready, expose port `41451` on the LAN so
+Abhijan can run the same smoke test and YOLO verifier. If not, recorded frames remain the
+official handoff. Tune lighting so YOLO still detects the intended object in the clean
+case.
 
-**Week 4** — Film the demo; deck v2 with real screenshots and real numbers from M1.
+**Week 4** — Record the backup video for the light terrain scenario and deliver final frame
+packs. This is evidence / robustness material, not the primary live demo.
 
-**Weeks 5–6** — Three full rehearsals minimum, at least one to an outsider who asks hostile
-questions. Print handouts: one page with architecture diagram, the repo QR code, and the
-headline numbers.
+**Weeks 5–6** — Freeze map changes except visual polish. Help M2 and the pitch owner
+collect screenshots, short clips, and failure/success comparisons for the deck.
+
+**Pitch and deck ownership:** with Samik now owning a full environment track, the deck and
+judge Q&A become a shared weekly-sync responsibility unless the team assigns another named
+owner. Do not let the environment split consume the narration work.
 
 ---
 
@@ -468,7 +505,10 @@ its gate date gets cut, not extended.
 - **T1:** Alpha on Jetson, console shows `backend: optee`, sign ≈ 4.7 ms, peers verify
   over LAN.
 - **T2:** run A (VeriSwarm off) drone hits the obstacle; run B (on) drone hovers and is
-  isolated. Both recorded.
+  isolated. Both recorded in Pratik's dark urban scenario.
+- **T2b:** Samik's light terrain scenario produces patch-lowered and patch-raised frame
+  folders that run through the same M2 YOLO verifier and console path. It may be recorded
+  rather than live.
 - **Regression:** `python -m pytest` — all 102 existing tests still pass after the
   `client.py` / `server.py` seam changes. **Run this before every commit.**
 - **Venue drill:** unplug the network mid-demo — swarm keeps deciding (this is a demo
@@ -485,6 +525,8 @@ its gate date gets cut, not extended.
 | Obstacle too small → action too weak → nothing to catch | Redesign scene: one close, frame-dominating obstacle | Week 2 |
 | M2 can't build the console | M1 ships a `rich` terminal console (~2 h) | End of Week 2 |
 | M3 falls behind entirely | `FileSource` replays recorded frames; demo unaffected | Week 3 sync |
+| Unreal Git collaboration becomes noisy | Keep Pratik and Samik on separate scenario packs; integrate only exported frames/videos and Python-facing metadata | Immediate |
+| Samik's light terrain scene falls behind | Use it as recorded robustness evidence only; do not block the primary Pratik live demo | Week 4 |
 | Venue network fails | `--offline` mode, all nodes on one machine | Built Week 3 |
 | Everything fails on the day | Backup video + live Jetson signing on the table | Week 4 |
 | Judge asks "did you build this in the hackathon?" | Disclose first: published protocol + paper is ours; the application, console, and hardware integration are the SIH build | Rehearsed Week 2 |
