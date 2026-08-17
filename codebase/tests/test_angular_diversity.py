@@ -205,6 +205,24 @@ def test_ring_is_mutually_verifying_for_every_member():
     assert all(r["independent"] for r in rows), f"not fully connected: {rows}"
 
 
+def test_tilted_camera_ring_is_replanned_from_actual_pitch():
+    """The 5.5 m nadir result must not be reused blindly for tilted cameras."""
+    ids = ["alpha", "bravo", "charlie", "delta", "echo"]
+    too_small = common.generate_manifest(
+        ids,
+        poses=common.ring_formation(ids, radius_m=5.5, camera_pitch_deg=35.0),
+        phi_min=PHI_MIN,
+    )
+    assert not all(r["independent"] for r in common.covisibility_report(too_small))
+
+    replanned = common.generate_manifest(
+        ids,
+        poses=common.ring_formation(ids, radius_m=10.0, camera_pitch_deg=35.0),
+        phi_min=PHI_MIN,
+    )
+    assert all(r["independent"] for r in common.covisibility_report(replanned))
+
+
 @pytest.mark.parametrize("radius,expect_ok", [
     (3.0, False),   # too tight — overlaps fully, parallax only 14 deg
     (4.5, False),   # still under phi_min at 21 deg

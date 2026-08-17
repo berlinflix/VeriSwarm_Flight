@@ -9,7 +9,7 @@ real system, a ground-station-signed file). It lists, per drone:
                           hardware/OP-TEE node, whose key lives in the secure
                           element)
   backend               - "software" | "optee"
-  pose                  - [x, y, z, yaw] world pose, for the co-visibility gate
+  pose                  - [x, y, z, yaw, pitch, roll] reference world pose
   observation           - the action this drone perceives for the current scene
                           (the experiment's stand-in for live per-drone perception)
 
@@ -30,12 +30,13 @@ import nacl.signing
 
 from protocol.receipts import (
     DEFAULT_MAX_AGE_NS,
+    PROTOCOL_VERSION,
     ReceiptSigner,
     ReceiptVerifier,
     sha256_hex,
 )
-from protocol.peer_consensus import VoteVerifier
-from protocol.geometry import Pose
+from protocol.peer_consensus import VoteVerifier, quorum_thresholds
+from protocol.geometry import DEFAULT_HFOV, DEFAULT_VFOV, Pose
 
 # ---------------------------------------------------------------------------
 # Provenance values
@@ -54,37 +55,67 @@ from protocol.geometry import Pose
 # is precisely the attack the layer exists to catch.
 APPROVED_MODEL = sha256_hex(b"yolov8n-weights-v1")
 MALICIOUS_MODEL = sha256_hex(b"yolov8n-backdoored")
+APPROVED_RUNTIME = sha256_hex(b"veriswarm-simulation-runtime-v2")
 
-
-_HASH_CACHE: Dict[tuple, str] = {}
+GRPC_OPTIONS = (
+    ("grpc.max_receive_message_length", 64 * 1024),
+    ("grpc.max_send_message_length", 64 * 1024),
+    ("grpc.max_metadata_size", 8 * 1024),
+)
 
 
 def file_model_hash(weights_path: str | Path) -> str:
     """
     SHA-256 of an actual weight file — the provenance value a live node reports.
 
-    Computed once per (path, size, mtime) and cached, mirroring the deployment
-    rule that a node hashes its weights at boot and never re-hashes in flight:
-    the in-memory model is immutable, so a mid-flight re-hash could only ever
-    disagree with what was actually loaded.
+    The function reads the bytes on every call. Caching by path/size/mtime is
+    unsafe because an attacker can replace a file with same-size content and
+    restore its timestamp. A live process should call this while loading the
+    reviewed bytes, then retain the resulting digest alongside the immutable
+    in-memory model.
 
     This is the same function as `perception.yolo_action.model_hash`, duplicated
     here so the node runtime does not have to import the perception stack (and
     transitively torch) just to identify a file.
     """
     p = Path(weights_path)
-    stat = p.stat()
-    key = (str(p.resolve()), stat.st_size, stat.st_mtime_ns)
-    cached = _HASH_CACHE.get(key)
-    if cached is not None:
-        return cached
     h = hashlib.sha256()
     with p.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 16), b""):
             h.update(chunk)
-    digest = h.hexdigest()
-    _HASH_CACHE[key] = digest
-    return digest
+    return h.hexdigest()
+
+
+def runtime_bundle_hash(paths: Iterable[str | Path]) -> str:
+    """Hash a deterministic manifest of runtime/controller artifacts.
+
+    Logical basenames, sizes, and individual SHA-256 values are bound; absolute
+    installation paths are deliberately excluded so the same reviewed bundle
+    measures identically on each node. Duplicate basenames are rejected.
+    """
+    entries = []
+    names = set()
+    for raw in paths:
+        path = Path(raw)
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        if path.name in names:
+            raise ValueError(f"duplicate runtime artifact basename: {path.name}")
+        names.add(path.name)
+        entries.append({
+            "name": path.name,
+            "size_bytes": path.stat().st_size,
+            "sha256": file_model_hash(path),
+        })
+    if not entries:
+        raise ValueError("runtime bundle must contain at least one artifact")
+    canonical = json.dumps(
+        sorted(entries, key=lambda entry: entry["name"]),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return sha256_hex(b"VERISWARM_RUNTIME_BUNDLE_V1\x00" + canonical)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +288,36 @@ def approved_models_of(
     return set(manifest.get("approved_models", ()))
 
 
+def approved_runtimes_of(
+    manifest: dict,
+    authority_path: Optional[str | Path] = None,
+    authority_pubkey: Optional[str] = None,
+) -> Optional[set]:
+    """Resolve signed runtime measurements; ``None`` disables it in legacy simulation."""
+    src = authority_path or manifest.get("authority")
+    if src:
+        pubkey = authority_pubkey or authority_pubkey_from_env()
+        payload = load_authority(src, authority_pubkey=pubkey)
+        entries = payload.get("approved_runtimes")
+        if entries is None:
+            if manifest.get("mode") == "production":
+                raise AuthorityError(
+                    "production authority must list approved_runtimes"
+                )
+            return None
+        if not isinstance(entries, list) or not entries:
+            raise AuthorityError("approved_runtimes must be a non-empty list")
+        hashes = set()
+        for entry in entries:
+            digest = entry.get("sha256") if isinstance(entry, dict) else None
+            if not isinstance(digest, str) or len(digest) != 64:
+                raise AuthorityError("every approved runtime needs a SHA-256")
+            hashes.add(digest)
+        return hashes
+    configured = manifest.get("approved_runtimes")
+    return None if configured is None else set(configured)
+
+
 def generate_manifest(
     ids: Sequence[str],
     *,
@@ -265,9 +326,16 @@ def generate_manifest(
     poses: Optional[Mapping[str, Sequence[float]]] = None,
     observations: Optional[Mapping[str, Sequence[float]]] = None,
     approved_models: Iterable[str] = (APPROVED_MODEL,),
+    approved_runtimes: Iterable[str] = (APPROVED_RUNTIME,),
     o_min: float = 0.1,
     phi_min: float = 0.0,
+    agreement_threshold: float = 0.5,
     authority: Optional[str] = None,
+    mode: str = "simulation",
+    mission_id: str = "simulation",
+    mission_epoch: int = 0,
+    camera_hfov_deg: float = math.degrees(DEFAULT_HFOV),
+    camera_vfov_deg: float = math.degrees(DEFAULT_VFOV),
 ) -> dict:
     """Build a manifest with a fresh software keypair per node.
 
@@ -284,15 +352,24 @@ def generate_manifest(
             "pubkey": bytes(sk.verify_key).hex(),
             "seed": bytes(sk).hex(),
             "backend": "software",
+            "runtime_hash": APPROVED_RUNTIME,
             "pose": list(poses[nid]) if poses and nid in poses else None,
             "observation": (
                 list(observations[nid]) if observations and nid in observations else None
             ),
         }
     manifest = {
+        "protocol_version": PROTOCOL_VERSION,
+        "mode": mode,
+        "mission_id": mission_id,
+        "mission_epoch": mission_epoch,
         "approved_models": list(approved_models),
+        "approved_runtimes": list(approved_runtimes),
         "o_min": o_min,
         "phi_min": phi_min,
+        "agreement_threshold": agreement_threshold,
+        "camera_hfov_deg": camera_hfov_deg,
+        "camera_vfov_deg": camera_vfov_deg,
         "nodes": nodes,
     }
     if authority:
@@ -306,8 +383,146 @@ def save_manifest(manifest: dict, path: str | Path) -> Path:
     return p
 
 
-def load_manifest(path: str | Path) -> dict:
-    return json.loads(Path(path).read_text())
+def manifest_for_node(manifest: dict, node_id: str) -> dict:
+    """Return a node-scoped manifest containing no other node's private seed.
+
+    A provisioning workstation necessarily sees key material while generating
+    software test identities. A deployed aircraft must not. This helper creates
+    the only form that may be copied to a node: public roster data plus that
+    node's own software seed (if it has one).
+    """
+    if node_id not in manifest.get("nodes", {}):
+        raise ValueError(f"unknown node_id: {node_id}")
+    scoped = json.loads(json.dumps(manifest))
+    for other_id, entry in scoped["nodes"].items():
+        if other_id != node_id:
+            entry.pop("seed", None)
+    return scoped
+
+
+def validate_manifest(manifest: dict, local_node_id: Optional[str] = None) -> None:
+    """Validate trust-critical deployment invariants, failing closed in flight mode."""
+    nodes = manifest.get("nodes")
+    if not isinstance(nodes, dict) or len(nodes) < 2:
+        raise ValueError("manifest must contain at least two nodes")
+    if local_node_id is not None and local_node_id not in nodes:
+        raise ValueError(f"local node {local_node_id!r} is absent from manifest")
+    if manifest.get("protocol_version") != PROTOCOL_VERSION:
+        raise ValueError("unsupported or missing protocol_version")
+
+    mode = manifest.get("mode", "simulation")
+    if mode not in {"simulation", "production"}:
+        raise ValueError("manifest mode must be 'simulation' or 'production'")
+    if mode != "production":
+        return
+
+    mission_id = manifest.get("mission_id")
+    if not isinstance(mission_id, str) or not mission_id or mission_id == "simulation":
+        raise ValueError("production manifest requires a non-simulation mission_id")
+    if int(manifest.get("mission_epoch", 0)) < 1:
+        raise ValueError("production manifest requires mission_epoch >= 1")
+    if not manifest.get("authority"):
+        raise ValueError("production manifest requires a signed mission authority")
+    if not authority_pubkey_from_env():
+        raise ValueError(
+            "production manifest requires VERISWARM_AUTHORITY_PUBKEY pinned "
+            "outside the provisioner-controlled manifest"
+        )
+    if manifest.get("max_receipt_age_ns", DEFAULT_MAX_AGE_NS) <= 0:
+        raise ValueError("production manifest may not disable receipt freshness")
+    if int(manifest.get("max_observation_skew_ns", 250_000_000)) <= 0:
+        raise ValueError("production manifest requires positive observation skew bound")
+    if not (0.0 < float(manifest.get("o_min", 0.0)) <= 1.0):
+        raise ValueError("production manifest requires 0 < o_min <= 1")
+    agreement = float(manifest.get("agreement_threshold", 0.0))
+    if not 0.0 < agreement < math.sqrt(12.0):
+        raise ValueError("production manifest has an invalid agreement_threshold")
+    if float(manifest.get("phi_min", 0.0)) <= 0.0:
+        raise ValueError("production manifest requires a calibrated phi_min > 0")
+    for name in ("camera_hfov_deg", "camera_vfov_deg"):
+        value = float(manifest.get(name, 0.0))
+        if not 0.0 < value < 180.0:
+            raise ValueError(f"production manifest requires calibrated {name}")
+    if manifest.get("transport", {}).get("mode") != "mtls":
+        raise ValueError("production manifest requires mutual TLS transport")
+
+    for node_id, entry in nodes.items():
+        if len(entry.get("pubkey", "")) != 64:
+            raise ValueError(f"node {node_id!r} has no valid Ed25519 public key")
+        runtime_hash = entry.get("runtime_hash", "")
+        if len(runtime_hash) != 64:
+            raise ValueError(f"node {node_id!r} has no runtime measurement")
+        if entry.get("observation") is not None:
+            raise ValueError(
+                f"node {node_id!r} has a static observation; production must "
+                "supply synchronized live sensor data"
+            )
+        if entry.get("pose") is None:
+            raise ValueError(f"node {node_id!r} has no reference pose configuration")
+        if local_node_id is not None and node_id != local_node_id and "seed" in entry:
+            raise ValueError(
+                f"node-scoped manifest for {local_node_id!r} contains private "
+                f"seed for peer {node_id!r}"
+            )
+        if "seed" in entry:
+            raise ValueError(
+                f"node {node_id!r} carries a plaintext signing seed; production "
+                "requires a hardware/OS keystore signer"
+            )
+
+    transport = manifest["transport"]
+    if not transport.get("ca_cert"):
+        raise ValueError("mTLS transport requires ca_cert")
+    if local_node_id is not None:
+        local = nodes[local_node_id]
+        if not local.get("tls_cert") or not local.get("tls_key"):
+            raise ValueError(f"node {local_node_id!r} requires tls_cert and tls_key")
+
+
+def load_manifest(path: str | Path, local_node_id: Optional[str] = None) -> dict:
+    manifest = json.loads(Path(path).read_text())
+    validate_manifest(manifest, local_node_id=local_node_id)
+    return manifest
+
+
+def channel_for(manifest: dict, local_node_id: str, peer_id: str):
+    """Create the configured gRPC channel; production permits mTLS only."""
+    import grpc
+
+    target = address_of(manifest, peer_id)
+    transport = manifest.get("transport", {})
+    if transport.get("mode") != "mtls":
+        if manifest.get("mode", "simulation") == "production":
+            raise ValueError("refusing insecure gRPC channel in production")
+        return grpc.insecure_channel(target, options=GRPC_OPTIONS)
+
+    local = manifest["nodes"][local_node_id]
+    credentials = grpc.ssl_channel_credentials(
+        root_certificates=Path(transport["ca_cert"]).read_bytes(),
+        private_key=Path(local["tls_key"]).read_bytes(),
+        certificate_chain=Path(local["tls_cert"]).read_bytes(),
+    )
+    return grpc.secure_channel(target, credentials, options=GRPC_OPTIONS)
+
+
+def add_server_listener(server, manifest: dict, local_node_id: str) -> int:
+    """Bind a gRPC listener, requiring client certificates in production."""
+    import grpc
+
+    entry = manifest["nodes"][local_node_id]
+    bind = f"0.0.0.0:{entry['port']}"
+    transport = manifest.get("transport", {})
+    if transport.get("mode") != "mtls":
+        if manifest.get("mode", "simulation") == "production":
+            raise ValueError("refusing insecure gRPC listener in production")
+        return server.add_insecure_port(bind)
+
+    credentials = grpc.ssl_server_credentials(
+        [(Path(entry["tls_key"]).read_bytes(), Path(entry["tls_cert"]).read_bytes())],
+        root_certificates=Path(transport["ca_cert"]).read_bytes(),
+        require_client_auth=True,
+    )
+    return server.add_secure_port(bind, credentials)
 
 
 def peer_keys_of(manifest: dict) -> Dict[str, str]:
@@ -333,6 +548,12 @@ def receipt_verifier_for(
         peer_keys=peer_keys_of(manifest),
         approved_models=approved_models_of(manifest, authority_path, authority_pubkey),
         max_age_ns=int(manifest.get("max_receipt_age_ns", DEFAULT_MAX_AGE_NS)),
+        expected_mission_id=manifest.get("mission_id", "simulation"),
+        expected_mission_epoch=int(manifest.get("mission_epoch", 0)),
+        approved_runtimes=approved_runtimes_of(
+            manifest, authority_path, authority_pubkey
+        ),
+        enforce_sequence=True,
     )
 
 
@@ -341,21 +562,42 @@ def vote_verifier_for(manifest: dict) -> VoteVerifier:
 
 
 def pose_of(entry: dict) -> Optional[Pose]:
-    """Build a Pose from a manifest entry's `[x, y, z, yaw, pitch]`.
+    """Build a Pose from a manifest entry's `[x, y, z, yaw, pitch, roll]`.
 
-    `pitch` (camera tilt off nadir, radians) is optional and defaults to 0, so
-    four-element poses from earlier manifests keep their nadir meaning exactly.
+    `pitch` and `roll` are optional and default to 0, so four-element poses from
+    earlier manifests keep their nadir meaning exactly.
     """
     p = entry.get("pose")
     if not p:
         return None
-    x, y, z, yaw, pitch = (list(p) + [0.0] * 5)[:5]
-    return Pose(x, y, z, yaw, pitch)
+    x, y, z, yaw, pitch, roll = (list(p) + [0.0] * 6)[:6]
+    return Pose(x, y, z, yaw, pitch, roll)
 
 
 def address_of(manifest: dict, node_id: str) -> str:
     e = manifest["nodes"][node_id]
     return f"{e['host']}:{e['port']}"
+
+
+def ring_formation(
+    ids: Sequence[str],
+    *,
+    radius_m: float = 5.5,
+    altitude_m: float = 14.0,
+    camera_pitch_deg: float = 0.0,
+) -> Dict[str, tuple]:
+    """Place an inward-facing N-drone ring using the real camera pitch."""
+    if len(ids) < 2 or radius_m <= 0.0 or altitude_m <= 0.0:
+        raise ValueError("ring needs >=2 nodes and positive radius/altitude")
+    pitch = math.radians(camera_pitch_deg)
+    poses = {}
+    for index, node_id in enumerate(ids):
+        angle = 2.0 * math.pi * index / len(ids)
+        x = radius_m * math.cos(angle)
+        y = radius_m * math.sin(angle)
+        yaw = math.atan2(-y, -x)
+        poses[node_id] = (x, y, altitude_m, yaw, pitch, 0.0)
+    return poses
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +627,12 @@ def covisibility_report(manifest: dict) -> List[dict]:
     ids = sorted(poses)
     o_min = float(manifest.get("o_min", 0.1))
     phi_min = float(manifest.get("phi_min", 0.0))
+    hfov = math.radians(float(manifest.get(
+        "camera_hfov_deg", math.degrees(DEFAULT_HFOV)
+    )))
+    vfov = math.radians(float(manifest.get(
+        "camera_vfov_deg", math.degrees(DEFAULT_VFOV)
+    )))
     for i, a_id in enumerate(ids):
         for b_id in ids[i + 1:]:
             a, b = poses[a_id], poses[b_id]
@@ -394,8 +642,8 @@ def covisibility_report(manifest: dict) -> List[dict]:
                              "independent": False, "note": "no pose in manifest"})
                 continue
             sep = math.hypot(a.x - b.x, a.y - b.y)
-            iou = covisibility(a, b)
-            phi = parallax_angle(a, b)
+            iou = covisibility(a, b, hfov, vfov)
+            phi = parallax_angle(a, b, hfov, vfov)
             overlapping = iou >= o_min
             rows.append({
                 "i": a_id, "j": b_id,
@@ -430,7 +678,8 @@ def assert_covisible_formation(manifest: dict, originator_id: str) -> List[dict]
     rows = covisibility_report(manifest)
     peers = [r for r in rows if originator_id in (r["i"], r["j"])]
     verifying = [r for r in peers if r["independent"]]
-    if verifying:
+    required, _ = quorum_thresholds(max(1, len(peers)))
+    if len(verifying) >= required:
         return rows
 
     detail = "\n".join(
@@ -443,7 +692,7 @@ def assert_covisible_formation(manifest: dict, originator_id: str) -> List[dict]
 
     # Distinguish the two ways this fails, because the fixes are opposite.
     overlapping = [r for r in peers if r["co_visible"]]
-    if overlapping:
+    if overlapping and not verifying:
         why = (
             f"every peer overlapping '{originator_id}' is flying too close to it "
             f"to be an independent observer (parallax below phi_min="
@@ -452,13 +701,19 @@ def assert_covisible_formation(manifest: dict, originator_id: str) -> List[dict]
             f"their agreement proves nothing."
         )
         fix = "  Spread the formation OUT until parallax clears phi_min."
-    else:
+    elif not overlapping:
         why = (
             f"no peer is co-visible with '{originator_id}' — the semantic layer "
             f"would be inactive for the whole mission and every peer would ACK "
             f"on cryptographic evidence alone."
         )
-        fix = ("  Move peers CLOSER (or raise altitude), or supply camera frames "
-               "so the ORB image fallback can run.")
+        fix = ("  Move peers CLOSER (or raise altitude), and verify the camera "
+               "calibration. Image features alone cannot prove phi_min.")
+    else:
+        why = (
+            f"only {len(verifying)} of {len(peers)} peers can independently verify "
+            f"'{originator_id}', below semantic ACK quorum {required}."
+        )
+        fix = "  Re-plan the formation until a full semantic quorum is available."
 
     raise RuntimeError(f"{why}\n{detail}\n{fix}")

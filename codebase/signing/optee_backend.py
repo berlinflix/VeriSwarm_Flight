@@ -101,6 +101,10 @@ class OPTEEReceiptSigner:
     def public_key_bytes(self) -> bytes:
         return bytes.fromhex(self.public_key_hex)
 
+    def sign_bytes(self, message: bytes) -> str:
+        """Sign protocol bytes inside secure world (receipts and peer votes)."""
+        return self._invoke("sign", message.hex())
+
     def sign(self, receipt: Receipt) -> SignedReceipt:
         """Sign the receipt's canonical bytes inside the TEE; return the pair.
 
@@ -110,6 +114,7 @@ class OPTEEReceiptSigner:
         Ed25519 does its own internal hashing, so a signature made this way
         verifies identically whether it came from the software or OP-TEE signer.
         """
-        message_hex = receipt.canonical().hex()
-        signature_hex = self._invoke("sign", message_hex)
-        return SignedReceipt(receipt=receipt, signature=signature_hex)
+        return SignedReceipt(
+            receipt=receipt,
+            signature=self.sign_bytes(receipt.canonical()),
+        )

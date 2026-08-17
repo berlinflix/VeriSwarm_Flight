@@ -29,6 +29,7 @@ from protocol.geometry import (
     parallax_angle,
     polygon_area,
     polygon_centroid,
+    polygon_signed_area,
 )
 
 
@@ -108,24 +109,57 @@ def test_tilt_follows_yaw():
     assert north[1] > 5.0 and north[0] == pytest.approx(0.0, abs=1e-6)
 
 
-def test_near_horizon_footprint_stays_bounded():
+def test_near_horizon_footprint_abstains():
     """
     A camera whose upper field of view reaches the horizon projects to an
-    unbounded footprint. Clipping must keep the polygon finite and convex, or
-    every IoU downstream becomes meaningless.
+    unbounded footprint. A four-corner polygon cannot represent its exact
+    range-clipped ground intersection, so the geometry gate must abstain.
     """
     fp = camera_footprint(Pose(0.0, 0.0, 14.0, pitch=math.radians(80)))
-    assert len(fp) == 4
-    assert all(math.isfinite(c) for corner in fp for c in corner)
-    assert all(math.hypot(*corner) <= DEFAULT_MAX_GROUND_RANGE + 1e-6 for corner in fp)
-    assert polygon_area(fp) > 0.0
+    assert fp == []
 
 
 def test_tilted_footprint_still_ccw():
     """Sutherland-Hodgman clipping assumes CCW winding; tilt must preserve it."""
-    for deg in (0, 15, 35, 60, 80):
+    for deg in (0, 15, 35, 50):
         fp = camera_footprint(Pose(2.0, -1.0, 12.0, yaw=0.7, pitch=math.radians(deg)))
-        assert polygon_area(fp) > 0.0, f"degenerate at pitch={deg}"
+        assert polygon_signed_area(fp) > 0.0, f"not CCW at pitch={deg}"
+
+
+def test_every_emitted_pose_grid_footprint_is_convex_and_bounded():
+    """Regression for combined near-horizon pitch/roll concavity."""
+    for pitch_deg in range(-80, 81, 10):
+        for roll_deg in range(-80, 81, 10):
+            fp = camera_footprint(Pose(
+                3.0,
+                -2.0,
+                14.0,
+                yaw=0.7,
+                pitch=math.radians(pitch_deg),
+                roll=math.radians(roll_deg),
+            ))
+            if not fp:
+                continue
+            assert polygon_signed_area(fp) > 0.0
+            for index in range(4):
+                a, b, c = fp[index - 1], fp[index], fp[(index + 1) % 4]
+                cross = (
+                    (b[0] - a[0]) * (c[1] - b[1])
+                    - (b[1] - a[1]) * (c[0] - b[0])
+                )
+                assert cross >= -1e-9
+            assert all(
+                math.hypot(x - 3.0, y + 2.0) <= DEFAULT_MAX_GROUND_RANGE + 1e-9
+                for x, y in fp
+            )
+
+
+def test_roll_moves_the_footprint_cross_track_and_stays_ccw():
+    level = polygon_centroid(camera_footprint(Pose(0.0, 0.0, 14.0)))
+    rolled_fp = camera_footprint(Pose(0.0, 0.0, 14.0, roll=math.radians(20)))
+    rolled = polygon_centroid(rolled_fp)
+    assert abs(rolled[1] - level[1]) > 1.0
+    assert polygon_signed_area(rolled_fp) > 0.0
 
 
 def test_two_forward_tilted_cameras_overlap():

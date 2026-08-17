@@ -28,13 +28,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import re
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from typing import Iterable, Mapping, Optional, Sequence
 
 import nacl.exceptions
 import nacl.signing
+
+
+_HEX_64_RE = re.compile(r"[0-9a-f]{64}\Z")
+_HEX_32_RE = re.compile(r"[0-9a-f]{32}\Z")
+_HEX_128_RE = re.compile(r"[0-9a-f]{128}\Z")
+_DRONE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+_MISSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+ACTION_DIM = 3
+PROTOCOL_VERSION = 2
+DEFAULT_ACTION_FRAME = "BODY_FLU_NORMALIZED_VELOCITY"
+SUPPORTED_ACTION_FRAMES = frozenset({DEFAULT_ACTION_FRAME})
+UNMEASURED_RUNTIME_HASH = hashlib.sha256(b"unmeasured-runtime").hexdigest()
+DEFAULT_VALID_FOR_NS = 2_000_000_000
+MAX_SERIALIZED_RECEIPT_BYTES = 16 * 1024
+DEFAULT_REPLAY_CACHE_SIZE = 4096
 
 
 # ---------------------------------------------------------------------------
@@ -54,8 +73,8 @@ def fresh_nonce(num_bytes: int = 16) -> str:
     16 bytes (128 bits) of entropy is sufficient to make collision
     probability negligible for any practical drone-mission duration.
     Source: the OS CSPRNG (`/dev/urandom` on Linux, BCryptGenRandom on
-    Windows). On Jetson, this is additionally seeded by the hardware
-    secure element when available.
+    Windows). Platform entropy quality remains an operating-system and boot-time
+    deployment assumption.
     """
     return os.urandom(num_bytes).hex()
 
@@ -115,22 +134,64 @@ class Receipt:
     model_hash: str
     output: Sequence[float]
     nonce: str
+    protocol_version: int = PROTOCOL_VERSION
+    mission_id: str = "simulation"
+    mission_epoch: int = 0
+    sequence: int = 0
+    runtime_hash: str = UNMEASURED_RUNTIME_HASH
+    action_frame: str = DEFAULT_ACTION_FRAME
+    valid_for_ns: int = DEFAULT_VALID_FOR_NS
+    pose_enu: Sequence[float] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    pose_timestamp_ns: int = 0
+    pose_uncertainty_m: float = 0.0
 
     def __post_init__(self) -> None:
-        # Lightweight invariants. We do not validate cryptographic
-        # correctness here — that lives in the verifier.
-        if not self.drone_id:
-            raise ValueError("drone_id must be non-empty")
+        if not _DRONE_ID_RE.fullmatch(self.drone_id):
+            raise ValueError(
+                "drone_id must be 1-64 ASCII letters/digits/._- and start "
+                "with a letter or digit"
+            )
         if self.timestamp_ns < 0:
             raise ValueError("timestamp_ns must be non-negative")
-        if len(self.input_hash) != 64:
-            raise ValueError("input_hash must be 64 hex chars (SHA-256)")
-        if len(self.model_hash) != 64:
-            raise ValueError("model_hash must be 64 hex chars (SHA-256)")
-        if len(self.nonce) != 32:
-            raise ValueError("nonce must be 32 hex chars (16 bytes)")
-        # Coerce output into an immutable tuple for hashability.
-        object.__setattr__(self, "output", tuple(float(x) for x in self.output))
+        if self.protocol_version != PROTOCOL_VERSION:
+            raise ValueError(f"unsupported protocol_version: {self.protocol_version}")
+        if not _MISSION_ID_RE.fullmatch(self.mission_id):
+            raise ValueError("mission_id must be 1-128 safe ASCII characters")
+        if self.mission_epoch < 0 or self.sequence < 0:
+            raise ValueError("mission_epoch and sequence must be non-negative")
+        if not _HEX_64_RE.fullmatch(self.input_hash):
+            raise ValueError("input_hash must be 64 lowercase hex chars (SHA-256)")
+        if not _HEX_64_RE.fullmatch(self.model_hash):
+            raise ValueError("model_hash must be 64 lowercase hex chars (SHA-256)")
+        if not _HEX_32_RE.fullmatch(self.nonce):
+            raise ValueError("nonce must be 32 lowercase hex chars (16 bytes)")
+        if not _HEX_64_RE.fullmatch(self.runtime_hash):
+            raise ValueError("runtime_hash must be 64 lowercase hex chars (SHA-256)")
+        if self.action_frame not in SUPPORTED_ACTION_FRAMES:
+            raise ValueError(f"unsupported action_frame: {self.action_frame!r}")
+        if not (0 < self.valid_for_ns <= DEFAULT_VALID_FOR_NS):
+            raise ValueError(
+                f"valid_for_ns must be in [1, {DEFAULT_VALID_FOR_NS}]"
+            )
+        pose = tuple(float(v) for v in self.pose_enu)
+        if len(pose) != 6 or not all(math.isfinite(v) for v in pose):
+            raise ValueError("pose_enu must contain six finite x,y,z,yaw,pitch,roll values")
+        if pose[2] < 0.0:
+            raise ValueError("pose altitude must be non-negative")
+        if self.pose_timestamp_ns < 0:
+            raise ValueError("pose_timestamp_ns must be non-negative")
+        if not math.isfinite(self.pose_uncertainty_m) or self.pose_uncertainty_m < 0.0:
+            raise ValueError("pose_uncertainty_m must be finite and non-negative")
+        object.__setattr__(self, "pose_enu", pose)
+
+        output = tuple(float(x) for x in self.output)
+        if len(output) != ACTION_DIM:
+            raise ValueError(f"output must contain exactly {ACTION_DIM} action values")
+        if not all(math.isfinite(x) for x in output):
+            raise ValueError("output values must be finite")
+        if not all(-1.0 <= x <= 1.0 for x in output):
+            raise ValueError("output values must be in [-1, 1]")
+        object.__setattr__(self, "output", output)
 
     def canonical(self) -> bytes:
         """
@@ -145,6 +206,7 @@ class Receipt:
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=True,
+            allow_nan=False,
         ).encode("utf-8")
 
 
@@ -154,6 +216,10 @@ class SignedReceipt:
 
     receipt: Receipt
     signature: str  # 128 hex chars = 64 bytes Ed25519 signature
+
+    def __post_init__(self) -> None:
+        if not _HEX_128_RE.fullmatch(self.signature):
+            raise ValueError("signature must be 128 lowercase hex chars")
 
     def serialize(self) -> bytes:
         """Wire format — what gets sent over gRPC to peers."""
@@ -166,7 +232,11 @@ class SignedReceipt:
 
     @classmethod
     def deserialize(cls, wire: bytes) -> "SignedReceipt":
+        if len(wire) > MAX_SERIALIZED_RECEIPT_BYTES:
+            raise ValueError("serialized receipt exceeds size limit")
         obj = json.loads(wire)
+        if not isinstance(obj, dict) or set(obj) != {"receipt", "signature"}:
+            raise ValueError("serialized receipt has unexpected fields")
         return cls(
             receipt=Receipt(**obj["receipt"]),
             signature=obj["signature"],
@@ -184,6 +254,16 @@ def build_receipt(
     model_hash: str,
     output: Iterable[float],
     timestamp_ns: Optional[int] = None,
+    *,
+    mission_id: str = "simulation",
+    mission_epoch: int = 0,
+    sequence: int = 0,
+    runtime_hash: str = UNMEASURED_RUNTIME_HASH,
+    action_frame: str = DEFAULT_ACTION_FRAME,
+    valid_for_ns: int = DEFAULT_VALID_FOR_NS,
+    pose_enu: Sequence[float] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    pose_timestamp_ns: Optional[int] = None,
+    pose_uncertainty_m: float = 0.0,
 ) -> Receipt:
     """
     Construct a Receipt from raw inference inputs.
@@ -196,13 +276,24 @@ def build_receipt(
     the caller, who is expected to have computed it once at boot and
     cached it. This keeps the per-frame hot path tight.
     """
+    stamp = timestamp_ns if timestamp_ns is not None else time.time_ns()
     return Receipt(
         drone_id=drone_id,
-        timestamp_ns=timestamp_ns if timestamp_ns is not None else time.time_ns(),
+        timestamp_ns=stamp,
         input_hash=sha256_hex(input_bytes),
         model_hash=model_hash,
         output=tuple(output),
         nonce=fresh_nonce(),
+        protocol_version=PROTOCOL_VERSION,
+        mission_id=mission_id,
+        mission_epoch=mission_epoch,
+        sequence=sequence,
+        runtime_hash=runtime_hash,
+        action_frame=action_frame,
+        valid_for_ns=valid_for_ns,
+        pose_enu=tuple(pose_enu),
+        pose_timestamp_ns=stamp if pose_timestamp_ns is None else pose_timestamp_ns,
+        pose_uncertainty_m=pose_uncertainty_m,
     )
 
 
@@ -222,7 +313,7 @@ class ReceiptSigner:
     For Alpha (hardware-attested on Jetson), this class is replaced by
     `OPTEEReceiptSigner` (see `signing/optee_backend.py`), which
     delegates the `sign()` call to the OP-TEE Trusted Application via
-    `tee-supplicant`. The keypair never leaves the secure element.
+    `tee-supplicant`. The private key remains in OP-TEE secure storage.
     """
 
     def __init__(self, signing_key: Optional[nacl.signing.SigningKey] = None):
@@ -236,9 +327,15 @@ class ReceiptSigner:
     def public_key_hex(self) -> str:
         return self.public_key_bytes.hex()
 
+    def sign_bytes(self, message: bytes) -> str:
+        """Sign protocol bytes without exposing the private-key implementation."""
+        return self._key.sign(message).signature.hex()
+
     def sign(self, receipt: Receipt) -> SignedReceipt:
-        sig = self._key.sign(receipt.canonical()).signature
-        return SignedReceipt(receipt=receipt, signature=sig.hex())
+        return SignedReceipt(
+            receipt=receipt,
+            signature=self.sign_bytes(receipt.canonical()),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +393,11 @@ class ReceiptVerifier:
         peer_keys: Mapping[str, str],
         approved_models: Iterable[str],
         max_age_ns: int = DEFAULT_MAX_AGE_NS,
+        replay_cache_size: int = DEFAULT_REPLAY_CACHE_SIZE,
+        expected_mission_id: Optional[str] = None,
+        expected_mission_epoch: Optional[int] = None,
+        approved_runtimes: Optional[Iterable[str]] = None,
+        enforce_sequence: bool = False,
     ):
         self._peer_keys: dict[str, nacl.signing.VerifyKey] = {
             did: nacl.signing.VerifyKey(bytes.fromhex(hex_key))
@@ -303,12 +405,26 @@ class ReceiptVerifier:
         }
         self._approved_models: frozenset[str] = frozenset(approved_models)
         self._max_age_ns: int = int(max_age_ns)
+        self._expected_mission_id = expected_mission_id
+        self._expected_mission_epoch = expected_mission_epoch
+        self._approved_runtimes = (
+            None if approved_runtimes is None else frozenset(approved_runtimes)
+        )
+        self._enforce_sequence = bool(enforce_sequence)
+        if replay_cache_size < 1:
+            raise ValueError("replay_cache_size must be >= 1")
+        self._replay_cache_size = int(replay_cache_size)
+        self._seen: dict[str, OrderedDict[str, None]] = {}
+        self._seen_sequences: dict[str, dict[str, OrderedDict[int, None]]] = {}
+        self._seen_lock = threading.Lock()
 
     def verify(
         self,
         signed: SignedReceipt,
         *,
         now_ns: Optional[int] = None,
+        replay_scope: str = "default",
+        consume: bool = True,
     ) -> VerificationResult:
         """
         Verify `signed`. `now_ns` overrides the wall clock, which lets the
@@ -320,8 +436,20 @@ class ReceiptVerifier:
         # both directions rather than being trusted indefinitely.
         if self._max_age_ns > 0:
             now = time.time_ns() if now_ns is None else now_ns
-            if abs(now - signed.receipt.timestamp_ns) > self._max_age_ns:
+            accepted_age = min(self._max_age_ns, signed.receipt.valid_for_ns)
+            if abs(now - signed.receipt.timestamp_ns) > accepted_age:
                 return VerificationResult(ok=False, reason="stale_receipt")
+
+        if (
+            self._expected_mission_id is not None
+            and signed.receipt.mission_id != self._expected_mission_id
+        ):
+            return VerificationResult(ok=False, reason="wrong_mission")
+        if (
+            self._expected_mission_epoch is not None
+            and signed.receipt.mission_epoch != self._expected_mission_epoch
+        ):
+            return VerificationResult(ok=False, reason="wrong_mission_epoch")
 
         # Step 1: Identify the claimed sender.
         verify_key = self._peer_keys.get(signed.receipt.drone_id)
@@ -346,5 +474,45 @@ class ReceiptVerifier:
                 ok=False,
                 reason=f"model_hash_not_approved:{signed.receipt.model_hash[:16]}",
             )
+        if (
+            self._approved_runtimes is not None
+            and signed.receipt.runtime_hash not in self._approved_runtimes
+        ):
+            return VerificationResult(
+                ok=False,
+                reason=f"runtime_hash_not_approved:{signed.receipt.runtime_hash[:16]}",
+            )
+
+        # Step 4: exact replay detection. Freshness alone only bounds how long a
+        # captured packet remains useful; it does not stop repeated use inside
+        # that window. The scope represents one receiving node so a verifier
+        # object may safely be shared by in-process test peers without making
+        # one peer's observation consume another peer's receipt.
+        if consume:
+            digest = sha256_hex(signed.receipt.canonical())
+            with self._seen_lock:
+                seen = self._seen.setdefault(replay_scope, OrderedDict())
+                if digest in seen:
+                    seen.move_to_end(digest)
+                    return VerificationResult(ok=False, reason="replayed_receipt")
+                seen[digest] = None
+                while len(seen) > self._replay_cache_size:
+                    seen.popitem(last=False)
+
+                if self._enforce_sequence:
+                    by_drone = self._seen_sequences.setdefault(replay_scope, {})
+                    sequences = by_drone.setdefault(
+                        signed.receipt.drone_id, OrderedDict()
+                    )
+                    if signed.receipt.sequence in sequences:
+                        # Remove the digest inserted above: this invalid packet
+                        # must not evict a later valid receipt from the cache.
+                        seen.pop(digest, None)
+                        return VerificationResult(
+                            ok=False, reason="duplicate_sequence"
+                        )
+                    sequences[signed.receipt.sequence] = None
+                    while len(sequences) > self._replay_cache_size:
+                        sequences.popitem(last=False)
 
         return VerificationResult(ok=True, reason="ok")

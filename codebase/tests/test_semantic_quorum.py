@@ -165,9 +165,9 @@ def test_one_covisible_peer_still_catches_the_patch():
 # ---------------------------------------------------------------------------
 
 
-def test_unverified_accept_degrades():
+def test_unverified_accept_holds():
     assert fallback_action(ConsensusOutcome.ACCEPTED, semantic_ack_count=0) is (
-        SafeAction.EXECUTE_DEGRADED
+        SafeAction.DEFER
     )
 
 
@@ -177,9 +177,8 @@ def test_verified_accept_executes():
     )
 
 
-def test_fallback_mapping_unchanged_when_count_is_omitted():
-    """The pure-consensus callers and the eval harness keep the 3-way mapping."""
-    assert fallback_action(ConsensusOutcome.ACCEPTED) is SafeAction.EXECUTE
+def test_omitted_semantic_count_fails_closed():
+    assert fallback_action(ConsensusOutcome.ACCEPTED) is SafeAction.DEFER
     assert fallback_action(ConsensusOutcome.REJECTED) is SafeAction.SAFE_FALLBACK
     assert fallback_action(ConsensusOutcome.NO_QUORUM) is SafeAction.DEFER
 
