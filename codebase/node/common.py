@@ -21,6 +21,7 @@ identical.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 from pathlib import Path
@@ -530,13 +531,43 @@ def peer_keys_of(manifest: dict) -> Dict[str, str]:
 
 
 def signer_for(entry: dict):
-    """Build the signer for one node from its manifest entry."""
-    if entry.get("backend") == "optee":
+    """Build a signer and bind it to the public identity in the manifest.
+
+    Constructing the correct backend is not enough: a different Jetson (or a
+    mismatched software seed) can produce perfectly valid signatures under the
+    wrong key.  Detect that placement/provisioning error before mission traffic
+    instead of waiting for every peer to reject the first receipt.
+    """
+    backend = entry.get("backend")
+    expected_pubkey = entry.get("pubkey")
+    if not isinstance(expected_pubkey, str) or len(expected_pubkey) != 64:
+        raise ValueError("signer entry requires a 32-byte Ed25519 pubkey")
+    try:
+        bytes.fromhex(expected_pubkey)
+    except ValueError as exc:
+        raise ValueError("signer pubkey must be lowercase hexadecimal") from exc
+    if expected_pubkey != expected_pubkey.lower():
+        raise ValueError("signer pubkey must be lowercase hexadecimal")
+
+    if backend == "optee":
         from signing.optee_backend import OPTEEReceiptSigner
 
-        return OPTEEReceiptSigner()
-    sk = nacl.signing.SigningKey(bytes.fromhex(entry["seed"]))
-    return ReceiptSigner(signing_key=sk)
+        signer = OPTEEReceiptSigner()
+    elif backend == "software":
+        try:
+            seed = bytes.fromhex(entry["seed"])
+            sk = nacl.signing.SigningKey(seed)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("software signer requires a valid Ed25519 seed") from exc
+        signer = ReceiptSigner(signing_key=sk)
+    else:
+        raise ValueError(f"unsupported signer backend: {backend!r}")
+
+    if not hmac.compare_digest(signer.public_key_hex, expected_pubkey):
+        raise ValueError(
+            f"{backend} signer public key does not match the manifest identity"
+        )
+    return signer
 
 
 def receipt_verifier_for(

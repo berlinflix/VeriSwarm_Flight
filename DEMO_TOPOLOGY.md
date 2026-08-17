@@ -1,19 +1,35 @@
 # Demo topology — every machine, cable, port, and process
 
 What is physically on the table, what runs where, and what to plug into what.
-Written 2026-08-18. Pair with `HARDWARE_LIST.md` (what to buy) and
-`RUNBOOK.md` (the order to start things in).
+Written 2026-08-18. Pair with `HARDWARE_LIST.md` (what to buy). `RUNBOOK.md`
+is a required M1 deliverable and does not exist yet; do not mistake this topology
+for a completed launch procedure.
 
 The demo has **two independent halves** and that is deliberate. If the simulator
 will not start, the physical half still tells a complete story on its own; if the
-webcams fail, the simulated half does. Neither depends on the other.
+webcams fail, the simulated half does. Neither depends on the other. They run
+**sequentially**, not concurrently, because both use the Jetson: the physical
+webcam demonstration runs first, then the webcam process stops and the Jetson
+becomes node `alpha` with local OP-TEE signing for the simulated swarm.
 
 | | What it shows | Runs on |
 |---|---|---|
 | **A. Simulated swarm** | 5 drones, adversarial patch, consensus, isolation | CoSys AirSim + 5 node processes |
 | **B. Physical co-visibility rig** | the overlap algorithm on two real cameras | Jetson + 2 USB webcams |
 
-Half B is new — see `docs/COVIS_LIVE.md` and §6.
+Half B is new — its planned implementation guide is `codebase/docs/COVIS_LIVE.md`;
+until that file and `codebase/tools/covis_live.py` exist and pass their gate, use
+§6 as design requirements rather than runnable instructions.
+
+### Implementation status gate
+
+The OP-TEE backend, Alpha manifest-key binding, `tools/optee_preflight.py`,
+`node.server`, and the protocol-only `node.run_phaseb` regression exist. The
+following commands shown in this topology are **planned, not implemented** as of
+2026-08-18: `tools.covis_live`, `tools.event_collector`, `console/app.py`, and
+`tools.run_campaign`. The accepted integrated demonstration is blocked until each
+file exists, has tests, and is cold-started from the final `RUNBOOK.md`. A diagram
+or command name is not evidence that a subsystem exists.
 
 ---
 
@@ -21,7 +37,7 @@ Half B is new — see `docs/COVIS_LIVE.md` and §6.
 
 | # | Machine | Owner | Role at the demo |
 |---|---|---|---|
-| **J** | Jetson Orin Nano | Suyash | Node **alpha** — YOLO + OP-TEE signing. Also drives both webcams for half B. |
+| **J** | Jetson Orin Nano | Suyash | Stage B: drives both webcams. After a checked handover, Stage A: node **alpha** — YOLO + local OP-TEE signing. These workloads never run concurrently. |
 | **P1** | Windows PC, strongest GPU | Pratik | Runs **CoSys AirSim**. Nothing else. |
 | **P2** | Windows PC | Samik | Nodes **bravo**, **charlie**. Backup AirSim install. |
 | **L1** | Laptop | Suyash | Nodes **delta**, **echo**. Orchestration, RUNBOOK commands. |
@@ -117,42 +133,118 @@ depth from P1, runs YOLO locally, and signs locally. If inference happened
 centrally there would be nothing to cross-verify — one machine's opinion is one
 opinion however many drones you draw on screen.
 
+**OP-TEE is retained, but it does not sign for every identity.** After the webcam
+stage, every receipt originated by `alpha` and every peer vote emitted by `alpha`
+is signed locally through `OPTEEReceiptSigner`; its Ed25519 private key never
+leaves secure world. `bravo`, `charlie`, `delta`, and `echo` keep distinct
+software-backed keys for this simulation. Do not send all five nodes' unsigned
+receipts to one generic Jetson signing endpoint: the current Trusted Application
+has one persistent key, so that design would collapse per-node identity, create a
+single point of failure, and let an insufficiently authenticated caller request a
+signature for another drone. A future all-TEE design requires one protected key
+slot per node plus mutually authenticated callers and a TA-enforced
+`caller identity == receipt.drone_id` check.
+
+The precise claim is: **Alpha's signing key is hardware-isolated and Alpha's
+canonical receipt bytes are signed by OP-TEE.** It is not a claim that YOLO or the
+other nodes execute inside the TEE. If the Alpha signer is unavailable or misses
+its signing deadline, Alpha emits no accepted receipt and the system
+holds/reassigns; there is no silent software-key fallback.
+
 ---
 
-## 4. What each machine runs, in start order
+## 4. What each machine runs, in stage order
 
-Full commands belong in `RUNBOOK.md`; this is the shape.
+Final commands will belong in the planned `RUNBOOK.md`; this section fixes process
+placement and stage order but does not claim that every planned entry point exists.
 
-**1. P1 — AirSim** (first, it takes longest to load)
+### Stage B — physical co-visibility first
+
+**1. J — Jetson webcam process only**
+
+```text
+python -m tools.covis_live
+```
+
+Run the live two-camera overlap, patch, and lens-cover beats. No swarm node or
+OP-TEE receipt service runs during this stage. The OP-TEE key remains protected
+even while unused.
+
+**2. Checked Jetson handover**
+
+Stop `covis_live` cleanly, verify that it exited and released both camera devices,
+flush and hash its evidence, then record a `WEBCAM_STAGE_COMPLETE` event. Do not
+reuse its process state or call the swarm ready until the OP-TEE public-key
+challenge succeeds. P1 may load the world in the background to avoid stage delay,
+but it must not start the accepted mission yet.
+
+### Stage A — simulated swarm with OP-TEE-backed Alpha
+
+**3. P1 — AirSim** (load early; it takes longest)
 ```
 CoSysAirSim.exe   →   world loaded, 5 vehicles, RPC on 41451
 ```
 Verify from another machine before continuing: a node that cannot reach 41451
 fails in a way that looks like a protocol bug and is not one.
 
-**2. L2 — collector and console** (before the nodes, so nothing is missed)
+**4. L2 — collector and console** (before the nodes, so nothing is missed)
 ```
 python -m tools.event_collector --bind 0.0.0.0:9000
 streamlit run console/app.py
 ```
 
-**3. J — Jetson, node alpha**
+**5. J — OP-TEE handover preflight**
+
+```bash
+export VERISWARM_OPTEE_CA=/absolute/path/to/veriswarm_optee_ca
+export VERISWARM_ALPHA_PUBKEY=<64-hex-key-pinned-outside-the-runtime-manifest>
+python -m tools.optee_preflight \
+  --mission-id contested-border-001 --mission-epoch 1 \
+  --out results/handover/optee-preflight-001.json
+```
+
+This signs a fresh canonical receipt, verifies it against Alpha's independently
+pinned public key and writes a non-overwriting evidence file. A key mismatch,
+missing `/dev/tee0`, missing Client Application, timeout, invalid signature or
+existing output file fails the handover.
+
+**6. J — Jetson, node alpha**
 ```
 VERISWARM_OPTEE_CA=... python -m node.server --manifest demo5.json --id alpha
 ```
-Confirm the console shows `backend: optee` for alpha. That single field is the
-hardware reveal; if it says `software`, the TA did not load and the reveal is
-gone.
+Before accepting mission traffic, issue a random preflight challenge, sign it
+through the OP-TEE Client Application, and verify it against Alpha's pinned
+public key. Then confirm the console shows `backend: optee` for Alpha. The field
+alone is not evidence; retain the challenge, public key, signature, verification
+result, TA/CA hashes and measured signing latency. If the backend says `software`
+or the challenge fails, Alpha does not participate and the protected mission
+must hold or reallocate according to the signed mission policy. Signer construction
+also verifies that the live OP-TEE public key equals Alpha's manifest identity.
 
-**4. P2 and L1 — the peer nodes**
+**7. P2 and L1 — the peer nodes**
 ```
 python -m node.server --manifest demo5.json --id bravo    # …charlie, delta, echo
 ```
 
-**5. L1 — the mission**
+**8. J — Alpha originator mission, operated by Samik over SSH**
 ```
-python -m node.mission --manifest demo5.json --id alpha --rounds 200
+# Planned accepted entry point; Samik must implement this before the Cosys gate:
+python -m tools.run_campaign --manifest demo5.json --originator alpha --scenario contested-border
 ```
+
+`node.mission` is currently a library and has no command-line entry point; the old
+`python -m node.mission ...` line was non-executable and is removed. The accepted
+Cosys stage is blocked until `tools.run_campaign` exists and wires the real source,
+autonomy, supervisor and command sink. That process must execute on the Jetson:
+`Originator` constructs the signer in its own process, so running Alpha on L1 searches
+for `/dev/tee0` on L1 and fails. Frames travel from P1 to Alpha; the unsigned canonical
+receipt does not leave Alpha before the local OP-TEE call. Samik owns and triggers the
+autonomy run, while Suyash owns the Jetson/OP-TEE preflight and abort authority.
+
+Until the campaign runner exists, the executable hardware-key protocol regression is
+`VERISWARM_OPTEE_CA=... python -m node.run_phaseb` on the Jetson. It is evidence for
+local OP-TEE signing only; its loopback/static observations are not accepted as the
+Cosys autonomy demonstration.
 
 **Fallback at any point:** every node takes `--offline`, which swaps the AirSim
 source for `FileSource` replaying Pratik's captured frames. The protocol, the
@@ -264,7 +356,10 @@ has not been tested.
 
 - [ ] All five devices ping each other by static IP
 - [ ] `41451` reachable **from another machine**, not just P1's localhost
-- [ ] Console shows `backend: optee` for alpha
+- [ ] `covis_live` is stopped and both webcam devices are released before Alpha starts
+- [ ] A fresh random challenge verifies under Alpha's pinned OP-TEE public key
+- [ ] Console shows `backend: optee` for Alpha; no software fallback is configured
+- [ ] At least one retained Alpha receipt verifies under that same pinned public key
 - [ ] All five nodes appear in the console with monotonic `seq`, no gaps
 - [ ] Both webcams enumerate on the Jetson (`ls /dev/video*`)
 - [ ] `covis_live` shows inliers ≥ 15 in the rehearsed camera placement

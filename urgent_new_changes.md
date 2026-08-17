@@ -42,8 +42,120 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
+### 2026-08-18 — Jetson runs webcams first, then Alpha with OP-TEE; no shared swarm key
+**Status:** FOLDED into [`DEMO_TOPOLOGY.md`](DEMO_TOPOLOGY.md) and
+[`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+
+**Changed:** the Jetson workload is explicitly sequential. First it runs only the physical
+two-webcam `covis_live` demonstration. After that process exits, releases both cameras and
+closes its evidence, the team performs a fresh OP-TEE sign/verify challenge and starts the
+Jetson as simulated node `alpha`. Every Alpha-originated receipt and Alpha peer vote then
+uses the existing local `OPTEEReceiptSigner`; OP-TEE is not skipped from the Cosys run.
+Alpha's `node.mission`/`Originator` process must also run on the Jetson, even if Samik
+operates it over SSH, because the current code constructs the signer inside that process.
+The older command placement on L1 would search for `/dev/tee0` on L1 and fail.
+The older `python -m node.mission ...` command is also removed because `node.mission` is a
+library without a CLI. `tools/optee_preflight.py` is now the executable handover check;
+Samik's planned `tools/run_campaign.py` must become the accepted Cosys entry point and run
+Alpha's `MissionRunner`/`Originator` on the Jetson.
+
+The proposal to send all five nodes' unsigned receipts to one generic Jetson signer is not
+adopted. The current Trusted Application has one persistent Ed25519 key. Sharing it across
+five claimed identities would collapse per-node identity isolation, centralize the trust
+boundary and introduce a common signing failure. `bravo`, `charlie`, `delta` and `echo`
+therefore keep distinct development keys. If an all-TEE remote design is built later, it
+requires separate protected key slots, authenticated callers, TA-enforced identity binding,
+anti-replay state, bounded queues and fail-closed timeout behavior.
+
+**Makes stale:** any topology that runs `covis_live` and the Alpha node concurrently, any
+accepted run that omits OP-TEE merely because the webcams used the Jetson earlier, any
+generic unauthenticated network endpoint that signs arbitrary bytes, and any claim that an
+OP-TEE signature proves inference or pose ran inside trusted code.
+
+**Who must act:** Suyash owns the handover/runbook, pinned Alpha public key and retained
+challenge evidence. Abhijan ends the physical-camera choreography and confirms the capture
+artifact is closed. Samik must not start the accepted mission until Alpha passes preflight;
+he implements HOLD/reassignment on signer loss or deadline expiry. Pratik may preload the
+Cosys world during the webcam stage but does not start accepted mission motion before the
+handover gate passes.
+
+**Definition of done:** a cold rehearsal shows the webcam stage, clean process/device
+handover, successful OP-TEE challenge, at least one canonical Alpha receipt that verifies
+under the same pinned public key, no Alpha software fallback, and safe HOLD/reassignment
+when the signer is deliberately stopped.
+
+**Why:** this preserves the tangible webcam demonstration and the hardware-protected key
+operation without pretending that one central key represents five independent drones.
+
+### 2026-08-18 — One integrated scenario; Pratik owns it; Samik owns autonomy and models
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+
+**Changed:** there is now exactly one Cosys scenario: **Contested Border Sentinel**. Pratik
+owns the prebuilt environment plus scenario layer. It combines border surveillance,
+unarmed battlefield ISR, GPS-denied navigation, swarm C2 and one SAR/casualty diversion in
+the same repeatable run. Samik does not build a second world; he reproduces Pratik’s bundle
+and owns everything that makes the drones autonomous inside it.
+
+Surveillance/battlefield handling is concrete: five drones cover leased sectors; noisy
+ground sensors create inspection tasks; RGB/depth detects supported people/vehicles;
+detections become world-coordinate tracks; a second viewpoint confirms them; explicit
+rules identify border crossing, restricted-zone entry, loitering and group/convoy movement;
+GNSS jam/spoof forces VIO; obstacles force occupancy/A* replan; link/node failure returns
+unfinished work to the allocator; VeriSwarm blocks attacked/unverifiable commands. Output
+is an operator alert with track, location, time, confidence, evidence and status—never a
+weapon-engagement command.
+
+**Model custody:** do not download every row in the old table. Keep the existing
+`codebase/yolov8n.pt` baseline and `codebase/yolov8n_tampered.pt` attack artifact. Samik
+downloads only official `yolov8s.pt` and `yolov8m.pt` candidates into ignored
+`codebase/models/candidates/` using the planned registry-driven
+`codebase/tools/fetch_models.py`. Pratik supplies frozen tune/held-out scenario frames.
+Samik benchmarks them. Suyash independently verifies hashes, approves exactly one model,
+then Samik copies those exact approved bytes to
+`codebase/models/approved/rgb_detector.pt` and provisions them. Suyash mints the signed
+authority allowlist separately from Samik’s provisioning role. Abhijan may use only
+recorded/reproducible tampered variants in named attack runs. YOLO11, thermal and
+specialized battlefield weights are not downloaded now.
+
+**Makes stale:** the two-independent-scenarios override below, the separate dark/light
+environment tracks, any Scenario 2 task for Samik, reciprocal environment authorship, and
+any instruction to download all model rows or auto-download weights during a mission.
+
+**Who must act:**
+
+- **M1 Suyash** — own schemas/protocol/supervisor, `models/registry.json`, independent hash
+  verification, model approval, signed authority, blind-band fix, integration gates,
+  evidence and runbook.
+- **M2 Abhijan** — own attack scenarios/delivery/oracle and the printed/webcam attack rig;
+  apply the same attacks to the one frozen mission without writing expected verdicts into
+  the live path.
+- **M3 Pratik** — own the single prebuilt Cosys scenario, sensor/calibration manifests,
+  GNSS/C2 fault regions, targets/obstacles/ground sensors, isolated truth and frozen
+  model-selection/replay data. For the immediate flight handoff, provide exact vehicle
+  names/types, API host/port, initial poses, clear NED A/B points, altitude/geofence and an
+  attack-free scenario copy.
+- **M4 Samik** — own official candidate acquisition, model benchmarking, scenario
+  reproduction, VIO, mission manager, occupancy map, coverage/A*, task allocation,
+  tracking/fusion, local safety, Cosys/PX4 command sink, recovery and campaign runner. His
+  first executable deliverable is `codebase/sim/cosys_smoke_flight.py`: connect, validate
+  vehicle, enable API control, arm, take off, hover, fly A→B, hover, land, disarm and retain
+  telemetry—with timeouts and safe cleanup at every transition.
+
+**Definition of done:** the one frozen mission cold-starts on Pratik’s and Samik’s PCs;
+the selected model and every runtime/configuration match the signed registry/authority;
+the swarm covers the declared area, produces confirmed operator alerts, navigates the
+GNSS-denied segment without truth input, replans around classified and unclassified
+geometry, reassigns failed work and never releases an unsafe/expired/unverified command.
+
+**Why:** one deep, reproducible mission is stronger and more achievable than two shallow
+worlds. The ownership split is now unambiguous: Pratik creates the operational world;
+Samik creates the autonomous system that succeeds in it.
+
 ### 2026-08-18 — Two independent scenarios; use a PREBUILT environment; new webcam rig
-**Status:** OPEN
+**Status:** FOLDED, then SUPERSEDED by the one-scenario decision above on 2026-08-18.
+
+**Historical only:** do not create Scenario 2. The physical webcam rig and prebuilt-
+environment rule remain active; the two-scenario split does not.
 **Changed:** three things, all affecting Pratik and Samik directly.
 
 **1. Two scenarios, not one split in half.** Pratik designs Scenario 1 *and*
@@ -55,18 +167,19 @@ that runs only on the PC it was built on is an anecdote, not a result — and
 writing instructions precise enough for someone else forces the version-pinning
 gaps out in Week 2 instead of on stage.
 
-**2. Do NOT model a world. Start from a prebuilt environment.** CoSys AirSim /
+**2. Do NOT model a world. Start from a prebuilt environment.** Cosys-AirSim /
 Colosseum ship ready-made environments (Blocks, Neighborhood, City, Landscape,
 Mountains, Forest, Africa). Building terrain in Unreal is days of work worth zero
 marks, and the shipped ones look better.
 
-**The catch that will otherwise waste a week:** the obstacle must be a **COCO
-class**. YOLOv8n detects 80 categories — person, car, bus, truck, boat, bench. It
-does **not** detect mountain, rock, cliff, building, or tree. Fly at a beautiful
-mountain and every drone honestly reports zero detections, every action is
-`(0,0,0)`, and the whole perception layer sits idle with nothing wrong. The Gazebo
-run already hit exactly this: a grey cube was invisible until a bus texture was
-applied.
+**The catch that will otherwise waste a week:** the **adversarial semantic target**
+must be a validated detector class. YOLOv8n detects 80 COCO categories — including
+person, car, bus, truck, boat and bench — but not mountain, rock, cliff, building
+or tree. Those unclassified objects must still cause mapping/replanning through
+depth/LiDAR; they are excellent navigation tests. They are only unsuitable as the
+target used to prove semantic YOLO cross-verification. The Gazebo run hit this
+distinction: a grey cube was invisible to YOLO until a bus texture was applied,
+even though a correct geometric mapper should still treat the cube as occupied.
 
 * Prefer **Neighborhood** or **City** — they already contain parked **cars and
   trucks**, which YOLOv8n detects reliably and which are plausible UAV obstacles.
@@ -76,8 +189,9 @@ applied.
   distance/altitude, capture one frame per vehicle, run YOLO, confirm conf ≥ 0.25
   from every viewpoint. If it fails there, the scenario is dead and no protocol
   work will rescue it.
-* Obstacle must fill **≥ 0.7 of frame height** — needed for a strong avoidance
-  action *and* to stay out of the semantic blind band (entry below).
+* The current semantic-attack target must fill **≥ 0.7 of frame height** until the
+  blind-band fix below lands — needed for a strong semantic divergence. This is
+  not a rule for geometric navigation obstacles.
 
 **3. New deliverable — the physical two-webcam co-visibility rig.** Two identical
 USB webcams on the Jetson, both looking at one object from different angles,
@@ -96,7 +210,7 @@ must be modelled from scratch. The old "build a bounded five-vehicle world" task
 * **M2 Abhijan** — you own the physical rig, the printed patch, and the attack
   choreography for the webcam demo. Test the *actual print* at the rehearsed
   distance; paper, scale and lighting all change whether it works.
-* **M1 Suyash** — writes `tools/covis_live.py` (calls protocol code, must not
+* **M1 Suyash** — writes `codebase/tools/covis_live.py` (calls protocol code, must not
   fork the algorithm). Full wiring, static IPs, and start order now in
   [`DEMO_TOPOLOGY.md`](DEMO_TOPOLOGY.md).
 **Why:** the simulator was the single point of failure for the entire demo. Two
@@ -104,7 +218,7 @@ scenarios on two PCs plus a physical rig that needs neither means three
 independent things must fail before there is nothing to show.
 
 ### 2026-08-18 — The crash demo is protected; do not remove it again
-**Status:** OPEN
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
 **Changed:** the unprotected controller is now an explicitly named module,
 `perception/baseline_controller.py`, with `naive_action()`. It commands **full
 forward on an empty detection set** — the unsafe behaviour is deliberate and it is
@@ -133,7 +247,7 @@ harden instead. `tests/test_baseline_controller.py` pins it.
 **Who must act:**
 * **M2 Abhijan** — Run A uses `naive_action()`. Never wire it to `SafetySupervisor`
   or `MissionRunner`; it is the control arm, not a flight controller.
-* **M4 / whoever narrates** — Act 1 is intact, but say *"this is a conventional
+* **M4 Samik / whoever narrates** — Act 1 is intact, but say *"this is a conventional
   controller, not a broken one"* — the two policies agree on every input where the
   detector sees anything. Run A crashes because it was **lied to**, not because it
   is bad.
@@ -168,9 +282,9 @@ world-states map to the same command.
 
 **Who must act:**
 * **M3 Pratik** — until this is fixed, build the scene with a **frame-dominating**
-  obstacle (≥ 0.7 of frame height). Anything in the 0.5–0.6 band demos as a
-  silent miss. This reinforces the existing scene-design rule for a second,
-  independent reason.
+  supported-class semantic target (≥ 0.7 of frame height). Anything in the
+  0.5–0.6 band demos as a silent miss. Rocks/trees/walls outside this semantic
+  test still enter the occupancy map through depth/LiDAR and must trigger replan.
 * **M1 Suyash** — the fix is to attest the perception claim (detection count /
   extent / confidence) rather than the control output. Cheapest interim: carry a
   `detections_present` flag in the attested output so absence and hold stop
@@ -180,18 +294,85 @@ paper for attesting perception rather than control — and it is a measured resu
 not a hypothesis. `tests/test_baseline_controller.py` pins the band so the fix
 announces itself by turning those tests red.
 
-None as of 2026-08-18. Add the next OPEN entry directly below this line.
-
 ## Recent folded overrides
 
-### 2026-08-18 — Role reset: CoSys AirSim on Samik and Pratik's PCs
+### 2026-08-18 — Full autonomy stack and contested-border ISR mission
 **Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
 
-**Changed:** CoSys AirSim is now the selected external simulator. **Pratik and Samik both
+**Changed:** the SIH build is no longer a reactive YOLO avoidance demo. The primary mission
+is an unarmed, operationally realistic contested-border ISR swarm that performs coverage,
+ground-sensor cueing, person/vehicle detection and tracking, GPS-denied VIO navigation,
+occupancy mapping, A* replanning, collision-safe command selection, task leases and failure
+reassignment. Search and rescue is a second mission configuration of the same engine.
+
+The final command is not `waypoint_vector + YOLO_vector`. A deterministic local safety
+filter rejects candidate velocities that violate depth/braking, occupied or unknown space,
+geofence/no-fly areas, peer separation, vehicle limits or estimator uncertainty. If its
+safe set is empty, the result is HOLD. `SafetySupervisor` still has final authority over
+the exact command sent to the vehicle.
+
+An object does not need a detector class to affect navigation. Rocks, trees, walls and
+buildings enter the occupancy map through depth/LiDAR and force a lateral route, a climb
+only when overhead/geofence/altitude constraints pass, or HOLD/`NO_PATH`. Only the
+judge-facing semantic adversarial target must be a validated detector class.
+
+Simulation is treated like deployment: terrain/weather, moving and occluded targets, noisy
+ground sensors, GNSS jam/spoof, VIO drift/reset, link faults, battery/vehicle failure,
+dynamic/no-path obstacles and adversarial cyber/perception cases are exercised without
+Cosys truth leaking into autonomy. The world may represent a battlefield/contested border,
+but the system performs surveillance, tracking and rescue only; detection never authorizes
+weapon engagement.
+
+**Model decision:** no single AI weight provides autonomy. Keep `codebase/yolov8n.pt` as
+the regression baseline; benchmark official `yolov8s.pt` and `yolov8m.pt` on frozen tune
+and held-out Cosys scenes, then select the smallest model that passes per-class accuracy
+and target-hardware p99 latency. VIO, A*, mapping, task allocation and deterministic
+tracking need algorithms/configuration rather than neural weights. Thermal and specialized
+battlefield classes require sensor/domain-specific trained weights and cannot be claimed
+from generic COCO weights. The existing tampered weight remains attack-only.
+
+**Makes stale:** “YOLO action is the whole command,” reactive avoidance as complete
+autonomy, simple waypoint-plus-avoidance vector addition, decorative formation as the
+mission, “no training anywhere” as a permanent project claim, and any use of simulator
+pose/segmentation/object IDs as GPS-denied navigation or perception.
+
+**Who must act:**
+
+- **M1 Suyash** — freeze mission/estimator/map/task/track/decision/command schemas; keep
+  `MissionRunner`/`SafetySupervisor` as the only command path; own authority hashes, model
+  selection evidence and gate acceptance.
+- **M2 Abhijan** — extend attacks to GNSS loss/spoof, VIO drift/reset/dropout, stale or
+  conflicting maps, planner no-path/timeout, task-lease replay/conflict, target/perception
+  faults and C2/resource failures. His oracle checks mission and safety invariants from raw
+  evidence; it never sets the expected verdict in the live path.
+- **M3 Pratik** — build/export the contested Cosys world, all sensors/calibration,
+  GPS-denied/spoof regions, weather, ground cues, targets, obstacles and isolated evaluation
+  truth. Produce tune/held-out perception datasets without exposing labels/true pose to
+  autonomy.
+- **M4 Samik** — deliver `AutonomyRunner`: VIO integration, mission manager, occupancy map,
+  coverage, A*, task leases/reassignment, track fusion, local safety filter, supervisor-only
+  Cosys/PX4 command sink, recovery and repeatable campaign runner.
+
+**Definition of done:** five drones complete the declared traversable mission area, replan
+around new obstacles, navigate the declared GNSS-denied segment without truth input,
+detect/track/confirm supported classes, preserve separation/geofence/braking constraints,
+reassign unfinished work after a node failure, and hold on any unsafe/unknown/expired
+decision. The full scenario reproduces on both simulator PCs with immutable evidence.
+
+**Why:** boxes are perception output, not autonomy. The previous plan could react to an
+obstacle but had no state estimator, map, mission completion, global route, target track or
+task recovery. The new stack answers the actual SIH autonomy problem while keeping
+VeriSwarm at the security/supervision boundary it is meant to protect.
+
+### 2026-08-18 — Role reset: Cosys-AirSim on Samik and Pratik's PCs
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+
+**Changed:** Cosys-AirSim is now the selected external simulator. **Pratik and Samik both
 run the same pinned project independently on their own PCs.** Pratik owns the world,
-camera/depth/pose truth, calibration, formation, and replay data. Samik owns simulated
-vehicle/SITL control, the supervisor-only command adapter, failsafes, deterministic reset,
-campaign automation, and evidence collection. **Abhijan now owns attack delivery and all
+camera/depth/pose truth, calibration, formation, and replay data. Samik owns the autonomy
+engine, VIO integration, simulated vehicle/SITL control, supervisor-only command adapter,
+failsafes, deterministic reset, campaign automation, and evidence collection. **Abhijan
+now owns attack delivery and all
 adversarial campaigns**, not the simulator client or the primary console. Suyash owns the
 protocol/safety boundary, manifests/authority, adapter contracts, review, and final gates.
 
@@ -211,15 +392,14 @@ and a non-actuating shadow-path comparison.
   campaigns. Every campaign needs a machine-readable manifest, baseline, expected
   invariant, real delivery boundary, cleanup, and retained raw evidence. Never set a
   verdict/action directly.
-- **M3 Pratik** — export a pinned CoSys world/settings bundle; supply atomic timestamped
+- **M3 Pratik** — export a pinned Cosys world/settings bundle; supply atomic timestamped
   RGB + metric depth + calibrated pose/health; build/preflight the formation and physical
   3-D patch/occluder; produce ground truth and replay datasets without leaking truth into
   perception.
-- **M4 Samik** — reproduce the pinned CoSys setup independently; implement the
-  supervisor-only command sink, unit/frame/TTL validation, HOLD/LAND/watchdog behavior,
-  deterministic reset, repeated campaign runner, telemetry/video collection, and artifact
-  hashing. Configure and prove independent simulator/autopilot failsafes; a missing
-  collision barrier blocks the protected campaign gate.
+- **M4 Samik** — reproduce the pinned Cosys setup independently; deliver `AutonomyRunner`
+  with VIO, mission/coverage planning, occupancy mapping, A* replanning, task leases,
+  tracking/fusion, local collision-safe selection and the supervisor-only command sink;
+  prove TTL/HOLD/LAND/watchdog/failsafe behavior and gather hashed run artifacts.
 
 **Definition of done:** the same frozen scenario/seed list runs from a clean start on both
 simulator PCs; protected campaigns have zero collisions and no motion after expiry or an
@@ -291,7 +471,7 @@ formation.
   line. Do not copy the 5.5 m reference unless the cameras are actually nadir. Supply
   measured intrinsics and extrinsics.
 * **M1 Suyash** — set `phi_min` in every demo manifest.
-* **M4 Samik** — load the exported formation on his independent CoSys installation,
+* **M4 Samik** — load the exported formation on his independent Cosys installation,
   preserve the calibrated frames in the control adapter, and block campaign start when
   preflight fails.
 * **M2 Abhijan** — derive physical-scene attack placement from Pratik's accepted formation;
@@ -316,7 +496,7 @@ the legacy nadir interpretation for development manifests only.
 * **M3 Pratik** — record actual camera-body translation, yaw, pitch, roll, FOV/intrinsics,
   image size, distortion assumption, units, and simulator coordinate convention in the
   exported calibration. If a camera angle changes, the manifest and preflight must change.
-* **M4 Samik** — verify coordinate conversion and pose timestamps in the independent CoSys
+* **M4 Samik** — verify coordinate conversion and pose timestamps in the independent Cosys
   run; reject non-finite/stale pose before control.
 * **M1 Suyash** — validate the calibrated pose fields at the mission boundary.
 * **M2 Abhijan** — include stale, frozen, spoofed, and malformed pose campaigns; a signed
@@ -345,7 +525,7 @@ and no vote.
 peer cross-verification.
 **Who must act:**
 * **M3 Pratik** — capture `ImageType.DepthPerspective` in the same `simGetImages` call as
-  the RGB frame where the pinned CoSys API supports it; record measured pairing skew and
+  the RGB frame where the pinned Cosys API supports it; record measured pairing skew and
   save metric depth with the matching snapshot/hash. Do not assume the call is atomic
   without testing it.
 * **M2 Abhijan** — attack depth with drop, freeze, NaN/Inf, out-of-range, and timestamp-skew
@@ -431,19 +611,22 @@ agreement protocol.
 **Changed:** the team will not co-edit one shared Unreal environment through Git. Pratik
 owns the dark urban / night-mode city scenario with buildings, rooftops, and adversarial
 patches on rooftops or walls. Samik owns the light terrain scenario with hills, mountains,
-desert, lakes, trees, and daylight visuals. Abhijan consumes both teams' live Cosys-AirSim
-endpoints or exported image folders and runs the same YOLO / action / dashboard
-verification pipeline.
+desert, lakes, trees, and daylight visuals. Abhijan applies the same machine-readable
+attack/invariant suite to both live Cosys-AirSim scenarios or their exported replay bundles.
 **Makes stale:** the older assumption that M3 owns the only Unreal scene and that M4 is
 unassigned deck-only support.
-**Who must act:** M2 Abhijan verifies all Pratik/Samik handoff frames with YOLO and feeds
-results to the dashboard. M3 Pratik delivers the primary dark urban live demo and backup
-frames/video. M4 Samik delivers the secondary light terrain scenario as recorded evidence
-or live Cosys-AirSim if ready. M1 Suyash keeps the protocol/event contract unchanged and
-consumes either environment through the same Python-facing interfaces.
+**Who must act:** M2 Abhijan verifies both scenario bundles with the same attack oracle and
+retains raw evidence. M3 Pratik delivers/reproduces the dark urban live scenario. M4 Samik
+delivers/reproduces the daylight terrain scenario and runs `AutonomyRunner` in both. M1
+Suyash keeps the protocol/event contracts versioned and consumes either environment through
+the same Python-facing interfaces.
 **Why:** Unreal maps/assets are binary and painful to merge. Separate scenario packs avoid
 Git synchronization conflicts while still proving the same VeriSwarm Python verifier works
 across multiple environments.
+
+**Superseded on 2026-08-18:** there is one scenario owned by Pratik. Samik reproduces it and
+owns model acquisition plus the complete autonomy/runtime stack. Retain this entry only as
+history; do not build the second light-terrain scenario.
 
 ### 2026-08-15 — Member roles assigned; Windows/Mac split
 **Status:** FOLDED
@@ -454,7 +637,7 @@ across multiple environments.
 never first-class and Microsoft archived the project in 2022, so the Mac dev drives the sim
 over the LAN through the `airsim` RPC client on port 41451 instead of installing Unreal.
 
-**Superseded on 2026-08-18:** M4 is Samik; Pratik and Samik both own independent CoSys
+**Superseded on 2026-08-18:** M4 is Samik; Pratik and Samik both own independent Cosys
 AirSim installations; Abhijan owns attack delivery instead of the simulator client. The
 new role-reset entry above is authoritative.
 
