@@ -191,6 +191,7 @@ class RoundResult:
     dispute_count: int
     missing_count: int
     decision_ms: float
+    decision_ms_std: float
     ack_ids: frozenset
     dispute_ids: frozenset
 
@@ -220,12 +221,18 @@ def run_round(
         )
         latencies_ns.append(time.perf_counter_ns() - t0)
     assert result is not None
+    decision_samples_ms = [sample / 1e6 for sample in latencies_ns]
     return RoundResult(
         outcome=result.outcome,
         ack_count=result.ack_count,
         dispute_count=result.dispute_count,
         missing_count=result.missing_count,
-        decision_ms=statistics.fmean(latencies_ns) / 1e6,
+        decision_ms=statistics.fmean(decision_samples_ms),
+        decision_ms_std=(
+            statistics.stdev(decision_samples_ms)
+            if len(decision_samples_ms) > 1
+            else 0.0
+        ),
         ack_ids=result.ack_voter_ids,
         dispute_ids=result.dispute_voter_ids,
     )

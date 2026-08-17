@@ -46,8 +46,10 @@ from __future__ import annotations
 import enum
 import hashlib
 import math
+import re
+import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Iterable, Mapping, Optional, Sequence
 
@@ -70,6 +72,13 @@ from .geometry import (
     covisibility,
     parallax_angle,
 )
+
+
+_IDENTITY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+_HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
+_SIGNATURE_RE = re.compile(r"[0-9a-f]{128}\Z")
+_REASON_RE = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
+MAX_SERIALIZED_VOTE_BYTES = 8 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +118,16 @@ class PeerVote:
     reason: str
     timestamp_ns: int
 
+    def __post_init__(self) -> None:
+        if not _IDENTITY_RE.fullmatch(self.voter_id):
+            raise ValueError("invalid voter_id")
+        if not _HASH_RE.fullmatch(self.target_receipt_hash):
+            raise ValueError("target_receipt_hash must be lowercase SHA-256 hex")
+        if not _REASON_RE.fullmatch(self.reason):
+            raise ValueError("vote reason must be 1-128 safe ASCII characters")
+        if self.timestamp_ns < 0:
+            raise ValueError("vote timestamp must be non-negative")
+
     def canonical(self) -> bytes:
         payload = {
             "voter_id": self.voter_id,
@@ -132,6 +151,10 @@ class SignedVote:
     vote: PeerVote
     signature: str  # hex-encoded Ed25519 signature
 
+    def __post_init__(self) -> None:
+        if not _SIGNATURE_RE.fullmatch(self.signature):
+            raise ValueError("vote signature must be 128 lowercase hex chars")
+
     def serialize(self) -> bytes:
         payload = {
             "vote": {
@@ -149,7 +172,11 @@ class SignedVote:
 
     @classmethod
     def deserialize(cls, wire: bytes) -> "SignedVote":
+        if len(wire) > MAX_SERIALIZED_VOTE_BYTES:
+            raise ValueError("serialized vote exceeds size limit")
         obj = json.loads(wire)
+        if not isinstance(obj, dict) or set(obj) != {"vote", "signature"}:
+            raise ValueError("serialized vote has unexpected fields")
         v = obj["vote"]
         return cls(
             vote=PeerVote(
@@ -212,6 +239,43 @@ class ConsensusResult:
     #: it as though the scene was cross-checked. `fallback_action` degrades it.
     semantic_ack_count: int = 0
     semantic_voter_ids: frozenset = frozenset()
+    #: Peers that produced valid, conflicting decisions for the same receipt.
+    #: Their votes are excluded from both sides; the signed pair is evidence
+    #: for an isolation/revocation workflow, not a reason to trust either vote.
+    equivocation_voter_ids: frozenset = frozenset()
+
+    def __post_init__(self) -> None:
+        counts = (
+            self.ack_count,
+            self.dispute_count,
+            self.missing_count,
+            self.semantic_ack_count,
+        )
+        if not all(type(value) is int and value >= 0 for value in counts):
+            raise ValueError("consensus counts must be non-negative integers")
+        if self.ack_threshold < 1 or self.dispute_threshold < 1:
+            raise ValueError("consensus thresholds must be positive")
+        if self.semantic_ack_count > self.ack_count:
+            raise ValueError("semantic_ack_count cannot exceed ack_count")
+        if self.outcome is ConsensusOutcome.ACCEPTED and (
+            self.ack_count < self.ack_threshold
+        ):
+            raise ValueError("ACCEPTED result is below ACK threshold")
+        if self.outcome is ConsensusOutcome.REJECTED and (
+            self.dispute_count < self.dispute_threshold
+        ):
+            raise ValueError("REJECTED result is below DISPUTE threshold")
+        # NO_QUORUM may still meet an integer count threshold when reputation
+        # policy deliberately tightens that decision, so count-only validation
+        # cannot reject it here.
+        if not self.semantic_voter_ids <= self.ack_voter_ids:
+            raise ValueError("semantic voters must be ACK voters")
+        if self.ack_voter_ids & self.dispute_voter_ids:
+            raise ValueError("a voter cannot count on both sides")
+        if self.equivocation_voter_ids & (
+            self.ack_voter_ids | self.dispute_voter_ids
+        ):
+            raise ValueError("equivocators cannot count toward a decision")
 
 
 # ---------------------------------------------------------------------------
@@ -236,9 +300,17 @@ def outputs_agree(
     The threshold is mission-configured. In our experiments we set it
     to 0.5 in normalised action space (output range [-1, 1]).
     """
+    if not math.isfinite(threshold) or threshold <= 0.0:
+        raise ValueError("semantic agreement threshold must be finite and positive")
     if len(claimed) != len(observed):
         return False
-    sq = sum((a - b) ** 2 for a, b in zip(claimed, observed))
+    try:
+        pairs = [(float(a), float(b)) for a, b in zip(claimed, observed)]
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if not all(math.isfinite(a) and math.isfinite(b) for a, b in pairs):
+        return False
+    sq = sum((a - b) ** 2 for a, b in pairs)
     return math.sqrt(sq) < threshold
 
 
@@ -294,6 +366,13 @@ class CoVisDiagnostic:
             seen = f"o={self.iou:.3f}" if self.iou is not None else "no poses"
             return (f"{verdict} (image fallback): {seen} < {self.o_min}, "
                     f"orb_inliers={self.orb_inliers} vs m_min={self.m_min}{angle}")
+        if self.method == "geometry+features":
+            verdict = "co-visible" if self.covisible else "NOT co-visible"
+            return (f"{verdict} (geometry + image evidence): o={self.iou:.3f}, "
+                    f"orb_inliers={self.orb_inliers} vs m_min={self.m_min}{angle}")
+        if self.method == "features_no_parallax":
+            return ("NOT co-visible: image features share a scene, but no trusted "
+                    f"viewpoint evidence establishes phi >= {self.phi_min} deg")
         seen = f"o={self.iou:.3f} < {self.o_min}" if self.iou is not None else "no poses"
         return f"NOT co-visible: {seen}, no frames for the image fallback"
 
@@ -328,6 +407,21 @@ class PeerVerifier:
         on_covis: Optional[Callable[["CoVisDiagnostic"], None]] = None,
     ):
         self.my_drone_id = my_drone_id
+        if not _IDENTITY_RE.fullmatch(my_drone_id):
+            raise ValueError("invalid verifier drone id")
+        max_distance = math.sqrt(12.0)
+        if not math.isfinite(agreement_threshold) or not (
+            0.0 < agreement_threshold < max_distance
+        ):
+            raise ValueError(
+                f"agreement_threshold must be in (0, {max_distance:.3f})"
+            )
+        if not math.isfinite(o_min) or not 0.0 < o_min <= 1.0:
+            raise ValueError("o_min must be in (0, 1]")
+        if type(m_min) is not int or m_min < 1:
+            raise ValueError("m_min must be a positive integer")
+        if not math.isfinite(phi_min) or not 0.0 <= phi_min < 180.0:
+            raise ValueError("phi_min must be in [0, 180)")
         self._signer = signer
         self._receipt_verifier = receipt_verifier
         self._agreement_threshold = agreement_threshold
@@ -347,6 +441,8 @@ class PeerVerifier:
         self._on_covis = on_covis
         #: Diagnostic from the most recent vote that reached the co-visibility gate.
         self.last_covis: Optional[CoVisDiagnostic] = None
+        self._vote_cache: OrderedDict[str, SignedVote] = OrderedDict()
+        self._vote_cache_lock = threading.Lock()
 
     def _co_visible(
         self,
@@ -359,50 +455,63 @@ class PeerVerifier:
         Decide whether this peer co-observed the originator's scene, and report
         *how* it decided.
 
-        Primary test is geometric: footprint overlap o(i, j) >= o_min from the
-        two poses. When that test fails *and* both camera frames are available,
-        fall back to a pose-independent, image-based check — the frames are
-        co-visible if they share at least ``m_min`` RANSAC-consistent ORB
-        matches. The fallback is what preserves the semantic layer when a pose
-        is untrustworthy (GPS spoofing, EKF drift): a spoofed pose can hide a
-        genuine co-view from the geometric test, but it cannot make two frames
-        of the same scene stop matching.
+        Geometry establishes overlap and angular diversity. When frames are
+        available they are also required to share enough RANSAC-consistent ORB
+        matches; a spoofed pose must not bypass image evidence merely by claiming
+        a high IoU. Image features can recover overlap when ``phi_min`` is off,
+        but cannot prove angular diversity: with ``phi_min > 0`` and no trusted
+        viewpoint evidence, the correct result is abstention.
         """
         iou: Optional[float] = None
         phi: Optional[float] = None
+        overlap_ok = False
+        parallax_ok = self._phi_min <= 0.0
         if my_pose is not None and originator_pose is not None:
             iou = covisibility(my_pose, originator_pose, self._hfov, self._vfov)
             if iou >= self._o_min:
-                if self._phi_min <= 0.0:
-                    return CoVisDiagnostic(
-                        True, "geometric", iou, None, self._o_min, self._m_min,
-                        parallax_deg=None, phi_min=self._phi_min,
+                overlap_ok = True
+                if self._phi_min > 0.0:
+                    phi = parallax_angle(
+                        my_pose, originator_pose, self._hfov, self._vfov
                     )
-                phi = parallax_angle(
-                    my_pose, originator_pose, self._hfov, self._vfov
-                )
-                if phi >= self._phi_min:
+                    parallax_ok = phi >= self._phi_min
+                if not parallax_ok:
+                    # Overlapping but redundant: this peer is looking at the scene
+                    # from effectively where the originator is, so whatever fooled
+                    # the originator's camera fools this one too. Abstaining is more
+                    # honest than casting a vote that carries no new evidence.
                     return CoVisDiagnostic(
-                        True, "geometric", iou, None, self._o_min, self._m_min,
+                        False, "low_parallax", iou, None, self._o_min, self._m_min,
                         parallax_deg=phi, phi_min=self._phi_min,
                     )
-                # Overlapping but redundant: this peer is looking at the scene
-                # from effectively where the originator is, so whatever fooled
-                # the originator's camera fools this one too. Abstaining is more
-                # honest than casting a vote that carries no new evidence.
-                return CoVisDiagnostic(
-                    False, "low_parallax", iou, None, self._o_min, self._m_min,
-                    parallax_deg=phi, phi_min=self._phi_min,
-                )
 
         if my_frame is not None and originator_frame is not None:
             # Lazy import so pure-consensus contexts never need OpenCV.
             from .covis_features import feature_match
 
             match = feature_match(my_frame, originator_frame)
+            features_ok = match.inliers >= self._m_min
+            if overlap_ok:
+                return CoVisDiagnostic(
+                    features_ok, "geometry+features", iou,
+                    match.inliers, self._o_min, self._m_min,
+                    parallax_deg=phi, phi_min=self._phi_min,
+                )
+            if features_ok and self._phi_min > 0.0:
+                return CoVisDiagnostic(
+                    False, "features_no_parallax", iou,
+                    match.inliers, self._o_min, self._m_min,
+                    parallax_deg=phi, phi_min=self._phi_min,
+                )
             return CoVisDiagnostic(
-                match.inliers >= self._m_min, "features", iou,
-                match.inliers, self._o_min, self._m_min,
+                features_ok, "features", iou, match.inliers,
+                self._o_min, self._m_min, parallax_deg=phi,
+                phi_min=self._phi_min,
+            )
+
+        if overlap_ok and parallax_ok:
+            return CoVisDiagnostic(
+                True, "geometric", iou, None, self._o_min, self._m_min,
                 parallax_deg=phi, phi_min=self._phi_min,
             )
 
@@ -440,7 +549,16 @@ class PeerVerifier:
         geometric footprint overlap first, then an image-feature fallback when
         both ``my_frame`` and ``originator_frame`` are supplied.
         """
-        crypto_result: VerificationResult = self._receipt_verifier.verify(signed_receipt)
+        digest = receipt_digest(signed_receipt.receipt)
+        with self._vote_cache_lock:
+            cached = self._vote_cache.get(digest)
+            if cached is not None:
+                self._vote_cache.move_to_end(digest)
+                return cached
+
+        crypto_result: VerificationResult = self._receipt_verifier.verify(
+            signed_receipt, replay_scope=self.my_drone_id
+        )
 
         if not crypto_result.ok:
             return self._build_signed_vote(
@@ -507,8 +625,16 @@ class PeerVerifier:
             reason=reason,
             timestamp_ns=time.time_ns(),
         )
-        sig = self._signer._key.sign(vote.canonical()).signature
-        return SignedVote(vote=vote, signature=sig.hex())
+        signed = SignedVote(
+            vote=vote,
+            signature=self._signer.sign_bytes(vote.canonical()),
+        )
+        with self._vote_cache_lock:
+            self._vote_cache[receipt_digest(target_receipt)] = signed
+            self._vote_cache.move_to_end(receipt_digest(target_receipt))
+            while len(self._vote_cache) > 4096:
+                self._vote_cache.popitem(last=False)
+        return signed
 
 
 # ---------------------------------------------------------------------------
@@ -556,10 +682,10 @@ class ReputationStore:
 
         r_i <- clip( r_i + alpha*[agreed] - beta*[dissented], r_min, 1 )
 
-    The weights only ever *tighten* an ACCEPT (which additionally needs two
-    thirds of the participating reputation mass) or *add* a REJECT trigger; they
-    never relax the integer PBFT thresholds, so the Byzantine bound is preserved
-    as a safety floor. See `ConsensusEngine.tally`.
+    The weights only ever tighten an ACCEPT or REJECT; they never relax the
+    integer quorum thresholds. This is a local tally safety floor, not a claim
+    that the surrounding protocol implements PBFT finality. See
+    `ConsensusEngine.tally`.
     """
 
     alpha: float = 0.05
@@ -676,10 +802,21 @@ class ConsensusEngine:
 
         # Drop self-votes — a drone never votes on its own receipt.
         originator = target_receipt.drone_id
+        if roster is not None:
+            if originator not in roster:
+                raise ValueError("expected_voters must include the receipt originator")
+            roster_peer_count = len(roster - {originator})
+            if roster_peer_count != self.num_peers:
+                raise ValueError(
+                    "consensus engine peer count does not match expected roster: "
+                    f"engine={self.num_peers}, roster={roster_peer_count}"
+                )
 
         ack_voters: set[str] = set()
         dispute_voters: set[str] = set()
         semantic_voters: set[str] = set()
+        equivocators: set[str] = set()
+        valid_by_voter: dict[str, SignedVote] = {}
 
         for sv in signed_votes:
             # Wrong target — vote isn't for this receipt.
@@ -694,20 +831,35 @@ class ConsensusEngine:
             # Cryptographic check.
             if not vote_verifier.verify(sv):
                 continue
-            # Deduplicate by voter — first vote per peer wins.
-            if sv.vote.voter_id in ack_voters or sv.vote.voter_id in dispute_voters:
-                continue
 
+            voter_id = sv.vote.voter_id
+            if voter_id in equivocators:
+                continue
+            previous = valid_by_voter.get(voter_id)
+            if previous is not None:
+                if previous.vote != sv.vote:
+                    # Any two distinct signed statements for one voter/target
+                    # are equivocation, even if both say ACK. In particular an
+                    # attacker must not tell one node "ok" (semantic evidence)
+                    # and another "ok_no_observation" (crypto-only evidence),
+                    # because those statements authorize different actions.
+                    valid_by_voter.pop(voter_id, None)
+                    equivocators.add(voter_id)
+                # Byte-identical vote retransmissions are idempotent.
+                continue
+            valid_by_voter[voter_id] = sv
+
+        for voter_id, sv in valid_by_voter.items():
             if sv.vote.decision is Vote.ACK:
-                ack_voters.add(sv.vote.voter_id)
+                ack_voters.add(voter_id)
                 # Only an ACK carrying REASON_OK actually exercised the semantic
                 # layer. `ok_no_covisibility` and `ok_no_observation` are ACKs on
                 # crypto + provenance alone and must not be mistaken for a
                 # cross-check of what the originator claims to have seen.
                 if sv.vote.reason == REASON_OK:
-                    semantic_voters.add(sv.vote.voter_id)
+                    semantic_voters.add(voter_id)
             elif sv.vote.decision is Vote.DISPUTE:
-                dispute_voters.add(sv.vote.voter_id)
+                dispute_voters.add(voter_id)
 
         ack_count = len(ack_voters)
         dispute_count = len(dispute_voters)
@@ -722,21 +874,22 @@ class ConsensusEngine:
                 0, self.num_peers - ack_count - dispute_count
             )
 
-        # Decision. Without a reputation store this is the plain count-based
-        # PBFT rule. With one (C1), an ACCEPT additionally needs two thirds of
-        # the participating reputation mass on the ACK side, and a REJECT may
-        # also be triggered by a one-third dispute mass — so reputation only
-        # ever tightens an ACCEPT or adds a REJECT, never weakening the integer
-        # safety floor that gives the Byzantine bound.
+        # Decision. Reputation may tighten either decision but may never create
+        # a decision below its integer quorum. Weight is measured against the
+        # expected roster, not only the peers that happened to answer: otherwise
+        # a Byzantine peer could turn packet loss into a one-vote rejection.
         if reputation is not None:
+            if roster is None:
+                raise ValueError("expected_voters is required with reputation")
+            expected_peers = roster - {originator}
             w_ack = reputation.total(ack_voters)
             w_dispute = reputation.total(dispute_voters)
-            w_part = w_ack + w_dispute
+            w_total = reputation.total(expected_peers)
             ack_ok = ack_count >= self.ack_threshold and (
-                w_part <= 0.0 or w_ack >= (2.0 / 3.0) * w_part
+                w_total <= 0.0 or w_ack >= (2.0 / 3.0) * w_total
             )
-            reject_ok = dispute_count >= self.dispute_threshold or (
-                w_part > 0.0 and w_dispute > (1.0 / 3.0) * w_part
+            reject_ok = dispute_count >= self.dispute_threshold and (
+                w_total <= 0.0 or w_dispute > (1.0 / 3.0) * w_total
             )
         else:
             ack_ok = ack_count >= self.ack_threshold
@@ -752,6 +905,7 @@ class ConsensusEngine:
             dispute_voter_ids=frozenset(dispute_voters),
             semantic_ack_count=len(semantic_voters),
             semantic_voter_ids=frozenset(semantic_voters),
+            equivocation_voter_ids=frozenset(equivocators),
         )
 
         if ack_ok:
@@ -787,14 +941,14 @@ class SafeAction(enum.Enum):
     """The fail-safe action Module 4 takes on a consensus outcome."""
 
     EXECUTE = "EXECUTE"              # ACCEPTED: run the action, log the receipt
-    EXECUTE_DEGRADED = "EXECUTE_DEGRADED"  # ACCEPTED but semantically unverified
+    EXECUTE_DEGRADED = "EXECUTE_DEGRADED"  # legacy value; never authorises motion
     SAFE_FALLBACK = "SAFE_FALLBACK"  # REJECTED: hover / return-to-launch
     DEFER = "DEFER"                  # NO_QUORUM: re-request votes, cautious hold
 
 
 def fallback_action(
     outcome: ConsensusOutcome,
-    semantic_ack_count: Optional[int] = None,
+    semantic_ack_count: int = 0,
     min_semantic_acks: int = 1,
 ) -> SafeAction:
     """
@@ -815,17 +969,13 @@ def fallback_action(
 
     Passing `semantic_ack_count` (from :class:`ConsensusResult`) makes that case
     explicit: fewer than `min_semantic_acks` peers cross-checked the scene, so
-    the accept degrades to :attr:`SafeAction.EXECUTE_DEGRADED`. The action is
-    still executed — refusing to move whenever a drone flies alone would ground
-    the swarm — but the caller is told to execute it under a reduced-authority
-    envelope (lower speed, larger obstacle margin) rather than at full trust.
-
-    Omitting `semantic_ack_count` keeps the original three-way mapping, which is
-    what the pure-consensus tests and the eval harness use.
+    the accept maps to :attr:`SafeAction.DEFER`: hold position or brake while a
+    separate certified obstacle-avoidance layer remains active. Cryptographic
+    identity alone must never authorise an AI motion command.
     """
     if outcome is ConsensusOutcome.ACCEPTED:
-        if semantic_ack_count is not None and semantic_ack_count < min_semantic_acks:
-            return SafeAction.EXECUTE_DEGRADED
+        if semantic_ack_count < min_semantic_acks:
+            return SafeAction.DEFER
         return SafeAction.EXECUTE
     if outcome is ConsensusOutcome.REJECTED:
         return SafeAction.SAFE_FALLBACK

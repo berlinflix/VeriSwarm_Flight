@@ -43,6 +43,8 @@ class Pose:
               pi/2 would be horizontal. The tilt is applied along the heading, so
               increasing ``pitch`` pushes the footprint forward and stretches it
               away from the aircraft.
+    roll    : camera tilt about the aircraft's forward axis in radians. Positive
+              roll shifts the optical axis toward local negative cross-track.
 
     ``pitch`` exists because the rest of the stack is not nadir. The reactive
     controller in ``perception.yolo_action`` reads a forward-looking scene ("climb
@@ -58,6 +60,7 @@ class Pose:
     z: float
     yaw: float = 0.0
     pitch: float = 0.0
+    roll: float = 0.0
 
 
 # Default camera half-angles (radians): ~69 deg horizontal / ~53 deg vertical,
@@ -71,13 +74,12 @@ class Pose:
 DEFAULT_HFOV = math.radians(69.0)
 DEFAULT_VFOV = math.radians(53.0)
 
-#: Ground range beyond which a footprint corner is clipped, in metres.
+#: Ground range beyond which a footprint is considered unmodelled, in metres.
 #:
 #: A tilted camera whose upper field of view reaches the horizon projects to a
-#: mathematically unbounded footprint, which would make IoU meaningless. Physics
-#: bounds it anyway: past a few hundred metres a ground feature occupies well
-#: under a pixel, so it cannot contribute to co-observation. Clipping keeps the
-#: footprint a bounded convex quadrilateral.
+#: mathematically unbounded footprint, which would make IoU meaningless. The
+#: four-corner model cannot represent the ground-plane/range-disk intersection
+#: exactly, so it abstains instead of inventing a clipped quadrilateral.
 DEFAULT_MAX_GROUND_RANGE = 200.0
 
 
@@ -110,15 +112,26 @@ def camera_footprint(
     therefore free of any discontinuity at nadir, and every previously measured
     co-visibility number is reproduced bit for bit.
 
-    A non-positive altitude yields a degenerate (zero-area) footprint, which the
-    IoU treats as no overlap.
+    A non-positive altitude, an above-horizon corner, or a footprint extending
+    beyond ``max_ground_range`` yields no footprint. Those cases are outside the
+    calibrated four-corner ground-plane model, so abstention is safer than a
+    geometrically invalid overlap claim.
     """
     if pose.z <= 0.0:
         return []
+    if not (0.0 < hfov < math.pi) or not (0.0 < vfov < math.pi):
+        raise ValueError("hfov and vfov must be between 0 and pi radians")
+    if max_ground_range <= 0.0 or not math.isfinite(max_ground_range):
+        raise ValueError("max_ground_range must be finite and positive")
+    if not all(math.isfinite(v) for v in (
+        pose.x, pose.y, pose.z, pose.yaw, pose.pitch, pose.roll
+    )):
+        raise ValueError("pose values must be finite")
 
     u_max = math.tan(hfov / 2.0)
     v_max = math.tan(vfov / 2.0)
     cos_p, sin_p = math.cos(pose.pitch), math.sin(pose.pitch)
+    cos_r, sin_r = math.cos(pose.roll), math.sin(pose.roll)
 
     # CCW winding, matching the nadir model's corner order.
     corners_uv = [(-u_max, -v_max), (u_max, -v_max), (u_max, v_max), (-u_max, v_max)]
@@ -127,30 +140,40 @@ def camera_footprint(
     for u, v in corners_uv:
         # Downward component of the ray. Non-positive means the corner looks at
         # or above the horizon and never meets the ground.
-        w = cos_p - u * sin_p
-        if w > 1e-9:
-            lx = pose.z * (u * cos_p + sin_p) / w
-            ly = pose.z * v / w
-        else:
-            # Above the horizon: place the corner at max range along the ray's
-            # ground-plane azimuth, so the polygon stays bounded and convex.
-            lx, ly = (u * cos_p + sin_p), v
-        # Clip anything past usable range back along its own azimuth.
+        ray_x = u * cos_p + sin_p
+        ray_y_before_roll = v
+        ray_down_before_roll = cos_p - u * sin_p
+        ray_y = (
+            ray_y_before_roll * cos_r
+            - ray_down_before_roll * sin_r
+        )
+        ray_down = (
+            ray_y_before_roll * sin_r
+            + ray_down_before_roll * cos_r
+        )
+        if ray_down <= 1e-9:
+            return []
+        lx = pose.z * ray_x / ray_down
+        ly = pose.z * ray_y / ray_down
         radius = math.hypot(lx, ly)
-        if radius > max_ground_range and radius > 0.0:
-            scale = max_ground_range / radius
-            lx, ly = lx * scale, ly * scale
+        if radius > max_ground_range:
+            return []
         local.append((lx, ly))
 
     cos_y, sin_y = math.cos(pose.yaw), math.sin(pose.yaw)
-    return [
+    footprint = [
         (pose.x + lx * cos_y - ly * sin_y, pose.y + lx * sin_y + ly * cos_y)
         for (lx, ly) in local
     ]
+    # Sutherland-Hodgman below requires CCW clip polygons. Enforce the invariant
+    # rather than relying on the camera-ray ordering to imply it.
+    if polygon_signed_area(footprint) < 0.0:
+        footprint.reverse()
+    return footprint
 
 
-def polygon_area(poly: Sequence[Point]) -> float:
-    """Unsigned area of a simple polygon via the shoelace formula."""
+def polygon_signed_area(poly: Sequence[Point]) -> float:
+    """Signed polygon area: positive for CCW, negative for clockwise."""
     n = len(poly)
     if n < 3:
         return 0.0
@@ -159,7 +182,12 @@ def polygon_area(poly: Sequence[Point]) -> float:
         x1, y1 = poly[i]
         x2, y2 = poly[(i + 1) % n]
         acc += x1 * y2 - x2 * y1
-    return abs(acc) / 2.0
+    return acc / 2.0
+
+
+def polygon_area(poly: Sequence[Point]) -> float:
+    """Unsigned area of a simple polygon via the shoelace formula."""
+    return abs(polygon_signed_area(poly))
 
 
 def _clip_convex(subject: Sequence[Point], clip: Sequence[Point]) -> List[Point]:

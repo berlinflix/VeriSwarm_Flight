@@ -17,6 +17,7 @@ nodes/
 
 # Runtime artifacts
 results/live_events.jsonl
+results/*.jsonl.lock
 *.log
 
 # Captured frames — these grow fast. Keep them local.

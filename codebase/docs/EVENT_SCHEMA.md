@@ -49,7 +49,7 @@ A drone signed an inference result. This is the attested claim under review.
 
 ```json
 {"type":"receipt","node":"alpha","round":6,"action":[1.0,0.0,0.0],
- "model_hash":"ab12…","frame_hash":"cd34…","backend":"optee","sign_ms":4.68}
+ "model_hash":"ab12…","frame_hash":"cd34…","backend":"optee","sign_ms":33.97}
 ```
 
 | field | type | notes |
@@ -91,7 +91,13 @@ without showing *why*, it is actively misleading.
 `method` values worth distinguishing on screen:
 
 - **`geometric`** — footprints overlap. Normal.
-- **`features`** — geometry said no, ORB said yes. **The pose was not trusted** — this is the GPS-spoofing defence firing.
+- **`features`** — geometry said no and ORB found a shared scene. This can restore
+  overlap only when `phi_min` is disabled; image matches alone do not prove
+  angular diversity.
+- **`features_no_parallax`** — ORB found a shared scene, but no trusted viewpoint
+  evidence proves `phi >= phi_min`; the peer abstains.
+- **`geometry+features`** — both pose geometry and available image evidence were
+  checked. A claimed high IoU cannot bypass conflicting frames.
 - **`low_parallax`** — they overlap but view from effectively the same place, so the peer abstains. Its vote would have carried no independent evidence.
 - **`none`** — no shared view and no frames to fall back on.
 
@@ -129,7 +135,7 @@ prevent.
 
 ```json
 {"type":"verdict","node":"bravo","target":"alpha","outcome":"REJECTED",
- "acks":1,"disputes":2,"semantic_acks":2,"consensus_ms":12.4}
+ "acks":1,"disputes":2,"semantic_acks":1,"consensus_ms":12.4}
 ```
 
 | field | type | notes |
@@ -137,7 +143,7 @@ prevent.
 | `node` | string | **who tallied.** Every node tallies independently. |
 | `outcome` | string | `ACCEPTED` \| `REJECTED` \| `NO_QUORUM` |
 | `acks`, `disputes` | int | vote counts |
-| `semantic_acks` | int | ACKs that actually ran the semantic check |
+| `semantic_acks` | int | ACK votes with reason `ok`; always `0 <= semantic_acks <= acks` |
 
 Two things to build here:
 
@@ -158,15 +164,15 @@ What the drone actually did about the verdict.
 
 ```json
 {"type":"safe_action","node":"alpha","action":"SAFE_FALLBACK",
- "outcome":"REJECTED","semantic_acks":2}
+ "outcome":"REJECTED","semantic_acks":1}
 ```
 
 | `action` | meaning |
 |---|---|
 | `EXECUTE` | verified accept — fly the commanded action |
-| `EXECUTE_DEGRADED` | accepted, but **no peer cross-checked it**; fly under reduced authority |
+| `EXECUTE_DEGRADED` | legacy display value; must not authorize motion |
 | `SAFE_FALLBACK` | rejected — hover |
-| `DEFER` | no quorum — cautious hold |
+| `DEFER` | no quorum or no semantic quorum — cautious hold |
 
 ## `reputation`
 
@@ -175,7 +181,8 @@ What the drone actually did about the verdict.
 ```
 
 `value` in `[0.1, 1.0]`. Floor is `r_min = 0.1`. A sustained liar reaches the
-floor in about four rounds (α = 0.05 up, β = 0.2 down).
+reaches 0.2 after four penalties and the 0.1 floor after five
+(α = 0.05 up, β = 0.2 down).
 
 ## `isolation`
 
@@ -210,7 +217,8 @@ own attack, and it still works when it is flying alone.
 
 ```json
 {"type":"depth","node":"alpha","contradicted":true,"nearest_m":7.9,
- "required_m":11.5,"commanded_forward":1.0,"reason":"contradiction","detail":"…"}
+ "required_m":9.5,"commanded_forward":1.0,"safe_to_proceed":false,
+ "reason":"contradiction","detail":"…"}
 ```
 
 `contradicted: true` means the drone commanded forward motion its own rangefinder

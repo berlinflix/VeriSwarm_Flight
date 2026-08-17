@@ -63,7 +63,7 @@ def test_signed_receipt_roundtrip_preserves_signature():
         drone_id="alpha",
         input_bytes=b"\xab" * 64,
         model_hash=APPROVED,
-        output=(1.0, 2.0, 3.0),
+        output=(1.0, 0.2, -0.3),
     )
     sr = alpha.sign(r)
 

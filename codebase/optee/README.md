@@ -1,9 +1,9 @@
 # VeriSwarm OP-TEE Trusted Application (Alpha node)
 
-Hardware-rooted Ed25519 signer for the Jetson Orin Nano. The keypair is born and
+TEE-protected Ed25519 signer for the Jetson Orin Nano. The keypair is born and
 lives inside the OP-TEE secure world; the normal world only ever sees the public
-key and signatures. This is what backs the paper's "hardware-rooted attestation"
-claim and feeds experiments **R2** (signing latency, Table 4.2 / Fig 12) and
+key and signatures. This demonstrates a hardware-isolated signing-key operation,
+not trusted execution of inference. It feeds experiments **R2** (signing latency, Table 4.2 / Fig 12) and
 **R-EN** (energy, Table 4.13).
 
 ```

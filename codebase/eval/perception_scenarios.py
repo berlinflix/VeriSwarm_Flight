@@ -38,6 +38,7 @@ from protocol.peer_consensus import (
     VoteVerifier,
 )
 from protocol.geometry import Pose
+from node.frame_source import frame_bytes
 from perception.yolo_action import (
     Detection,
     apply_patch,
@@ -112,7 +113,7 @@ def _run(scenario, frame, good_model, tampered_model, signers, rv, vv):
         orig_frame, orig_model, orig_hash = _patch_largest(frame, good_model), good_model, model_hash(GOOD)
 
     orig_action = frame_to_action(orig_frame, orig_model)
-    receipt = build_receipt(drone_id="alpha", input_bytes=orig_frame.tobytes(),
+    receipt = build_receipt(drone_id="alpha", input_bytes=frame_bytes(orig_frame),
                             model_hash=orig_hash, output=orig_action)
     signed = signers["alpha"].sign(receipt)
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import json
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
@@ -36,21 +37,36 @@ from protocol.geometry import Pose
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp")
 
 
-def frame_bytes(frame) -> bytes:
+def frame_bytes(frame, *, color_space: str = "BGR") -> bytes:
     """
     Canonical bytes of a frame, for the receipt's `input_hash`.
 
-    Uses the raw array buffer rather than a re-encode: JPEG compression is not
-    deterministic across library versions or quality settings, so two nodes
-    hashing "the same" frame could disagree. The raw buffer is exactly what the
-    detector consumed, which is what the receipt is supposed to be attesting.
+    The envelope binds raw pixels *and* their interpretation. Hashing only
+    ``tobytes()`` makes differently shaped arrays, dtypes, and colour spaces
+    collide whenever their buffers happen to match. JPEG is still avoided
+    because encoder output varies across versions and settings.
     """
-    return frame.tobytes()
+    if not isinstance(color_space, str) or not color_space:
+        raise ValueError("color_space must be a non-empty string")
+    shape = tuple(int(v) for v in frame.shape)
+    if len(shape) not in (2, 3) or any(v <= 0 for v in shape):
+        raise ValueError("frame must be a non-empty HxW or HxWxC array")
+    header = json.dumps(
+        {
+            "color_space": color_space,
+            "dtype": str(frame.dtype),
+            "shape": shape,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+    return b"VSFRAME1" + len(header).to_bytes(4, "big") + header + frame.tobytes(order="C")
 
 
-def frame_hash(frame) -> str:
-    """SHA-256 of the frame buffer — the receipt's `input_hash`."""
-    return hashlib.sha256(frame_bytes(frame)).hexdigest()
+def frame_hash(frame, *, color_space: str = "BGR") -> str:
+    """SHA-256 of canonical pixels plus shape, dtype, and colour space."""
+    return hashlib.sha256(frame_bytes(frame, color_space=color_space)).hexdigest()
 
 
 class FrameSource:

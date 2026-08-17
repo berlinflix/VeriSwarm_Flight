@@ -24,6 +24,16 @@ message Receipt {
   string model_hash    = 4;   // hex SHA-256 of model weight bytes
   repeated double output = 5; // action vector
   string nonce         = 6;   // hex 16 random bytes
+  uint32 protocol_version = 7;
+  string mission_id       = 8;
+  uint64 mission_epoch    = 9;
+  uint64 sequence         = 10;
+  string runtime_hash     = 11; // code/runtime/controller measurement
+  string action_frame     = 12; // units + coordinate-frame contract
+  uint64 valid_for_ns     = 13; // signed command validity interval
+  repeated double pose_enu = 14; // x,y,z,yaw,pitch,roll in mission ENU
+  int64 pose_timestamp_ns = 15;
+  double pose_uncertainty_m = 16;
 }
 
 

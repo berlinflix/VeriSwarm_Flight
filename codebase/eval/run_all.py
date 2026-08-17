@@ -21,6 +21,7 @@ Run those on the Alpha node once the Trusted Application is built.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import math
 import os
@@ -118,8 +119,10 @@ def run_r2_optee_latency(log: H.RunLogger, rng: random.Random, repeats: int) -> 
     TEE). Process spawn and session setup are excluded, so the number is
     directly comparable to R1's in-process software sign. Hardware-only.
     """
+    scope = "single_session_invoke_excludes_process_and_session_setup"
     pending = {"backend": "op-tee", "sign_us_mean": "PENDING", "sign_us_std": "PENDING",
-               "sign_ms_mean": "PENDING", "sign_ms_std": "PENDING", "n_cycles": 0}
+               "sign_ms_mean": "PENDING", "sign_ms_std": "PENDING", "n_cycles": 0,
+               "scope": scope}
     if not H.optee_available():
         log.round(run="R2", status="SKIPPED", reason="op-tee backend not available (run on Alpha/Jetson)")
         return [Artifact("sign_latency_optee.csv", "Table 4.2 / Fig 12", [pending], status="pending")]
@@ -141,7 +144,7 @@ def run_r2_optee_latency(log: H.RunLogger, rng: random.Random, repeats: int) -> 
                 [{"i": i, "sign_us": round(v, 3)} for i, v in enumerate(samples_us)])
     row = {"backend": "op-tee", "sign_us_mean": round(s.mean, 2), "sign_us_std": round(s.std, 2),
            "sign_ms_mean": round(s.mean / 1000.0, 4), "sign_ms_std": round(s.std / 1000.0, 4),
-           "n_cycles": len(samples_us)}
+           "n_cycles": len(samples_us), "scope": scope}
     return [Artifact("sign_latency_optee.csv", "Table 4.2 / Fig 12", [row])]
 
 
@@ -497,7 +500,7 @@ def run_r8_false_positive(log: H.RunLogger, rng: random.Random, repeats: int) ->
 
 
 # ---------------------------------------------------------------------------
-# R9 — protocol overhead + consensus latency at N=3/5/7
+# R9 — protocol overhead + local tally latency at N=3/5/7/9/11
 # ---------------------------------------------------------------------------
 
 
@@ -512,18 +515,30 @@ def run_r9_overhead(log: H.RunLogger, rng: random.Random, repeats: int) -> List[
         votes = H.honest_votes(sw, signed, observation=(0.1, 0.0, 0.0))
         receipt_bytes = len(signed.serialize())
         vote_bytes = H.Stat.of([len(v.serialize()) for v in votes]).mean
-        # Per cycle: receipt fanned out to k peers, then k votes collected.
-        msgs = k + k
-        attest_bytes = receipt_bytes * k + vote_bytes * k
+        # Logical signed-payload messages per cycle:
+        #   k SubmitReceipt requests + k direct vote replies
+        #   + k*(k-1) peer-to-peer vote broadcasts.
+        # Transport headers, TLS records and PushVoteAck replies are deliberately
+        # reported as excluded rather than silently pretending this is wire size.
+        msgs = k + k + k * (k - 1)
+        attest_bytes = receipt_bytes * k + vote_bytes * (k + k * (k - 1))
         # Baseline traffic = just broadcasting the raw action vector to k peers.
         raw_output_bytes = len(_json.dumps(list(signed.receipt.output)).encode()) * k
         overhead_pct = (attest_bytes - raw_output_bytes) / raw_output_bytes * 100.0
-        overhead_rows.append({"N": n, "msgs_per_cycle": msgs,
-                              "bytes_per_cycle": int(attest_bytes),
-                              "overhead_pct_vs_raw": round(overhead_pct, 1)})
+        overhead_rows.append({
+            "N": n,
+            "logical_messages_per_cycle": msgs,
+            "signed_payload_bytes_per_cycle": int(attest_bytes),
+            "excludes": "grpc,tcp,ip,tls,PushVoteAck",
+            "overhead_pct_vs_raw": round(overhead_pct, 1),
+        })
         rr = H.run_round(sw, signed, votes, repeats=max(repeats, 200))
-        latency_rows.append({"N": n, "decision_ms_mean": round(rr.decision_ms, 4),
-                             "decision_ms_std": 0.0})
+        latency_rows.append({
+            "N": n,
+            "local_verify_and_tally_ms_mean": round(rr.decision_ms, 4),
+            "decision_ms_std": round(rr.decision_ms_std, 4),
+            "scope": "in_process_not_peer_finality",
+        })
         log.round(run="R9", N=n, msgs=msgs, bytes=int(attest_bytes),
                   decision_ms=round(rr.decision_ms, 4))
     return [
@@ -924,6 +939,22 @@ RUNS: Dict[str, Callable] = {
 HARDWARE_RUNS = {"R2", "R-EN"}
 
 
+def _merged_manifest(
+    new_rows: List[Dict[str, object]], selected: List[str], partial_run: bool
+) -> List[Dict[str, object]]:
+    """Preserve unrelated evidence when ``--only`` refreshes selected runs."""
+    if not partial_run:
+        return new_rows
+    path = H.RESULTS_DIR / "manifest.csv"
+    if not path.exists() or path.stat().st_size == 0:
+        return new_rows
+    with path.open(newline="") as fh:
+        old_rows = list(csv.DictReader(fh))
+    selected_set = set(selected)
+    preserved = [row for row in old_rows if row.get("run") not in selected_set]
+    return preserved + new_rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="VeriSwarm evaluation runner")
     parser.add_argument("--only", type=str, default="",
@@ -963,11 +994,16 @@ def main() -> None:
             print(f"  {rid:5s} -> {art.filename:24s} [{art.status:7s}] "
                   f"{len(art.rows)} rows -> {art.feeds}  ({dt:.2f}s)")
 
+    refreshed_count = len(manifest)
+    manifest = _merged_manifest(manifest, selected, partial_run=bool(only_list))
     H.write_csv("manifest.csv", manifest)
     log.line("# done")
     log.close()
     pending = [m for m in manifest if m["status"] == "pending"]
-    print(f"\nWrote {len(manifest)} CSVs to results/. Log: {log.path.name}")
+    print(
+        f"\nRefreshed {refreshed_count} result CSVs; manifest contains "
+        f"{len(manifest)} artifacts. Log: {log.path.name}"
+    )
     if pending:
         print(f"PENDING (need Jetson/OP-TEE): {', '.join(m['csv'] for m in pending)}")
 

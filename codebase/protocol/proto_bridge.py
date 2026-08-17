@@ -38,8 +38,18 @@ def receipt_to_pb(r: Receipt) -> pb.Receipt:
         input_hash=r.input_hash,
         model_hash=r.model_hash,
         nonce=r.nonce,
+        protocol_version=r.protocol_version,
+        mission_id=r.mission_id,
+        mission_epoch=r.mission_epoch,
+        sequence=r.sequence,
+        runtime_hash=r.runtime_hash,
+        action_frame=r.action_frame,
+        valid_for_ns=r.valid_for_ns,
+        pose_timestamp_ns=r.pose_timestamp_ns,
+        pose_uncertainty_m=r.pose_uncertainty_m,
     )
     msg.output.extend(r.output)
+    msg.pose_enu.extend(r.pose_enu)
     return msg
 
 
@@ -51,6 +61,16 @@ def receipt_from_pb(msg: pb.Receipt) -> Receipt:
         model_hash=msg.model_hash,
         output=tuple(msg.output),
         nonce=msg.nonce,
+        protocol_version=msg.protocol_version,
+        mission_id=msg.mission_id,
+        mission_epoch=msg.mission_epoch,
+        sequence=msg.sequence,
+        runtime_hash=msg.runtime_hash,
+        action_frame=msg.action_frame,
+        valid_for_ns=msg.valid_for_ns,
+        pose_enu=tuple(msg.pose_enu),
+        pose_timestamp_ns=msg.pose_timestamp_ns,
+        pose_uncertainty_m=msg.pose_uncertainty_m,
     )
 
 

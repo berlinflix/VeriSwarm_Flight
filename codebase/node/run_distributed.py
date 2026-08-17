@@ -15,7 +15,8 @@ peer verification + tally) and the decisions, into
 results/distributed_latency.csv and results/distributed_decisions.csv.
 
 The peers are placed in the co-visible formation measured in the real flight
-(~14 m altitude, 3 m spacing), so the C2 gate genuinely engages on the patch.
+(~14 m altitude, preflight-validated ring), so the C2 gate genuinely engages
+only when the configured camera poses satisfy both overlap and parallax.
 
 Run (after `pip install grpcio` if needed):
     python -m node.run_distributed
@@ -47,16 +48,13 @@ def swarm_ids(n: int):
     return DRONE_NAMES[:n] if n <= len(DRONE_NAMES) else [f"drone{i}" for i in range(n)]
 
 
-def covisible_formation(ids, alt: float = 14.0, spacing: float = 3.0):
-    """Place the originator at the centre and peers symmetrically around it, all
-    within one altitude's worth of separation so every peer is co-visible."""
-    offs = [0.0]
-    y = spacing
-    while len(offs) < len(ids):
-        offs.append(y)
-        offs.append(-y)
-        y += spacing
-    return {nid: (0.0, offs[i], alt, 0.0) for i, nid in enumerate(ids)}
+def covisible_formation(ids, alt: float = 14.0, spacing: float = 5.5):
+    """Backward-compatible name for the inward-facing mission ring.
+
+    ``spacing`` is retained for callers but now means ring radius. The previous
+    line formation silently failed angular diversity.
+    """
+    return common.ring_formation(ids, radius_m=spacing, altitude_m=alt)
 
 
 def _alloc_ports(manifest: dict) -> None:
@@ -70,11 +68,13 @@ def _alloc_ports(manifest: dict) -> None:
 
 @contextmanager
 def peer_servers(manifest: dict, peer_ids, tag: str):
-    mpath = Path(tempfile.gettempdir()) / f"veriswarm_manifest_{tag}.json"
-    common.save_manifest(manifest, mpath)
+    manifest_paths = {}
     procs, logs = [], []
     try:
         for pid in peer_ids:
+            mpath = Path(tempfile.gettempdir()) / f"veriswarm_manifest_{tag}_{pid}.json"
+            common.save_manifest(common.manifest_for_node(manifest, pid), mpath)
+            manifest_paths[pid] = mpath
             log = open(Path(tempfile.gettempdir()) / f"veriswarm_{tag}_{pid}.log", "w")
             logs.append(log)
             procs.append(subprocess.Popen(
@@ -92,6 +92,11 @@ def peer_servers(manifest: dict, peer_ids, tag: str):
                 p.kill()
         for log in logs:
             log.close()
+        for mpath in manifest_paths.values():
+            try:
+                mpath.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _dec(n, scenario, observed, expected):
@@ -111,7 +116,10 @@ def run(sizes=(3, 5, 7), rounds: int = 30) -> None:
 
         # --- honest + model_swap share one server set (honest observations) ---
         obs = {nid: [0.1, 0.0, 0.0] for nid in ids}
-        man = common.generate_manifest(ids, poses=poses, observations=obs)
+        man = common.generate_manifest(
+            ids, poses=poses, observations=obs, phi_min=23.0
+        )
+        common.assert_covisible_formation(man, originator)
         _alloc_ports(man)
         with peer_servers(man, peers, f"n{n}_h"):
             orig = Originator(man, originator, peers)
@@ -138,7 +146,10 @@ def run(sizes=(3, 5, 7), rounds: int = 30) -> None:
         # --- adversarial patch: peers observe an avoidance action alpha missed ---
         obs2 = {originator: [1.0, 0.0, 0.0]}
         obs2.update({p: [0.0, 0.0, 1.0] for p in peers})
-        man2 = common.generate_manifest(ids, poses=poses, observations=obs2)
+        man2 = common.generate_manifest(
+            ids, poses=poses, observations=obs2, phi_min=23.0
+        )
+        common.assert_covisible_formation(man2, originator)
         _alloc_ports(man2)
         with peer_servers(man2, peers, f"n{n}_p"):
             orig2 = Originator(man2, originator, peers)

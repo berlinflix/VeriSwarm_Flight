@@ -10,12 +10,13 @@ because the thing on screen is a security claim.
 from __future__ import annotations
 
 import json
+import random
 import threading
 
 import pytest
 
 from node import events as ev
-from node.events import EventLog, follow, read_events
+from node.events import EventLog, follow, read_events, verify_event_chain
 from node.frame_source import FileSource, StaticSource, frame_bytes, frame_hash
 from protocol.geometry import Pose
 
@@ -41,6 +42,36 @@ def test_seq_is_monotonic(tmp_path):
     for _ in range(5):
         log.log("x")
     assert [e["seq"] for e in read_events(tmp_path / "e.jsonl")] == [1, 2, 3, 4, 5]
+
+
+def test_two_writer_instances_share_one_sequence(tmp_path):
+    path = tmp_path / "e.jsonl"
+    a = EventLog(path)
+    b = EventLog(path)
+    a.log("a")
+    b.log("b")
+    assert [e["seq"] for e in read_events(path)] == [1, 2]
+
+
+def test_event_hash_chain_and_reserved_fields(tmp_path):
+    path = tmp_path / "e.jsonl"
+    log = EventLog(path)
+    first = log.emit(ev.LOG, seq=99, t=0, message="first")
+    second = log.log("second")
+    assert first["seq"] == 1
+    assert first["type"] == ev.LOG
+    assert second["prev_hash"] == first["event_hash"]
+    assert verify_event_chain(path) == (True, "ok")
+
+
+def test_event_chain_detects_tampering(tmp_path):
+    path = tmp_path / "e.jsonl"
+    EventLog(path).log("original")
+    text = path.read_text(encoding="utf-8").replace("original", "tampered")
+    path.write_text(text, encoding="utf-8")
+    ok, reason = verify_event_chain(path)
+    assert not ok
+    assert reason.startswith("event_hash_mismatch")
 
 
 def test_emit_never_raises_on_an_unwritable_path(tmp_path):
@@ -264,6 +295,24 @@ def test_missing_depth_returns_none_not_an_error(tmp_path):
     assert source.depth() is None
 
 
+def test_every_mock_scenario_respects_verdict_invariants(tmp_path):
+    from tools.mock_events import SCENARIOS
+
+    for name, scenario in SCENARIOS.items():
+        path = tmp_path / f"{name}.jsonl"
+        log = EventLog(path, truncate=True)
+        scenario(log, 3 if name == "patch" else 1, 1e9, random.Random(7))
+        assert verify_event_chain(path) == (True, "ok")
+        verdicts = [e for e in read_events(path) if e["type"] == "verdict"]
+        assert verdicts
+        assert all(0 <= e["semantic_acks"] <= e["acks"] for e in verdicts)
+        safe_actions = [e for e in read_events(path) if e["type"] == "safe_action"]
+        assert all(
+            not (e["semantic_acks"] == 0 and e["action"] == "EXECUTE")
+            for e in safe_actions
+        )
+
+
 def test_static_source_repeats_one_frame():
     frame = np.zeros((8, 8, 3), dtype=np.uint8)
     source = StaticSource(frame, fixed_pose=Pose(0, 0, 10))
@@ -288,11 +337,21 @@ def test_frame_hash_is_stable_and_content_addressed():
     assert len(frame_hash(a)) == 64
 
 
-def test_frame_bytes_uses_the_raw_buffer():
+def test_frame_bytes_binds_raw_pixels_and_metadata():
     """
     Not a re-encode: JPEG compression varies across library versions and quality
     settings, so two nodes hashing the same frame could disagree. The raw buffer
     is exactly what the detector consumed.
     """
     frame = np.arange(48, dtype=np.uint8).reshape(4, 4, 3)
-    assert frame_bytes(frame) == frame.tobytes()
+    canonical = frame_bytes(frame)
+    assert canonical.endswith(frame.tobytes())
+    assert canonical.startswith(b"VSFRAME1")
+
+
+def test_frame_hash_binds_shape_dtype_and_colour_space():
+    raw = np.arange(48, dtype=np.uint8)
+    a = raw.reshape(4, 4, 3)
+    b = raw.reshape(2, 8, 3)
+    assert frame_hash(a) != frame_hash(b)
+    assert frame_hash(a, color_space="BGR") != frame_hash(a, color_space="RGB")

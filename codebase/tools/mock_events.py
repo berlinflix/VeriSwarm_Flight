@@ -23,8 +23,8 @@ provisioning  a compromised ground station flashed bravo AND charlie
 
 Every scenario emits the same event types in the same shapes as the real nodes.
 The numbers are drawn from the measured results in `results/` so the console is
-laid out for values it will actually see -- consensus latencies in the 6-19 ms
-band, OP-TEE signing at 4.68 ms, reputation decaying at beta = 0.2.
+laid out for values it will actually see. The OP-TEE value uses the deployed
+per-receipt path (process + session + signature), not the persistent microbench.
 """
 
 from __future__ import annotations
@@ -46,14 +46,14 @@ SWARM = ["alpha", "bravo", "charlie", "delta", "echo"]
 RING_RADIUS_M = 5.5
 RING_ALT_M = 14.0
 
-#: Measured on the Jetson's secure element (Table 4.2).
-OPTEE_SIGN_MS = 4.68
+#: Measured distributed path on the Jetson (results/distributed_hw.csv).
+OPTEE_SIGN_MS = 33.97
 SOFTWARE_SIGN_MS = 0.19
 
 APPROVED_HASH = "ab12cd34" + "0" * 56
 TAMPERED_HASH = "ff99ee88" + "0" * 56
 
-CLEAR_PATH = [1.0, 0.0, 0.0]      # no detections -> full forward. The crash.
+CLEAR_PATH = [1.0, 0.0, 0.0]      # malicious/unsafe controller request
 AVOIDING = [0.0, 0.0, 1.0]        # obstacle seen -> climb over it
 
 
@@ -170,8 +170,8 @@ def scenario_patch(log: EventLog, rounds: int, rate: float, rng) -> None:
         # Alpha's own rangefinder contradicts its detector -- no peers needed.
         if attacking:
             log.depth("alpha", Check(
-                True, 7.9, 11.5, 1.0, "contradiction",
-                "CONTRADICTION: commanded forward=1.00 needs 11.5 m clear, "
+                True, 7.9, 9.5, 1.0, "contradiction",
+                "CONTRADICTION: commanded forward=1.00 needs 9.5 m clear, "
                 "but the nearest surface is at 7.9 m"))
         else:
             log.depth("alpha", Check(False, 34.2, 1.5, 0.0, "consistent",
@@ -187,8 +187,8 @@ def scenario_patch(log: EventLog, rounds: int, rate: float, rng) -> None:
                          delta=round(rng.uniform(0.01, 0.09), 3))
 
         if attacking:
-            _peer_verdicts(log, "alpha", "REJECTED", 0, 4, 4, rng)
-            log.safe_action("alpha", "SAFE_FALLBACK", "REJECTED", 4)
+            _peer_verdicts(log, "alpha", "REJECTED", 0, 4, 0, rng)
+            log.safe_action("alpha", "SAFE_FALLBACK", "REJECTED", 0)
             rejected += 1
         else:
             _peer_verdicts(log, "alpha", "ACCEPTED", 4, 0, 4, rng)
@@ -244,7 +244,8 @@ def scenario_collusion(log: EventLog, rounds: int, rate: float, rng) -> None:
     """
     Two colluders ACK a patched receipt. At N=5 the integer quorum is untouched:
     T_acc = 3 is out of reach for two ACKs, and two honest DISPUTEs clear
-    T_rej = 2. Reputation drives the colluders to the floor in about four rounds.
+    T_rej = 2. Reputation reaches 0.2 after four penalties and the 0.1 floor
+    after five.
     """
     colluders = {"delta", "echo"}
     reputations = {n: 1.0 for n in SWARM}
@@ -255,7 +256,7 @@ def scenario_collusion(log: EventLog, rounds: int, rate: float, rng) -> None:
             log.attack("collude", True, sorted(colluders))
         log.receipt("alpha", CLEAR_PATH, APPROVED_HASH, f"{r:064x}",
                     "optee", OPTEE_SIGN_MS, round_index=r)
-        log.depth("alpha", Check(True, 7.9, 11.5, 1.0, "contradiction",
+        log.depth("alpha", Check(True, 7.9, 9.5, 1.0, "contradiction",
                                  "CONTRADICTION: nearest surface at 7.9 m"))
         for peer in SWARM[1:]:
             log.covisibility(peer, "alpha", covisible_diag())
@@ -264,8 +265,8 @@ def scenario_collusion(log: EventLog, rounds: int, rate: float, rng) -> None:
             else:
                 log.vote(peer, "alpha", "DISPUTE", "semantic_disagreement",
                          delta=round(rng.uniform(1.35, 1.45), 3))
-        _peer_verdicts(log, "alpha", "REJECTED", 2, 2, 4, rng)
-        log.safe_action("alpha", "SAFE_FALLBACK", "REJECTED", 4)
+        _peer_verdicts(log, "alpha", "REJECTED", 2, 2, 2, rng)
+        log.safe_action("alpha", "SAFE_FALLBACK", "REJECTED", 2)
         for node in SWARM:
             if node in colluders:
                 reputations[node] = max(0.1, reputations[node] - 0.2)
@@ -290,7 +291,7 @@ def scenario_unverified(log: EventLog, rounds: int, rate: float, rng) -> None:
             log.pose(node, [i * 90.0, 0.0, RING_ALT_M])  # strung out, no overlap
         log.receipt("alpha", CLEAR_PATH, APPROVED_HASH, f"{r:064x}",
                     "optee", OPTEE_SIGN_MS, round_index=r)
-        log.depth("alpha", Check(True, 8.1, 11.5, 1.0, "contradiction",
+        log.depth("alpha", Check(True, 8.1, 9.5, 1.0, "contradiction",
                                  "CONTRADICTION: nearest surface at 8.1 m"))
         for peer in SWARM[1:]:
             log.covisibility(peer, "alpha", Diag(
@@ -298,8 +299,8 @@ def scenario_unverified(log: EventLog, rounds: int, rate: float, rng) -> None:
                 detail="NOT co-visible: o=0.000 < 0.1, no frames for the image fallback"))
             log.vote(peer, "alpha", "ACK", "ok_no_covisibility")
         _peer_verdicts(log, "alpha", "ACCEPTED", 4, 0, 0, rng)
-        log.safe_action("alpha", "EXECUTE_DEGRADED", "ACCEPTED", 0)
-        log.log("ACCEPTED with no semantic verification -- flying degraded",
+        log.safe_action("alpha", "DEFER", "ACCEPTED", 0)
+        log.log("ACCEPTED cryptographically but no semantic quorum -- HOLD",
                 level="warn")
         log.round_end(r)
         time.sleep(1.0 / rate)

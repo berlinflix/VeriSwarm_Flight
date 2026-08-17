@@ -33,6 +33,7 @@ prefer a depth image over a single beam where you can.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -41,9 +42,13 @@ from typing import Optional, Sequence
 #: vehicle's speed scale.
 DEFAULT_MAX_SPEED_MPS = 5.0
 
-#: Seconds of travel that must be clear ahead. Covers the sense-decide-act loop
-#: plus deceleration; at 2 Hz attestation rounds, 2 s is four rounds of margin.
-DEFAULT_LOOKAHEAD_S = 2.0
+#: Worst-case delay from the range exposure until a braking command begins.
+#: This must be replaced by a measured WCET bound for the deployed aircraft.
+DEFAULT_REACTION_TIME_S = 0.35
+
+#: Conservative guaranteed deceleration on the weakest permitted battery and
+#: worst permitted mass, wind, attitude, and propeller condition.
+DEFAULT_MAX_DECEL_MPS2 = 2.0
 
 #: Clearance required regardless of speed, m. Keeps the check meaningful for
 #: near-hover commands, where the speed-scaled term goes to zero.
@@ -59,10 +64,11 @@ class FreeSpaceCheck:
     measured_range_m: Optional[float]
     required_clear_m: float
     reason: str
+    safe_to_proceed: bool
 
     def describe(self) -> str:
         if self.measured_range_m is None:
-            return f"depth unavailable ({self.reason}); no conclusion drawn"
+            return f"depth unavailable ({self.reason}); STOP — clearance unproven"
         if self.contradicted:
             return (
                 f"CONTRADICTION: commanded forward={self.commanded_forward:.2f} "
@@ -78,17 +84,47 @@ class FreeSpaceCheck:
 def required_clearance(
     forward: float,
     max_speed_mps: float = DEFAULT_MAX_SPEED_MPS,
-    lookahead_s: float = DEFAULT_LOOKAHEAD_S,
     stop_margin_m: float = DEFAULT_STOP_MARGIN_M,
+    *,
+    current_speed_mps: Optional[float] = None,
+    reaction_time_s: float = DEFAULT_REACTION_TIME_S,
+    max_decel_mps2: float = DEFAULT_MAX_DECEL_MPS2,
 ) -> float:
     """
     Range that must be clear for a given forward command to be defensible.
 
-    Linear in commanded speed plus a fixed margin. Deliberately simple: this is a
-    consistency check on a claim, not a flight-control law, and a rule an operator
-    can compute in their head is one they will actually trust when it fires.
+    Uses a conservative reaction-plus-braking envelope::
+
+        margin + v * reaction_time + v**2 / (2 * guaranteed_deceleration)
+
+    The speed is the greater of measured current speed and speed implied by the
+    new command. This prevents a zero-forward command from declaring the path
+    safe while the aircraft is still moving quickly.
     """
-    return stop_margin_m + max(0.0, forward) * max_speed_mps * lookahead_s
+    parameters = (
+        float(forward),
+        float(max_speed_mps),
+        float(stop_margin_m),
+        float(reaction_time_s),
+        float(max_decel_mps2),
+    )
+    if not all(math.isfinite(value) for value in parameters):
+        raise ValueError("clearance inputs must be finite")
+    if max_speed_mps < 0.0 or stop_margin_m < 0.0 or reaction_time_s < 0.0:
+        raise ValueError("speed, margin, and reaction time must be non-negative")
+    if max_decel_mps2 <= 0.0:
+        raise ValueError("max_decel_mps2 must be positive")
+    commanded_speed = max(0.0, min(1.0, forward)) * max_speed_mps
+    measured_speed_value = float(current_speed_mps or 0.0)
+    if not math.isfinite(measured_speed_value) or measured_speed_value < 0.0:
+        raise ValueError("current_speed_mps must be finite and non-negative")
+    measured_speed = measured_speed_value
+    speed = max(commanded_speed, measured_speed)
+    return (
+        stop_margin_m
+        + speed * reaction_time_s
+        + (speed * speed) / (2.0 * max_decel_mps2)
+    )
 
 
 def check_free_space(
@@ -96,8 +132,10 @@ def check_free_space(
     measured_range_m: Optional[float],
     *,
     max_speed_mps: float = DEFAULT_MAX_SPEED_MPS,
-    lookahead_s: float = DEFAULT_LOOKAHEAD_S,
     stop_margin_m: float = DEFAULT_STOP_MARGIN_M,
+    current_speed_mps: Optional[float] = None,
+    reaction_time_s: float = DEFAULT_REACTION_TIME_S,
+    max_decel_mps2: float = DEFAULT_MAX_DECEL_MPS2,
     min_valid_m: float = 0.1,
     max_valid_m: float = 100.0,
 ) -> FreeSpaceCheck:
@@ -114,13 +152,24 @@ def check_free_space(
     check exists to prevent.
     """
     forward = float(action[0]) if len(action) else 0.0
-    required = required_clearance(forward, max_speed_mps, lookahead_s, stop_margin_m)
+    if not math.isfinite(forward) or not -1.0 <= forward <= 1.0:
+        raise ValueError("forward action must be finite and in [-1, 1]")
+    required = required_clearance(
+        forward,
+        max_speed_mps,
+        stop_margin_m,
+        current_speed_mps=current_speed_mps,
+        reaction_time_s=reaction_time_s,
+        max_decel_mps2=max_decel_mps2,
+    )
 
     if measured_range_m is None:
-        return FreeSpaceCheck(False, forward, None, required, "no_reading")
+        return FreeSpaceCheck(False, forward, None, required, "no_reading", False)
     measured = float(measured_range_m)
-    if not (min_valid_m <= measured <= max_valid_m):
-        return FreeSpaceCheck(False, forward, None, required, "reading_out_of_range")
+    if not math.isfinite(measured) or not (min_valid_m <= measured <= max_valid_m):
+        return FreeSpaceCheck(
+            False, forward, None, required, "reading_out_of_range", False
+        )
 
     return FreeSpaceCheck(
         contradicted=measured < required,
@@ -128,6 +177,7 @@ def check_free_space(
         measured_range_m=measured,
         required_clear_m=required,
         reason="contradiction" if measured < required else "consistent",
+        safe_to_proceed=measured >= required,
     )
 
 
@@ -135,7 +185,8 @@ def nearest_range(
     depth_image,
     *,
     roi_fraction: float = 0.5,
-    percentile: float = 5.0,
+    percentile: Optional[float] = None,
+    support_pixels: int = 4,
     min_valid_m: float = 0.1,
     max_valid_m: float = 100.0,
 ) -> Optional[float]:
@@ -151,11 +202,10 @@ def nearest_range(
     being checked is about the path ahead and the frame edges see ground and sky
     that would dominate a whole-frame minimum.
 
-    `percentile` is used instead of a hard minimum. A single hot pixel — sensor
-    noise, a rain streak, an interpolation artefact at a depth discontinuity —
-    would otherwise report an obstacle centimetres away and cry wolf on every
-    frame. The 5th percentile keeps the answer "near" while requiring a coherent
-    patch of pixels to agree.
+    By default the result is the ``support_pixels``-th nearest valid sample. A
+    single hot pixel therefore cannot trigger a stop, while a small four-pixel
+    obstacle is not erased by a whole-ROI percentile. Callers may explicitly
+    select a percentile for a sensor whose noise model has been calibrated.
 
     Returns None when no valid depth remains, which `check_free_space` treats as
     no measurement rather than as clear space.
@@ -178,4 +228,11 @@ def nearest_range(
     valid = roi[np.isfinite(roi) & (roi >= min_valid_m) & (roi <= max_valid_m)]
     if valid.size == 0:
         return None
-    return float(np.percentile(valid, percentile))
+    if percentile is not None:
+        if not 0.0 <= percentile <= 100.0:
+            raise ValueError("percentile must be in [0, 100]")
+        return float(np.percentile(valid, percentile))
+    if support_pixels < 1:
+        raise ValueError("support_pixels must be >= 1")
+    rank = min(int(support_pixels), int(valid.size)) - 1
+    return float(np.partition(valid, rank)[rank])

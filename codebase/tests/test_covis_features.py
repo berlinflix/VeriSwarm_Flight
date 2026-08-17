@@ -140,6 +140,21 @@ def test_fallback_catches_patch_under_spoof():
     assert vote.vote.reason == "semantic_disagreement"
 
 
+def test_feature_overlap_cannot_bypass_required_angular_diversity():
+    """ORB can establish a shared scene, but it cannot prove camera baseline."""
+    pv, signed, bravo_obs = _patched_setup()
+    pv._phi_min = 23.0
+    vote = pv.vote_on(
+        signed, my_observation=bravo_obs,
+        my_pose=Pose(100.0, 0.0, 14.0),
+        originator_pose=Pose(0.0, 0.0, 14.0),
+        my_frame=SIM_B, originator_frame=SIM_A,
+    )
+    assert vote.vote.decision is Vote.ACK
+    assert vote.vote.reason == "ok_no_covisibility"
+    assert pv.last_covis.method == "features_no_parallax"
+
+
 def test_no_frames_no_fallback_abstains():
     """Spoofed pose with no frames: geometric gate abstains (the vulnerability)."""
     pv, signed, bravo_obs = _patched_setup()
@@ -176,3 +191,18 @@ def test_geometric_gate_still_primary():
         originator_pose=Pose(0.0, 0.0, 14.0),
     )
     assert vote.vote.decision is Vote.DISPUTE
+
+
+@pytest.mark.skipif(BUS is None, reason="ultralytics assets not found")
+def test_claimed_geometric_overlap_does_not_bypass_conflicting_frames():
+    """When frames exist, a pose claim alone cannot activate semantic comparison."""
+    pv, signed, bravo_obs = _patched_setup()
+    vote = pv.vote_on(
+        signed, my_observation=bravo_obs,
+        my_pose=Pose(3.0, 0.0, 14.0),
+        originator_pose=Pose(0.0, 0.0, 14.0),
+        my_frame=BUS, originator_frame=SIM_A,
+    )
+    assert vote.vote.decision is Vote.ACK
+    assert vote.vote.reason == "ok_no_covisibility"
+    assert pv.last_covis.method == "geometry+features"

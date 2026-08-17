@@ -53,17 +53,22 @@ def detections_to_action(
     k_forward: float = 3.0,
     k_lateral: float = 3.0,
     k_vertical: float = 2.5,
+    *,
+    free_space_confirmed: bool = False,
 ) -> Action:
     """
     Deterministic reactive avoidance: large, central, confident detections ahead
     push the action toward slowing down, steering away, and climbing over.
 
-    An empty detection set (a clear path, or a detector fooled into missing the
-    obstacle) yields full forward, which is exactly why a patched drone's action
-    diverges from peers that still see the obstacle.
+    Object-detector silence is ambiguous: it can mean clear space, but also a
+    failed/covered camera, darkness, blur, an unsupported obstacle, or a
+    successful evasion attack. It therefore yields a zero-motion command unless
+    a separate, independent free-space sensor has positively confirmed the
+    corridor. The caller must make that evidence explicit with
+    ``free_space_confirmed=True``; YOLO absence alone never authorises motion.
     """
     if not dets:
-        return (1.0, 0.0, 0.0)
+        return (1.0, 0.0, 0.0) if free_space_confirmed else (0.0, 0.0, 0.0)
 
     tx = ty = mass = 0.0
     for d in dets:
@@ -75,7 +80,7 @@ def detections_to_action(
         mass += weight
 
     if mass <= 0.0:
-        return (1.0, 0.0, 0.0)
+        return (0.0, 0.0, 0.0)
 
     cx, cy = tx / mass, ty / mass
     threat = min(1.0, mass)
@@ -117,9 +122,18 @@ def frame_to_detections(frame, model, conf: float = 0.25) -> List[Detection]:
     return dets
 
 
-def frame_to_action(frame, model, conf: float = 0.25) -> Action:
+def frame_to_action(
+    frame,
+    model,
+    conf: float = 0.25,
+    *,
+    free_space_confirmed: bool = False,
+) -> Action:
     """Full perception step: camera frame -> detections -> action vector."""
-    return detections_to_action(frame_to_detections(frame, model, conf))
+    return detections_to_action(
+        frame_to_detections(frame, model, conf),
+        free_space_confirmed=free_space_confirmed,
+    )
 
 
 def apply_patch(frame, patch, top_left: Tuple[int, int]):

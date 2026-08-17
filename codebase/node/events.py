@@ -35,10 +35,12 @@ change a consensus decision.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import threading
 import time
-from itertools import count
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
@@ -68,9 +70,66 @@ EVENT_TYPES = frozenset({
 })
 
 
+@contextmanager
+def _exclusive_file_lock(path: Path):
+    """Cross-process advisory lock used to allocate sequence numbers safely."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as lock_file:
+        if os.name == "nt":
+            import msvcrt
+
+            lock_file.seek(0)
+            if lock_file.tell() == 0 and path.stat().st_size == 0:
+                lock_file.write(b"0")
+                lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def now_ms() -> int:
     """Wall-clock milliseconds. Every event carries one as `t`."""
     return time.time_ns() // 1_000_000
+
+
+def _last_complete_event(path: Path) -> Optional[dict]:
+    """Read the newest valid JSONL record by scanning backward from EOF."""
+    if not path.is_file() or path.stat().st_size == 0:
+        return None
+    with path.open("rb") as fh:
+        position = fh.seek(0, os.SEEK_END)
+        buffer = b""
+        while position > 0:
+            take = min(4096, position)
+            position -= take
+            fh.seek(position)
+            buffer = fh.read(take) + buffer
+            lines = buffer.split(b"\n")
+            # The first item may be partial until position reaches zero. All
+            # later items are complete records; walk newest to oldest.
+            candidates = lines if position == 0 else lines[1:]
+            for raw in reversed(candidates):
+                if not raw.strip():
+                    continue
+                try:
+                    event = json.loads(raw)
+                    return event if isinstance(event, dict) else None
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+            buffer = lines[0]
+    return None
 
 
 class EventLog:
@@ -95,11 +154,14 @@ class EventLog:
         mirror: Optional[Callable[[dict], None]] = None,
     ):
         self.path = Path(path)
+        self._lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if truncate and self.path.exists():
-            self.path.unlink()
         self._lock = threading.Lock()
-        self._seq = count(1)
+        with _exclusive_file_lock(self._lock_path):
+            if truncate and self.path.exists():
+                self.path.unlink()
+            last = _last_complete_event(self.path)
+            self._next_seq = int(last.get("seq", 0)) + 1 if last else 1
         self._subscribers: List[Callable[[dict], None]] = []
         if mirror is not None:
             self._subscribers.append(mirror)
@@ -116,17 +178,57 @@ class EventLog:
         Never raises. A telemetry failure must not propagate into the consensus
         path that called it.
         """
-        event: Dict[str, Any] = {"seq": next(self._seq), "t": now_ms(), "type": type}
-        event.update(fields)
-        line = json.dumps(event, separators=(",", ":"), default=str)
-
         with self._lock:
             try:
-                with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(line + "\n")
-                    fh.flush()
-            except OSError:
-                pass
+                with _exclusive_file_lock(self._lock_path):
+                    last = _last_complete_event(self.path)
+                    last_seq = int(last.get("seq", 0)) if last else 0
+                    seq = max(self._next_seq, last_seq + 1)
+                    previous_hash = str(last.get("event_hash", "")) if last else ""
+                    # Reserved fields always win. A caller cannot forge ordering
+                    # or event type by smuggling them through **fields.
+                    payload: Dict[str, Any] = {
+                        k: v for k, v in fields.items()
+                        if k not in {"seq", "t", "type", "prev_hash", "event_hash"}
+                    }
+                    payload.update({
+                        "seq": seq,
+                        "t": now_ms(),
+                        "type": type,
+                        "prev_hash": previous_hash,
+                    })
+                    canonical = json.dumps(
+                        payload,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                        allow_nan=False,
+                        default=str,
+                    ).encode("utf-8")
+                    event = dict(payload)
+                    event["event_hash"] = hashlib.sha256(canonical).hexdigest()
+                    line = json.dumps(
+                        event,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                        allow_nan=False,
+                    )
+                    with self.path.open("a", encoding="utf-8") as fh:
+                        fh.write(line + "\n")
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    self._next_seq = seq + 1
+            except (OSError, TypeError, ValueError):
+                # Keep telemetry out of the decision path. Return a diagnostic
+                # object to in-process subscribers even when persistence fails.
+                event = {
+                    "seq": self._next_seq,
+                    "t": now_ms(),
+                    "type": LOG,
+                    "level": "error",
+                    "message": "event_persistence_failed",
+                }
             subscribers = list(self._subscribers)
 
         for fn in subscribers:
@@ -216,6 +318,7 @@ class EventLog:
             nearest_m=check.measured_range_m,
             required_m=round(check.required_clear_m, 2),
             commanded_forward=round(check.commanded_forward, 3),
+            safe_to_proceed=getattr(check, "safe_to_proceed", False),
             reason=check.reason, detail=check.describe(), **extra,
         )
 
@@ -255,6 +358,39 @@ def read_events(path: str | Path = DEFAULT_EVENT_LOG) -> List[dict]:
     return events
 
 
+def verify_event_chain(path: str | Path = DEFAULT_EVENT_LOG) -> tuple[bool, str]:
+    """Verify sequence continuity and the append hash chain.
+
+    This detects corruption, deletion, reordering, and ordinary tampering. A
+    separately signed final hash is still required to resist an attacker who can
+    rewrite the complete log and recompute every hash.
+    """
+    previous_hash = ""
+    expected_seq = 1
+    for event in read_events(path):
+        if event.get("seq") != expected_seq:
+            return False, f"sequence_gap:expected={expected_seq},got={event.get('seq')}"
+        if event.get("prev_hash", "") != previous_hash:
+            return False, f"previous_hash_mismatch:seq={expected_seq}"
+        claimed = event.get("event_hash")
+        if not isinstance(claimed, str):
+            return False, f"missing_event_hash:seq={expected_seq}"
+        payload = {k: v for k, v in event.items() if k != "event_hash"}
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+        actual = hashlib.sha256(canonical).hexdigest()
+        if actual != claimed:
+            return False, f"event_hash_mismatch:seq={expected_seq}"
+        previous_hash = claimed
+        expected_seq += 1
+    return True, "ok"
+
+
 def follow(
     path: str | Path = DEFAULT_EVENT_LOG,
     *,
@@ -281,6 +417,8 @@ def follow(
         if not p.exists():
             time.sleep(poll_s)
             continue
+        if p.stat().st_size < pos:
+            pos = 0  # file was rotated/truncated between polls
         with p.open("r", encoding="utf-8") as fh:
             fh.seek(pos)
             for line in fh:

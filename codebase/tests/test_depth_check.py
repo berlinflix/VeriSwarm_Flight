@@ -25,7 +25,8 @@ from perception.depth_check import (
 
 np = pytest.importorskip("numpy")
 
-#: What a patched detector emits: no detections -> full forward.
+#: An unsafe or compromised upstream controller may still request full forward;
+#: the independent range gate must reject that command when clearance is short.
 FOOLED_ACTION = (1.0, 0.0, 0.0)
 #: What an honest detector emits facing the same obstacle.
 AVOIDING_ACTION = (0.0, 0.0, 1.0)
@@ -81,7 +82,14 @@ def test_invalid_readings_draw_no_conclusion(reading):
     assert not result.contradicted
     assert result.measured_range_m is None
     assert result.reason in ("no_reading", "reading_out_of_range")
-    assert "no conclusion" in result.describe()
+    assert not result.safe_to_proceed
+    assert "STOP" in result.describe()
+
+
+def test_current_speed_is_included_even_after_forward_command_drops_to_zero():
+    stopped = required_clearance(0.0, current_speed_mps=0.0)
+    still_moving = required_clearance(0.0, current_speed_mps=5.0)
+    assert still_moving > stopped
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +123,12 @@ def test_single_hot_pixel_does_not_trigger_a_false_alarm():
     assert nearest_range(depth) > 30.0
 
 
+def test_small_supported_obstacle_is_not_erased_by_roi_percentile():
+    depth = np.full((80, 120), 40.0)
+    depth[39:41, 59:61] = 4.0
+    assert nearest_range(depth) == pytest.approx(4.0)
+
+
 def test_all_invalid_depth_returns_none():
     depth = np.full((40, 40), np.nan)
     assert nearest_range(depth) is None
@@ -126,3 +140,22 @@ def test_depth_image_end_to_end_catches_the_patch():
     depth[25:55, 40:80] = 7.0
     result = check_free_space(FOOLED_ACTION, nearest_range(depth))
     assert result.contradicted
+
+
+@pytest.mark.parametrize(
+    "action,measured,speed,raises",
+    [
+        ((float("nan"), 0.0, 0.0), 10.0, 0.0, True),
+        ((0.5, 0.0, 0.0), float("nan"), 0.0, False),
+        ((0.5, 0.0, 0.0), 10.0, float("nan"), True),
+    ],
+)
+def test_nonfinite_clearance_inputs_never_produce_safe(
+    action, measured, speed, raises
+):
+    if raises:
+        with pytest.raises(ValueError):
+            check_free_space(action, measured, current_speed_mps=speed)
+    else:
+        result = check_free_space(action, measured, current_speed_mps=speed)
+        assert not result.safe_to_proceed

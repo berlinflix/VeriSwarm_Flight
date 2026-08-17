@@ -20,9 +20,10 @@ infrastructure, or anyone's task. Newest at the top, directly under this section
 **Everyone else** reads the top of this file before starting work each day. If an entry says
 your section of the plan is stale, the entry is what you build — not the plan.
 
-**Claude** reads this file first, before the build plan, at the start of every session. When
-an entry is fully folded into `SIH_2026_Build_Plan.md`, mark it `FOLDED` rather than
-deleting it — the history of why something changed is worth keeping.
+**Every collaborator or coding assistant** reads this file first, before the build plan, at
+the start of every session. When an entry is fully folded into
+`SIH_2026_Build_Plan.md`, mark it `FOLDED` rather than deleting it — the history of why
+something changed is worth keeping.
 
 ### Entry template — copy this
 
@@ -41,12 +42,98 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
-### 2026-08-18 — Formation geometry: 3 m spacing is dead, use a 5.5 m ring
-**Status:** OPEN
-**Changed:** peers no longer fly at the 3 m / 6 m offsets the plan specifies. The formation
-is now **N = 5 on a ring of radius 5.5 m at 14 m altitude** — neighbours 6.5 m apart,
-skip-one pairs 10.5 m. A new mission parameter `phi_min = 23.0` (degrees) is enforced by
-the protocol.
+None as of 2026-08-18. Add the next OPEN entry directly below this line.
+
+## Recent folded overrides
+
+### 2026-08-18 — Role reset: CoSys AirSim on Samik and Pratik's PCs
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+
+**Changed:** CoSys AirSim is now the selected external simulator. **Pratik and Samik both
+run the same pinned project independently on their own PCs.** Pratik owns the world,
+camera/depth/pose truth, calibration, formation, and replay data. Samik owns simulated
+vehicle/SITL control, the supervisor-only command adapter, failsafes, deterministic reset,
+campaign automation, and evidence collection. **Abhijan now owns attack delivery and all
+adversarial campaigns**, not the simulator client or the primary console. Suyash owns the
+protocol/safety boundary, manifests/authority, adapter contracts, review, and final gates.
+
+**Makes stale:** the old M2 console/simulator-client assignment, the solo-M3 AirSim role,
+the unassigned M4/presentation role, the Mac-to-Pratik RPC plan, the AirSim-vs-Gazebo
+timebox, and all instructions that make Suyash implement the attack surface on Abhijan's
+behalf. It also replaces any unsafe “crash-vs-caught” acceptance gate with protected HOLD
+and a non-actuating shadow-path comparison.
+
+**Who must act:**
+
+- **M1 Suyash** — freeze the sensor/command interfaces, canonical five-node manifest,
+  authority separation, reason-code catalogue, and conformance tests; integrate only
+  through `MissionRunner` and `SafetySupervisor`; own gate acceptance and the runbook.
+- **M2 Abhijan** — implement real rogue, replay/duplicate, model/runtime/provisioning,
+  collusion/equivocation, network, sensor/time, resource-pressure, and 3-D scene attack
+  campaigns. Every campaign needs a machine-readable manifest, baseline, expected
+  invariant, real delivery boundary, cleanup, and retained raw evidence. Never set a
+  verdict/action directly.
+- **M3 Pratik** — export a pinned CoSys world/settings bundle; supply atomic timestamped
+  RGB + metric depth + calibrated pose/health; build/preflight the formation and physical
+  3-D patch/occluder; produce ground truth and replay datasets without leaking truth into
+  perception.
+- **M4 Samik** — reproduce the pinned CoSys setup independently; implement the
+  supervisor-only command sink, unit/frame/TTL validation, HOLD/LAND/watchdog behavior,
+  deterministic reset, repeated campaign runner, telemetry/video collection, and artifact
+  hashing. Configure and prove independent simulator/autopilot failsafes; a missing
+  collision barrier blocks the protected campaign gate.
+
+**Definition of done:** the same frozen scenario/seed list runs from a clean start on both
+simulator PCs; protected campaigns have zero collisions and no motion after expiry or an
+unsafe/unknown outcome; every result is traceable from sensor snapshot to receipt, votes,
+supervisor decision, adapter acknowledgement, and simulator telemetry. Differences between
+the two PCs are failures until explained and fixed.
+
+**Why:** the previous allocation had one simulator owner, an unfilled fourth role, and
+split the attack surface between people. The new split gives the high-risk sensor and
+control boundaries separate owners, makes reproduction on a second machine mandatory, and
+puts all attack truth/delivery under one accountable owner.
+
+### 2026-08-18 — Safety audit hardening; simulation is the current target
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+**Changed:** the executable safety contract is now fail-closed. Detector silence is HOLD
+unless independent free-space evidence is positive; an ACCEPTED receipt without semantic
+quorum is DEFER/HOLD; reputation cannot create a reject below the integer quorum; exact
+within-window replay and duplicate sequence numbers are rejected; signed equivocation is
+counted on neither side. Receipts are protocol-v2 and bind mission, epoch, sequence,
+runtime measurement, action frame/validity, and pose metadata. From `codebase/`, run
+`python -m sim.closed_loop` before any external simulator.
+
+`codebase/node/mission.py` is the only supported perception → consensus → command seam. It
+sends all output through `SafetySupervisor`. Static manifest observations, dummy frames,
+and direct consensus-to-PX4 commands are demonstration scaffolding and must not be
+described as a closed-loop mission.
+
+**Makes stale:** the unsafe collision run-of-show, `EXECUTE_DEGRADED`, 4.68 ms live OP-TEE
+latency, `semantic_acks` counts that included DISPUTEs, and any claim that the existing
+independent tally is formal Byzantine agreement.
+
+**Who must act:** M1 Suyash wires `MissionRunner` to the versioned simulator interfaces and
+audits the safety boundary. M2 Abhijan validates attack outcomes and
+`0 <= semantic_acks <= acks` from raw events. M3 Pratik supplies atomic synchronized
+RGB/depth/pose/health plus camera calibration. M4 Samik accepts commands only from
+`SafetySupervisor`, maps every non-release outcome to HOLD, and proves TTL/watchdog
+behavior. Everyone describes OP-TEE as key protection, not trusted inference.
+
+**Why:** the immediate deliverable is impeccable simulation. Simulation must exercise the
+same failure semantics required later on hardware rather than relying on injected actions
+or UI-only claims. See `codebase/SIMULATION_AND_FLIGHT_GATES.md`.
+
+### 2026-08-18 — Formation geometry: preflight the actual camera pose
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+**Changed:** peers no longer fly at the 3 m / 6 m offsets the plan specifies. A 5-node,
+5.5 m-radius ring at 14 m is only the **nadir-camera reference case** (zero pitch and
+roll). It is not a universal formation. Every run must use measured camera pitch/roll,
+FOV, altitude and pose uncertainty, then pass `common.assert_covisible_formation` before
+starting. A 35-degree inward pitch, for example, fails at 5.5 m in the current ground-plane
+model and needs replanning (10 m passes the model's current test). The mission parameter
+`phi_min = 23.0` is enforced for this experiment, but must be recalibrated for a different
+camera, scene, detector or threat model.
 
 Two bounds pin this, and both are real:
 * **Too close** and peers see the same scene from the same angle. One adversarial patch
@@ -54,19 +141,23 @@ Two bounds pin this, and both are real:
 * **Too far** and their camera footprints stop overlapping, so there is no shared scene to
   cross-check at all.
 
-The feasible band is `R ∈ [5.0, 6.0] m`; 5.5 sits in the middle with margin both ways
-(worst-pair overlap 0.14 against a 0.10 floor, worst-pair parallax 26° against a 23° floor).
-Verified by `tests/test_angular_diversity.py::test_feasible_radius_band`.
+For the five-node, 14 m, nadir-camera reference only, the simplified model's feasible band
+is `R ∈ [5.0, 6.0] m`; 5.5 sits in the middle. The pitch-sensitive counterexample is pinned
+by `codebase/tests/test_angular_diversity.py::test_tilted_camera_ring_is_replanned_from_actual_pitch`.
 
 **Makes stale:** the build plan's *"Peers at the measured 3 m and 6 m offsets (12° and 23°)"*
 in the patch section; M3's Week 3 `settings.json` task; every diagram showing a line-abreast
 formation.
 **Who must act:**
-* **M3 Pratik** — build the scene and `settings.json` for the ring, not a line. Do not
-  place peers at 3 m. Use `python -m node.common` helpers or copy the pose table from
-  `tests/test_angular_diversity.py`.
+* **M3 Pratik** — build the scene and `settings.json` for a preflighted formation, not a
+  line. Do not copy the 5.5 m reference unless the cameras are actually nadir. Supply
+  measured intrinsics and extrinsics.
 * **M1 Suyash** — set `phi_min` in every demo manifest.
-* **M2 Abhijan** — the swarm map is a ring now, not a row.
+* **M4 Samik** — load the exported formation on his independent CoSys installation,
+  preserve the calibrated frames in the control adapter, and block campaign start when
+  preflight fails.
+* **M2 Abhijan** — derive physical-scene attack placement from Pratik's accepted formation;
+  do not move vehicles or falsify poses to manufacture semantic disagreement.
 
 **Why:** 3 m at 14 m is only ~12° of parallax, which is **below** the angle at which
 Section 4.3 measured adversarial patches losing their grip. That is not a detail — it is the
@@ -76,22 +167,27 @@ guarantee overlap and nobody checked the other bound.
 
 ---
 
-### 2026-08-18 — Cameras have a pitch now; the nadir assumption was wrong
-**Status:** OPEN
-**Changed:** `protocol.geometry.Pose` gains a fifth field, `pitch` (camera tilt off nadir,
-radians, `0` = straight down). Manifest poses accept `[x, y, z, yaw, pitch]`;
-four-element poses still mean nadir, so nothing already written breaks.
+### 2026-08-18 — Cameras have pitch and roll now; the nadir assumption was wrong
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+**Changed:** `protocol.geometry.Pose` includes `pitch` (camera tilt off nadir) and `roll`,
+in radians. Manifest poses accept `[x, y, z, yaw, pitch, roll]`; four-element poses retain
+the legacy nadir interpretation for development manifests only.
 
 **Makes stale:** any assumption that the co-visibility model matched the camera. It did not.
 **Who must act:**
-* **M3 Pratik** — record the actual camera pitch you set in Unreal and report it at the
-  Week-1 sync. It goes in the manifest. If you tilt the camera and nobody writes the angle
-  down, the overlap numbers are fiction.
-* **M1 Suyash** — populate `pitch` from the sim.
+* **M3 Pratik** — record actual camera-body translation, yaw, pitch, roll, FOV/intrinsics,
+  image size, distortion assumption, units, and simulator coordinate convention in the
+  exported calibration. If a camera angle changes, the manifest and preflight must change.
+* **M4 Samik** — verify coordinate conversion and pose timestamps in the independent CoSys
+  run; reject non-finite/stale pose before control.
+* **M1 Suyash** — validate the calibrated pose fields at the mission boundary.
+* **M2 Abhijan** — include stale, frozen, spoofed, and malformed pose campaigns; a signed
+  host claim is authenticated but is not automatically truthful.
 
 **Why:** the footprint model projected a rectangle straight down and scaled it with
 altitude, while the controller it feeds (`detections_to_action`) reads a *forward-looking*
-scene — "climb if the obstacle sits low in the frame", empty frame means full forward. Two
+scene — "climb if the obstacle sits low in the frame". Detector silence now fails closed
+to HOLD unless independent free-space evidence authorizes forward motion. Two
 forward-facing cameras' overlap is not the intersection of two ground rectangles. Because
 the co-visibility gate **abstains rather than errors** when overlap looks low, a wrong
 footprint would not have thrown anything: every peer would have ACKed, the console would
@@ -102,8 +198,8 @@ every published number is unchanged.
 ---
 
 ### 2026-08-18 — Depth is a required second modality
-**Status:** OPEN
-**Changed:** new module `perception/depth_check.py`. A drone now cross-checks its own
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+**Changed:** new module `codebase/perception/depth_check.py`. A drone now cross-checks its own
 commanded action against measured range and flags a contradiction on its own, with no peers
 and no vote.
 
@@ -111,11 +207,17 @@ and no vote.
 peer cross-verification.
 **Who must act:**
 * **M3 Pratik** — capture `ImageType.DepthPerspective` in the same `simGetImages` call as
-  the RGB frame. It is one extra line and costs nothing. Save as `.npy` alongside the JPEGs.
-* **M2 Abhijan** — new `depth` event type; render `contradicted` prominently. **`nearest_m:
-  null` means "unknown", never "clear".**
-* **M1 Suyash** — hardware node gets a Benewake TF-Luna (~₹2,049, UART straight onto the
-  Jetson 40-pin header, no level shifter, no converter board).
+  the RGB frame where the pinned CoSys API supports it; record measured pairing skew and
+  save metric depth with the matching snapshot/hash. Do not assume the call is atomic
+  without testing it.
+* **M2 Abhijan** — attack depth with drop, freeze, NaN/Inf, out-of-range, and timestamp-skew
+  cases. Validate the `depth` event and contradiction result. **`nearest_m: null` means
+  "unknown", never "clear".**
+* **M4 Samik** — prove missing/stale/invalid depth and contradiction cannot release motion;
+  record the supervisor result and adapter acknowledgement.
+* **M1 Suyash** — defer hardware selection until H0; require electrical/interface review,
+  calibration, range/failure-mode testing, and a pinned part before updating the hardware
+  plan. A simulator depth image is not evidence that a future physical range sensor works.
 
 **Why:** a printed patch attacks the *image*. It cannot change how far away the wall is. A
 drone commanding full forward while its own rangefinder reports a surface at 8 m has
@@ -125,21 +227,22 @@ compare against, which is the one case the whole cross-verification design canno
 ---
 
 ### 2026-08-18 — Event contract is frozen; M2 is unblocked
-**Status:** OPEN
-**Changed:** shipped `docs/EVENT_SCHEMA.md`, `node/events.py`, `tools/mock_events.py`, and
-`node/frame_source.py`. Six replayable scenarios: `honest`, `patch`, `model_swap`,
-`collusion`, `unverified`, `provisioning`.
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
+**Changed:** shipped `codebase/docs/EVENT_SCHEMA.md`, `codebase/node/events.py`,
+`codebase/tools/mock_events.py`, and `codebase/node/frame_source.py`. Six replayable
+scenarios: `honest`, `patch`, `model_swap`, `collusion`, `unverified`, `provisioning`.
 
 ```bash
+cd codebase
 python -m tools.mock_events --scenario patch --rate 2
 ```
 
 **Makes stale:** nothing — this is the Week-1 deliverable the plan already called for,
 arriving late.
 **Who must act:**
-* **M2 Abhijan** — **start now.** Build the entire console against
-  `tools/mock_events.py`. Do not wait for a running swarm; you will never need one.
-  Three things in the schema are easy to render wrongly and all three mislead a judge:
+* **M2 Abhijan** — use the event stream as the attack-oracle input and build campaign
+  assertions before presentation work. A console is optional and must read the same
+  validated events. Three things are easy to interpret wrongly:
   1. **Not every ACK is a pass.** `ok_no_covisibility` and `ok_no_observation` are
      *abstentions*. Draw them grey. Drawing them green claims a check that never happened.
   2. **You get one verdict per node, not one per round.** Every node tallies independently
@@ -148,28 +251,35 @@ arriving late.
      `--scenario unverified` — if that looks identical to a verified accept on your screen,
      that is the bug to fix first.
 * **M3 Pratik** — your frame captures feed `FileSource`. Zero-pad filenames (`f_001.jpg`)
-  or the ordering goes lexicographic.
+  or the ordering goes lexicographic; pair each frame with depth/pose/calibration metadata.
+* **M4 Samik** — emit command-request, supervisor-release, adapter-accept/reject, TTL, and
+  vehicle-state events so attack results can be traced to actual simulator behavior.
 
-**Why:** the console was the one deliverable with a hard dependency on the backend, and the
-backend is the part most likely to slip. The contract removes the dependency entirely.
+**Why:** event-driven attack validation and any optional presentation layer otherwise have
+a hard dependency on the backend. The frozen contract lets Abhijan build assertions and
+presentation without waiting for a live swarm.
 
 ---
 
-### 2026-08-18 — Protocol changes the console must show
-**Status:** OPEN
+### 2026-08-18 — Protocol changes attack validation and presentation must show
+**Status:** FOLDED into [`SIH_2026_Build_Plan.md`](SIH_2026_Build_Plan.md) on 2026-08-18.
 **Changed:** three protocol gaps closed (commit `e2d3f57`), each with a visible consequence.
-* **`semantic_ack_count`** on every verdict — how many peers *actually* ran the semantic
-  check. An `ACCEPTED` with zero is cryptographically sound and semantically unverified;
-  `fallback_action` degrades it to `EXECUTE_DEGRADED` rather than executing at full trust.
+* **`semantic_ack_count`** on every verdict — how many peers *actually* returned an ACK
+  after running the semantic check. An `ACCEPTED` with zero is cryptographically sound
+  but semantically unverified; `fallback_action` returns `DEFER`/HOLD and never executes it.
 * **Peers broadcast votes and tally independently.** `PushVote` was dead code and consensus
   rested entirely on the originator — the drone under scrutiny. It could have collected
   three DISPUTEs and announced ACCEPTED with nobody the wiser.
 * **`covisibility` events** carry the measured overlap and parallax, so an abstaining gate
   is readable instead of invisible.
 
-**Makes stale:** the build plan's event-schema block — superseded by `docs/EVENT_SCHEMA.md`.
-**Who must act:** **M2 Abhijan** — schema fields above. **M4** — the independent-tally line
-is a strong answer to *"what if the lead drone lies?"*, which a judge will ask.
+**Makes stale:** any hand-written event-schema block — `codebase/docs/EVENT_SCHEMA.md` is
+authoritative.
+**Who must act:** **M2 Abhijan** validates these fields and independent outcomes in every
+attack campaign. **M4 Samik** converts DEFER/NO_QUORUM/divergent or semantically unverified
+outcomes to HOLD and records the adapter result. **M1 Suyash** states the limitation
+precisely: independent tallies reduce originator control but are not yet a final Byzantine
+agreement protocol.
 **Why:** each was a case where the system looked like it was verifying something it was not.
 
 ---
@@ -181,11 +291,15 @@ is a strong answer to *"what if the lead drone lies?"*, which a judge will ask.
 ### 2026-08-15 — Member roles assigned; Windows/Mac split
 **Status:** FOLDED
 **Changed:** M2 is Abhijan (Mac), M3 is Pratik (Windows). M4 is still unassigned.
-**Makes stale:** nothing — the build plan's *Member plans* section already reflects this.
-**Who must act:** M4 seat needs a name. Everyone else: see the plan's member table.
+**Makes stale:** this historical allocation is superseded by the 2026-08-18 role reset.
+**Who must act:** nobody; retain this entry only as history.
 **Why:** only one machine runs Unreal and it must be Windows. AirSim's macOS support was
 never first-class and Microsoft archived the project in 2022, so the Mac dev drives the sim
 over the LAN through the `airsim` RPC client on port 41451 instead of installing Unreal.
+
+**Superseded on 2026-08-18:** M4 is Samik; Pratik and Samik both own independent CoSys
+AirSim installations; Abhijan owns attack delivery instead of the simulator client. The
+new role-reset entry above is authoritative.
 
 ### 2026-08-15 — Repo moved out of `Life`
 **Status:** FOLDED
