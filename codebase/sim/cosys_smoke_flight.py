@@ -16,6 +16,7 @@ a later success.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import math
@@ -43,6 +44,177 @@ class FlightInvariantError(RuntimeError):
 
 class StageTimeout(FlightInvariantError):
     """Raised when a bounded simulator operation exceeds its declared timeout."""
+
+
+class _ThreadAffineRpcWorker:
+    """Own one event-loop-backed vendor client on one persistent thread."""
+
+    def __init__(
+        self,
+        label: str,
+        client_factory: Callable[[], Any],
+        startup_timeout_seconds: float,
+    ) -> None:
+        self._label = label
+        self._client_factory = client_factory
+        self._tasks: queue.Queue[Any] = queue.Queue()
+        self._ready: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"cosys-rpc-{label}",
+            daemon=True,
+        )
+        self._thread.start()
+        try:
+            succeeded, value = self._ready.get(timeout=startup_timeout_seconds)
+        except queue.Empty as exc:
+            self._closed = True
+            self._tasks.put(None)
+            raise StageTimeout(
+                f"{label} client creation exceeded {startup_timeout_seconds:.3f}s"
+            ) from exc
+        if not succeeded:
+            self._closed = True
+            raise FlightInvariantError(
+                f"{label} client creation failed: {value}"
+            ) from value
+
+    @staticmethod
+    def _close_vendor_client(client: Any) -> None:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+            return
+        transport = getattr(client, "client", None)
+        close = getattr(transport, "close", None)
+        if callable(close):
+            close()
+
+    def _run(self) -> None:
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+        client: Any | None = None
+        try:
+            try:
+                client = self._client_factory()
+            except BaseException as exc:
+                self._ready.put((False, exc))
+                return
+            self._ready.put((True, None))
+            while True:
+                task = self._tasks.get()
+                if task is None:
+                    return
+                operation, reply = task
+                try:
+                    reply.put((True, operation(client)))
+                except BaseException as exc:
+                    reply.put((False, exc))
+        finally:
+            if client is not None:
+                try:
+                    self._close_vendor_client(client)
+                except BaseException:
+                    pass
+            asyncio.set_event_loop(None)
+            event_loop.close()
+
+    def call(self, operation: Callable[[Any], Any]) -> Any:
+        if self._closed:
+            raise FlightInvariantError(f"{self._label} RPC worker is closed")
+        reply: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+        self._tasks.put((operation, reply))
+        succeeded, value = reply.get()
+        if not succeeded:
+            raise value
+        return value
+
+    def close(self, timeout_seconds: float = 1.0) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._tasks.put(None)
+        self._thread.join(timeout_seconds)
+
+
+class _ThreadAffineFuture:
+    """Join a vendor future only on the RPC thread that created it."""
+
+    def __init__(self, worker: _ThreadAffineRpcWorker, future: Any) -> None:
+        self._worker = worker
+        self._future = future
+
+    def join(self) -> Any:
+        return self._worker.call(lambda _client: self._future.join())
+
+
+class _ThreadAffineCosysClient:
+    """Dispatch CoSys calls to persistent command and observation RPC clients.
+
+    ``rpc-msgpack`` binds its Tornado/asyncio loop to the thread where the client is
+    constructed.  The smoke runner intentionally starts timeout and guarded-join helper
+    threads, so a raw client cannot safely be called from those helpers.  Commands and
+    their futures share one owner thread; telemetry uses an independent owner thread so
+    guarded joins can continue monitoring the live vehicle.
+    """
+
+    _ASYNC_METHODS = {
+        "hoverAsync",
+        "landAsync",
+        "moveToPositionAsync",
+        "takeoffAsync",
+    }
+    _COMMAND_METHODS = _ASYNC_METHODS | {
+        "armDisarm",
+        "enableApiControl",
+        "reset",
+    }
+    _OBSERVATION_METHODS = {
+        "getMultirotorState",
+        "isApiControlEnabled",
+        "listVehicles",
+        "ping",
+        "simGetCollisionInfo",
+    }
+
+    def __init__(
+        self,
+        client_factory: Callable[[], Any],
+        startup_timeout_seconds: float,
+    ) -> None:
+        self._command = _ThreadAffineRpcWorker(
+            "command", client_factory, startup_timeout_seconds
+        )
+        try:
+            self._observation = _ThreadAffineRpcWorker(
+                "observation", client_factory, startup_timeout_seconds
+            )
+        except BaseException:
+            self._command.close()
+            raise
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        if name in self._COMMAND_METHODS:
+            worker = self._command
+        elif name in self._OBSERVATION_METHODS:
+            worker = self._observation
+        else:
+            raise AttributeError(f"unsupported CoSys client operation: {name}")
+
+        def invoke(*args: Any, **kwargs: Any) -> Any:
+            result = worker.call(
+                lambda client: getattr(client, name)(*args, **kwargs)
+            )
+            if name in self._ASYNC_METHODS:
+                return _ThreadAffineFuture(worker, result)
+            return result
+
+        return invoke
+
+    def close(self) -> None:
+        self._observation.close()
+        self._command.close()
 
 
 @dataclass(frozen=True)
@@ -1807,10 +1979,13 @@ def _live_client_factory(config: SmokeConfig) -> tuple[Any, int]:
             "cosysairsim is not installed in this environment; install only the "
             "checksum-approved client artifact from Pratik's handoff"
         ) from exc
-    client = cosysairsim.MultirotorClient(
-        ip=config.host,
-        port=config.port,
-        timeout_value=config.rpc_timeout_seconds,
+    client = _ThreadAffineCosysClient(
+        lambda: cosysairsim.MultirotorClient(
+            ip=config.host,
+            port=config.port,
+            timeout_value=config.rpc_timeout_seconds,
+        ),
+        config.timeouts["connect"],
     )
     return client, int(cosysairsim.LandedState.Landed)
 
@@ -1875,6 +2050,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"ERROR: refusing to overwrite evidence file: {output_path}")
         return 2
 
+    client: Any | None = None
     try:
         client, landed_state_value = _live_client_factory(config)
         result = run_smoke(
@@ -1902,6 +2078,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         print(json.dumps(result, indent=2, sort_keys=True))
         return 2
+    finally:
+        if client is not None:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
 
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["pass"] else 1
