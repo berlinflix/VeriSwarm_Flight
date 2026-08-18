@@ -86,6 +86,13 @@ class Geofence:
 class TouchdownPolicy:
     expected_ground_object: str
     stationary_velocity_tolerance_mps: float
+    stationary_angular_velocity_tolerance_rps: float
+    max_landing_linear_speed_mps: float
+    max_landing_angular_speed_rps: float
+    max_landing_roll_pitch_deg: float
+    max_penetration_depth_m: float
+    landing_zone_radius_m: float
+    landing_dwell_seconds: float
     deviation_id: str
     deviation_approved: bool
     deviation_approved_by: str | None
@@ -126,6 +133,7 @@ REQUIRED_TIMEOUTS = (
     "arrival",
     "land",
     "cleanup",
+    "reset",
 )
 
 
@@ -333,6 +341,74 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
         raise ConfigurationError(
             "config.touchdown.stationary_velocity_tolerance_mps must be <= 0.05"
         )
+    stationary_angular_tolerance = _finite_number(
+        _required(
+            touchdown_raw,
+            "stationary_angular_velocity_tolerance_rps",
+            "config.touchdown",
+        ),
+        "config.touchdown.stationary_angular_velocity_tolerance_rps",
+        positive=True,
+    )
+    max_landing_linear_speed = _finite_number(
+        _required(
+            touchdown_raw, "max_landing_linear_speed_mps", "config.touchdown"
+        ),
+        "config.touchdown.max_landing_linear_speed_mps",
+        positive=True,
+    )
+    if max_landing_linear_speed < stationary_tolerance:
+        raise ConfigurationError(
+            "config.touchdown.max_landing_linear_speed_mps must be >= "
+            "stationary_velocity_tolerance_mps"
+        )
+    max_landing_angular_speed = _finite_number(
+        _required(
+            touchdown_raw, "max_landing_angular_speed_rps", "config.touchdown"
+        ),
+        "config.touchdown.max_landing_angular_speed_rps",
+        positive=True,
+    )
+    if max_landing_angular_speed < stationary_angular_tolerance:
+        raise ConfigurationError(
+            "config.touchdown.max_landing_angular_speed_rps must be >= "
+            "stationary_angular_velocity_tolerance_rps"
+        )
+    max_landing_roll_pitch = _finite_number(
+        _required(
+            touchdown_raw, "max_landing_roll_pitch_deg", "config.touchdown"
+        ),
+        "config.touchdown.max_landing_roll_pitch_deg",
+        positive=True,
+    )
+    if max_landing_roll_pitch > 90.0:
+        raise ConfigurationError(
+            "config.touchdown.max_landing_roll_pitch_deg must be <= 90"
+        )
+    max_penetration_depth = _finite_number(
+        _required(
+            touchdown_raw, "max_penetration_depth_m", "config.touchdown"
+        ),
+        "config.touchdown.max_penetration_depth_m",
+    )
+    if max_penetration_depth < 0.0:
+        raise ConfigurationError(
+            "config.touchdown.max_penetration_depth_m must be >= 0"
+        )
+    landing_zone_radius = _finite_number(
+        _required(touchdown_raw, "landing_zone_radius_m", "config.touchdown"),
+        "config.touchdown.landing_zone_radius_m",
+        positive=True,
+    )
+    landing_dwell_seconds = _finite_number(
+        _required(touchdown_raw, "landing_dwell_seconds", "config.touchdown"),
+        "config.touchdown.landing_dwell_seconds",
+        positive=True,
+    )
+    if not math.isclose(landing_dwell_seconds, 2.0, abs_tol=1e-9):
+        raise ConfigurationError(
+            "config.touchdown.landing_dwell_seconds must be exactly 2.0"
+        )
     deviation_id = _text(
         _required(deviation_raw, "id", "config.touchdown.landed_state_deviation"),
         "config.touchdown.landed_state_deviation.id",
@@ -466,6 +542,15 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
                 "config.touchdown.expected_ground_object",
             ),
             stationary_velocity_tolerance_mps=stationary_tolerance,
+            stationary_angular_velocity_tolerance_rps=(
+                stationary_angular_tolerance
+            ),
+            max_landing_linear_speed_mps=max_landing_linear_speed,
+            max_landing_angular_speed_rps=max_landing_angular_speed,
+            max_landing_roll_pitch_deg=max_landing_roll_pitch,
+            max_penetration_depth_m=max_penetration_depth,
+            landing_zone_radius_m=landing_zone_radius,
+            landing_dwell_seconds=landing_dwell_seconds,
             deviation_id=deviation_id,
             deviation_approved=deviation_approved,
             deviation_approved_by=approved_by,
@@ -512,11 +597,51 @@ def _client_vector(value: Any, context: str) -> Vector3:
     return vector
 
 
+def _client_quaternion(value: Any) -> tuple[float, float, float, float]:
+    try:
+        quaternion = (
+            float(value.w_val),
+            float(value.x_val),
+            float(value.y_val),
+            float(value.z_val),
+        )
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise FlightInvariantError("invalid orientation quaternion") from exc
+    if not all(math.isfinite(component) for component in quaternion):
+        raise FlightInvariantError("non-finite orientation quaternion")
+    norm = math.sqrt(sum(component * component for component in quaternion))
+    if norm <= 0.0:
+        raise FlightInvariantError("zero-norm orientation quaternion")
+    return tuple(component / norm for component in quaternion)
+
+
+def _quaternion_to_euler_degrees(
+    quaternion: tuple[float, float, float, float]
+) -> tuple[float, float, float]:
+    w, x, y, z = quaternion
+    sin_roll_cos_pitch = 2.0 * (w * x + y * z)
+    cos_roll_cos_pitch = 1.0 - 2.0 * (x * x + y * y)
+    roll = math.atan2(sin_roll_cos_pitch, cos_roll_cos_pitch)
+
+    sin_pitch = 2.0 * (w * y - z * x)
+    pitch = math.copysign(math.pi / 2.0, sin_pitch) if abs(sin_pitch) >= 1.0 else math.asin(sin_pitch)
+
+    sin_yaw_cos_pitch = 2.0 * (w * z + x * y)
+    cos_yaw_cos_pitch = 1.0 - 2.0 * (y * y + z * z)
+    yaw = math.atan2(sin_yaw_cos_pitch, cos_yaw_cos_pitch)
+    return tuple(math.degrees(value) for value in (roll, pitch, yaw))
+
+
 def _state_snapshot(state: Any) -> dict[str, Any]:
     try:
         kinematics = state.kinematics_estimated
         position = _client_vector(kinematics.position, "position")
         velocity = _client_vector(kinematics.linear_velocity, "velocity")
+        angular_velocity = _client_vector(
+            kinematics.angular_velocity, "angular velocity"
+        )
+        orientation = _client_quaternion(kinematics.orientation)
+        roll_deg, pitch_deg, yaw_deg = _quaternion_to_euler_degrees(orientation)
         timestamp = int(state.timestamp)
         landed_state = int(state.landed_state)
     except (AttributeError, TypeError, ValueError) as exc:
@@ -526,6 +651,15 @@ def _state_snapshot(state: Any) -> dict[str, Any]:
         "position": position.as_list(),
         "velocity": velocity.as_list(),
         "speed_mps": _distance(velocity, Vector3(0.0, 0.0, 0.0)),
+        "angular_velocity_rps": angular_velocity.as_list(),
+        "angular_speed_rps": _distance(
+            angular_velocity, Vector3(0.0, 0.0, 0.0)
+        ),
+        "attitude_deg": {
+            "roll": roll_deg,
+            "pitch": pitch_deg,
+            "yaw": yaw_deg,
+        },
         "landed_state": landed_state,
     }
 
@@ -558,6 +692,43 @@ def _join_future(label: str, timeout_seconds: float, future: Any) -> None:
     if not hasattr(future, "join"):
         raise FlightInvariantError(f"{label} returned no joinable future")
     _call_with_timeout(label, timeout_seconds, future.join)
+
+
+def _join_future_guarded(
+    label: str,
+    timeout_seconds: float,
+    future: Any,
+    safety_check: Callable[[], None],
+) -> None:
+    """Join an async simulator command while polling its phase safety contract."""
+
+    if not hasattr(future, "join"):
+        raise FlightInvariantError(f"{label} returned no joinable future")
+    results: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+
+    def invoke() -> None:
+        try:
+            future.join()
+            results.put((True, None))
+        except BaseException as exc:
+            results.put((False, exc))
+
+    worker = threading.Thread(
+        target=invoke, name=f"cosys-{label}-join", daemon=True
+    )
+    worker.start()
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            succeeded, value = results.get(timeout=0.01)
+        except queue.Empty:
+            safety_check()
+            continue
+        safety_check()
+        if not succeeded:
+            raise FlightInvariantError(f"{label} failed: {value}") from value
+        return
+    raise StageTimeout(f"{label} exceeded {timeout_seconds:.3f}s")
 
 
 class EvidenceRecorder:
@@ -608,6 +779,27 @@ class EvidenceRecorder:
                 "stationary_velocity_tolerance_mps": (
                     config.touchdown.stationary_velocity_tolerance_mps
                 ),
+                "stationary_angular_velocity_tolerance_rps": (
+                    config.touchdown.stationary_angular_velocity_tolerance_rps
+                ),
+                "max_landing_linear_speed_mps": (
+                    config.touchdown.max_landing_linear_speed_mps
+                ),
+                "max_landing_angular_speed_rps": (
+                    config.touchdown.max_landing_angular_speed_rps
+                ),
+                "max_landing_roll_pitch_deg": (
+                    config.touchdown.max_landing_roll_pitch_deg
+                ),
+                "max_penetration_depth_m": (
+                    config.touchdown.max_penetration_depth_m
+                ),
+                "landing_zone_radius_m": (
+                    config.touchdown.landing_zone_radius_m
+                ),
+                "landing_dwell_seconds": (
+                    config.touchdown.landing_dwell_seconds
+                ),
                 "landed_state_deviation": {
                     "id": config.touchdown.deviation_id,
                     "approved": config.touchdown.deviation_approved,
@@ -627,9 +819,21 @@ class EvidenceRecorder:
             "collisions": [],
             "initial_collision": None,
             "ground_contacts": [],
+            "touchdown_dwell": {
+                "required_seconds": config.touchdown.landing_dwell_seconds,
+                "contact_event_timestamp": None,
+                "started_elapsed_seconds": None,
+                "reset_count": 0,
+                "completed_seconds": None,
+            },
+            "touchdown_threshold_violations": [],
             "landing_confirmed": False,
+            "landing_state": None,
             "disarm_confirmed": False,
             "api_control_released": False,
+            "reset_attempted": False,
+            "reset_confirmed": False,
+            "reset_state": None,
             "abort_attempted": False,
             "cleanup_complete": False,
             "errors": [],
@@ -707,15 +911,31 @@ class CollisionMonitor:
         try:
             timestamp = float(getattr(collision, "time_stamp", 0.0))
             object_id = int(getattr(collision, "object_id", -1))
+            penetration_depth = float(collision.penetration_depth)
+            normal = _client_vector(collision.normal, "collision normal")
+            impact_point = _client_vector(
+                collision.impact_point, "collision impact point"
+            )
+            collision_position = _client_vector(
+                collision.position, "collision position"
+            )
         except (TypeError, ValueError) as exc:
             raise FlightInvariantError("invalid collision telemetry") from exc
-        if not math.isfinite(timestamp):
-            raise FlightInvariantError("non-finite collision timestamp")
+        except AttributeError as exc:
+            raise FlightInvariantError(
+                "collision telemetry missing penetration_depth"
+            ) from exc
+        if not math.isfinite(timestamp) or not math.isfinite(penetration_depth):
+            raise FlightInvariantError("non-finite collision telemetry")
         return {
             "has_collided": has_collided,
             "object_name": str(getattr(collision, "object_name", "")),
             "object_id": object_id,
             "timestamp": timestamp,
+            "penetration_depth_m": penetration_depth,
+            "normal": normal.as_list(),
+            "impact_point": impact_point.as_list(),
+            "position": collision_position.as_list(),
         }
 
     def _fail_collision(self, entry: Mapping[str, Any], reason: str) -> None:
@@ -739,6 +959,40 @@ class CollisionMonitor:
             self._fail_collision(entry, "non-ground startup contact")
         if initial_state["landed_state"] != self.landed_state_value:
             self._fail_collision(entry, "ground contact while not landed at startup")
+        if (
+            initial_state["speed_mps"]
+            > self.config.touchdown.stationary_velocity_tolerance_mps
+        ):
+            raise FlightInvariantError(
+                "startup Ground contact is not stationary: linear speed "
+                f"{initial_state['speed_mps']:.6f}m/s exceeds "
+                f"{self.config.touchdown.stationary_velocity_tolerance_mps:.6f}m/s"
+            )
+        if (
+            initial_state["angular_speed_rps"]
+            > self.config.touchdown.stationary_angular_velocity_tolerance_rps
+        ):
+            raise FlightInvariantError(
+                "startup Ground contact is not stationary: angular speed "
+                f"{initial_state['angular_speed_rps']:.6f}rad/s exceeds "
+                f"{self.config.touchdown.stationary_angular_velocity_tolerance_rps:.6f}rad/s"
+            )
+        roll = abs(float(initial_state["attitude_deg"]["roll"]))
+        pitch = abs(float(initial_state["attitude_deg"]["pitch"]))
+        if max(roll, pitch) > self.config.touchdown.max_landing_roll_pitch_deg:
+            raise FlightInvariantError(
+                "startup Ground-contact roll/pitch exceeds "
+                f"{self.config.touchdown.max_landing_roll_pitch_deg:.6f}deg"
+            )
+        if (
+            float(entry["penetration_depth_m"])
+            > self.config.touchdown.max_penetration_depth_m
+        ):
+            raise FlightInvariantError(
+                "startup Ground-contact penetration depth "
+                f"{float(entry['penetration_depth_m']):.6f}m exceeds "
+                f"{self.config.touchdown.max_penetration_depth_m:.6f}m"
+            )
         self.baseline_ground_timestamp = float(entry["timestamp"])
         contact = dict(entry)
         contact["phase"] = "startup"
@@ -757,50 +1011,195 @@ class CollisionMonitor:
         ):
             self._fail_collision(entry, f"new ground contact during {phase}")
 
-    def wait_for_touchdown(self, timeout_name: str) -> dict[str, Any]:
+    def _landing_envelope(
+        self,
+        state: Mapping[str, Any],
+        collision: Mapping[str, Any],
+        phase: str,
+        *,
+        enforce_landing_zone: bool = True,
+    ) -> tuple[float, list[str]]:
+        if (
+            collision["has_collided"]
+            and collision["object_name"]
+            != self.config.touchdown.expected_ground_object
+        ):
+            self._fail_collision(collision, f"non-ground contact during {phase}")
+        violations: list[str] = []
+        if (
+            float(collision["penetration_depth_m"])
+            > self.config.touchdown.max_penetration_depth_m
+        ):
+            violations.append(
+                f"penetration depth "
+                f"{float(collision['penetration_depth_m']):.6f}m exceeds "
+                f"{self.config.touchdown.max_penetration_depth_m:.6f}m"
+            )
+        if state["speed_mps"] > self.config.touchdown.max_landing_linear_speed_mps:
+            violations.append(
+                f"linear speed {state['speed_mps']:.6f}m/s exceeds "
+                f"{self.config.touchdown.max_landing_linear_speed_mps:.6f}m/s"
+            )
+        if (
+            state["angular_speed_rps"]
+            > self.config.touchdown.max_landing_angular_speed_rps
+        ):
+            violations.append(
+                f"angular speed {state['angular_speed_rps']:.6f}rad/s exceeds "
+                f"{self.config.touchdown.max_landing_angular_speed_rps:.6f}rad/s"
+            )
+        roll = abs(float(state["attitude_deg"]["roll"]))
+        pitch = abs(float(state["attitude_deg"]["pitch"]))
+        if max(roll, pitch) > self.config.touchdown.max_landing_roll_pitch_deg:
+            violations.append(
+                f"roll/pitch ({roll:.6f},{pitch:.6f})deg exceeds "
+                f"{self.config.touchdown.max_landing_roll_pitch_deg:.6f}deg"
+            )
+        position = Vector3(*state["position"])
+        horizontal_error = math.hypot(
+            position.x - self.config.target.x,
+            position.y - self.config.target.y,
+        )
+        if (
+            enforce_landing_zone
+            and horizontal_error > self.config.touchdown.landing_zone_radius_m
+        ):
+            violations.append(
+                f"landing-zone error {horizontal_error:.6f}m exceeds "
+                f"{self.config.touchdown.landing_zone_radius_m:.6f}m"
+            )
+        return horizontal_error, violations
+
+    def check_landing(
+        self, phase: str, *, enforce_landing_zone: bool = True
+    ) -> None:
+        state = _get_state(self.client, self.config, "land")
+        collision = self._read("land")
+        _, violations = self._landing_envelope(
+            state,
+            collision,
+            phase,
+            enforce_landing_zone=enforce_landing_zone,
+        )
+        if violations:
+            raise FlightInvariantError(f"{phase} envelope violation: {violations[0]}")
+
+    def wait_for_touchdown(
+        self, timeout_name: str, *, enforce_landing_zone: bool = True
+    ) -> dict[str, Any]:
         deadline = time.monotonic() + self.config.timeouts[timeout_name]
         last_state: dict[str, Any] | None = None
         last_collision: dict[str, Any] | None = None
         stale_landed_state_seen = False
+        contact_timestamp: float | None = None
+        stable_since: float | None = None
+        last_violation_signature: tuple[str, ...] | None = None
         while time.monotonic() < deadline:
             last_state = _get_state(self.client, self.config, timeout_name)
             last_collision = self._read(timeout_name)
-            if (
-                last_collision["has_collided"]
-                and last_collision["object_name"]
-                != self.config.touchdown.expected_ground_object
-            ):
-                self._fail_collision(
-                    last_collision, "non-ground contact during touchdown"
-                )
+            horizontal_error, violations = self._landing_envelope(
+                last_state,
+                last_collision,
+                "touchdown",
+                enforce_landing_zone=enforce_landing_zone,
+            )
             timestamp = float(last_collision["timestamp"])
             new_ground_contact = (
                 last_collision["has_collided"]
+                and last_collision["object_name"]
+                == self.config.touchdown.expected_ground_object
                 and (
                     self.baseline_ground_timestamp is None
                     or timestamp > self.baseline_ground_timestamp
                 )
             )
-            stationary = (
-                last_state["speed_mps"]
-                <= self.config.touchdown.stationary_velocity_tolerance_mps
-            )
+            if new_ground_contact and contact_timestamp is None:
+                contact_timestamp = timestamp
+                contact = dict(last_collision)
+                contact["phase"] = "touchdown"
+                self.recorder.result["ground_contacts"].append(contact)
+                self.recorder.result["touchdown_dwell"][
+                    "contact_event_timestamp"
+                ] = contact_timestamp
+
             landed_state_ok = (
                 last_state["landed_state"] == self.landed_state_value
             )
-            if new_ground_contact and stationary:
-                contact = dict(last_collision)
-                contact["phase"] = "touchdown"
-                if contact not in self.recorder.result["ground_contacts"]:
-                    self.recorder.result["ground_contacts"].append(contact)
-                if landed_state_ok:
-                    return last_state
+            if contact_timestamp is None:
+                if violations:
+                    raise FlightInvariantError(
+                        f"touchdown descent envelope violation: {violations[0]}"
+                    )
+                stable_since = None
+                time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+                continue
+
+            if (
+                last_state["speed_mps"]
+                > self.config.touchdown.stationary_velocity_tolerance_mps
+            ):
+                violations.append(
+                    f"stationary linear speed {last_state['speed_mps']:.6f}m/s exceeds "
+                    f"{self.config.touchdown.stationary_velocity_tolerance_mps:.6f}m/s"
+                )
+            if (
+                last_state["angular_speed_rps"]
+                > self.config.touchdown.stationary_angular_velocity_tolerance_rps
+            ):
+                violations.append(
+                    "stationary angular speed "
+                    f"{last_state['angular_speed_rps']:.6f}rad/s exceeds "
+                    f"{self.config.touchdown.stationary_angular_velocity_tolerance_rps:.6f}rad/s"
+                )
+            if not landed_state_ok:
                 stale_landed_state_seen = True
-                if self.config.touchdown.deviation_approved:
-                    self.recorder.result["touchdown_policy"][
-                        "landed_state_deviation"
-                    ]["applied"] = True
-                    return last_state
+                if not self.config.touchdown.deviation_approved:
+                    violations.append(
+                        "landed state is stale and QB-LANDED-STATE-001 is not approved"
+                    )
+
+            if violations:
+                signature = tuple(violations)
+                if signature != last_violation_signature:
+                    self.recorder.result["touchdown_threshold_violations"].append(
+                        {
+                            "elapsed_seconds": round(
+                                time.monotonic()
+                                - self.recorder._monotonic_started,
+                                6,
+                            ),
+                            "violations": list(violations),
+                            "state": dict(last_state),
+                            "collision": dict(last_collision),
+                        }
+                    )
+                last_violation_signature = signature
+                if stable_since is not None:
+                    self.recorder.result["touchdown_dwell"]["reset_count"] += 1
+                stable_since = None
+            else:
+                last_violation_signature = None
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                    self.recorder.result["touchdown_dwell"][
+                        "started_elapsed_seconds"
+                    ] = round(
+                        stable_since - self.recorder._monotonic_started, 6
+                    )
+                elapsed_stable = time.monotonic() - stable_since
+                if elapsed_stable >= self.config.touchdown.landing_dwell_seconds:
+                    if not landed_state_ok:
+                        self.recorder.result["touchdown_policy"][
+                            "landed_state_deviation"
+                        ]["applied"] = True
+                    self.recorder.result["touchdown_dwell"][
+                        "completed_seconds"
+                    ] = elapsed_stable
+                    retained = dict(last_state)
+                    retained["ground_contact_timestamp"] = contact_timestamp
+                    retained["landing_zone_error_m"] = horizontal_error
+                    retained["stable_dwell_seconds"] = elapsed_stable
+                    return retained
             time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
 
         detail = {
@@ -836,11 +1235,14 @@ def _wait_for_pose_dwell(
     config: SmokeConfig,
     target: Vector3,
     timeout_name: str,
+    safety_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + config.timeouts[timeout_name]
     stable_since: float | None = None
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
+        if safety_check is not None:
+            safety_check()
         _assert_api_control(client, config, timeout_name)
         last = _get_state(client, config, timeout_name)
         position = Vector3(*last["position"])
@@ -868,11 +1270,14 @@ def _wait_for_velocity_dwell(
     client: Any,
     config: SmokeConfig,
     timeout_name: str,
+    safety_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + config.timeouts[timeout_name]
     stable_since: float | None = None
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
+        if safety_check is not None:
+            safety_check()
         _assert_api_control(client, config, timeout_name)
         last = _get_state(client, config, timeout_name)
         if last["speed_mps"] <= config.hover_velocity_tolerance_mps:
@@ -885,6 +1290,89 @@ def _wait_for_velocity_dwell(
         time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
     detail = "no telemetry" if last is None else json.dumps(last, sort_keys=True)
     raise StageTimeout(f"{timeout_name} did not satisfy velocity dwell: {detail}")
+
+
+def _reset_and_verify(
+    client: Any,
+    config: SmokeConfig,
+    recorder: EvidenceRecorder,
+    collision_monitor: CollisionMonitor,
+) -> dict[str, Any]:
+    timeout = config.timeouts["reset"]
+    if _call_with_timeout(
+        "pre_reset_api_control_check",
+        config.timeouts["api_control"],
+        lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+    ):
+        raise FlightInvariantError("refusing reset while API control remains enabled")
+
+    recorder.result["reset_attempted"] = True
+    _call_with_timeout("reset", timeout, client.reset)
+    deadline = time.monotonic() + timeout
+    stable_since: float | None = None
+    last_state: dict[str, Any] | None = None
+    last_collision: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        if _call_with_timeout(
+            "reset_api_control_check",
+            config.timeouts["api_control"],
+            lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+        ):
+            raise FlightInvariantError("API control became enabled during reset verification")
+        last_state = _get_state(client, config, "reset")
+        last_collision = collision_monitor._read("reset")
+        if (
+            last_collision["has_collided"]
+            and last_collision["object_name"]
+            != config.touchdown.expected_ground_object
+        ):
+            collision_monitor._fail_collision(
+                last_collision, "non-ground contact after reset"
+            )
+        if (
+            float(last_collision["penetration_depth_m"])
+            > config.touchdown.max_penetration_depth_m
+        ):
+            raise FlightInvariantError(
+                "reset penetration depth "
+                f"{float(last_collision['penetration_depth_m']):.6f}m exceeds "
+                f"{config.touchdown.max_penetration_depth_m:.6f}m"
+            )
+        position_error = _distance(Vector3(*last_state["position"]), config.start)
+        roll = abs(float(last_state["attitude_deg"]["roll"]))
+        pitch = abs(float(last_state["attitude_deg"]["pitch"]))
+        stable = all(
+            (
+                position_error <= config.start_tolerance_m,
+                last_state["speed_mps"]
+                <= config.touchdown.stationary_velocity_tolerance_mps,
+                last_state["angular_speed_rps"]
+                <= config.touchdown.stationary_angular_velocity_tolerance_rps,
+                max(roll, pitch)
+                <= config.touchdown.max_landing_roll_pitch_deg,
+                last_state["landed_state"] == collision_monitor.landed_state_value,
+            )
+        )
+        if stable:
+            if stable_since is None:
+                stable_since = time.monotonic()
+            if time.monotonic() - stable_since >= config.dwell_seconds:
+                retained = dict(last_state)
+                retained["position_error_m"] = position_error
+                retained["api_control_enabled"] = False
+                retained["collision"] = dict(last_collision)
+                recorder.result["reset_state"] = retained
+                recorder.result["reset_confirmed"] = True
+                return retained
+        else:
+            stable_since = None
+        time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+    raise StageTimeout(
+        "reset did not restore A/stationary/landed/API-off state: "
+        + json.dumps(
+            {"state": last_state, "collision": last_collision}, sort_keys=True
+        )
+    )
 
 
 def _safe_cleanup(
@@ -922,13 +1410,23 @@ def _safe_cleanup(
                     timeout_sec=timeout, vehicle_name=config.vehicle_name
                 ),
             )
-            _join_future("abort_land", timeout, future)
             if collision_monitor is None:
                 raise FlightInvariantError(
                     "cannot confirm cleanup touchdown without collision baseline"
                 )
-            collision_monitor.wait_for_touchdown("cleanup")
+            _join_future_guarded(
+                "abort_land",
+                timeout,
+                future,
+                lambda: collision_monitor.check_landing(
+                    "abort_land_async", enforce_landing_zone=False
+                ),
+            )
+            landed = collision_monitor.wait_for_touchdown(
+                "cleanup", enforce_landing_zone=False
+            )
             recorder.result["landing_confirmed"] = True
+            recorder.result["landing_state"] = landed
             recorder.transition("ABORT_LAND", "PASS")
         except FlightInvariantError as exc:
             recorder.error(str(exc))
@@ -941,8 +1439,8 @@ def _safe_cleanup(
                 timeout,
                 lambda: client.armDisarm(False, vehicle_name=config.vehicle_name),
             )
-            if result is False:
-                raise FlightInvariantError("abort_disarm returned false")
+            if result is not True:
+                raise FlightInvariantError("abort_disarm did not return true")
             recorder.result["disarm_confirmed"] = True
             recorder.transition("ABORT_DISARM", "PASS")
         except FlightInvariantError as exc:
@@ -1055,7 +1553,12 @@ def run_smoke(
                 vehicle_name=config.vehicle_name,
             ),
         )
-        _join_future("takeoff", config.timeouts["takeoff"], future)
+        _join_future_guarded(
+            "takeoff",
+            config.timeouts["takeoff"],
+            future,
+            lambda: collision_monitor.check_inflight("takeoff"),
+        )
         _assert_api_control(client, config, "takeoff")
         collision_monitor.check_inflight("takeoff")
         recorder.transition("TAKEOFF", "PASS")
@@ -1075,11 +1578,20 @@ def run_smoke(
                 vehicle_name=config.vehicle_name,
             ),
         )
-        _join_future(
-            "takeoff_altitude_move", config.timeouts["takeoff"], future
+        _join_future_guarded(
+            "takeoff_altitude_move",
+            config.timeouts["takeoff"],
+            future,
+            lambda: collision_monitor.check_inflight("takeoff_altitude"),
         )
         _assert_api_control(client, config, "takeoff_altitude")
-        _wait_for_pose_dwell(client, config, takeoff_target, "takeoff")
+        _wait_for_pose_dwell(
+            client,
+            config,
+            takeoff_target,
+            "takeoff",
+            lambda: collision_monitor.check_inflight("takeoff_altitude_dwell"),
+        )
         collision_monitor.check_inflight("takeoff_altitude")
         recorder.transition(
             "VERIFY_TAKEOFF_ALTITUDE",
@@ -1092,9 +1604,19 @@ def run_smoke(
             config.timeouts["hover"],
             lambda: client.hoverAsync(vehicle_name=config.vehicle_name),
         )
-        _join_future("hover", config.timeouts["hover"], future)
+        _join_future_guarded(
+            "hover",
+            config.timeouts["hover"],
+            future,
+            lambda: collision_monitor.check_inflight("hover"),
+        )
         _assert_api_control(client, config, "hover")
-        _wait_for_velocity_dwell(client, config, "hover")
+        _wait_for_velocity_dwell(
+            client,
+            config,
+            "hover",
+            lambda: collision_monitor.check_inflight("hover_dwell"),
+        )
         collision_monitor.check_inflight("hover")
         recorder.transition("HOVER", "PASS")
 
@@ -1110,12 +1632,23 @@ def run_smoke(
                 vehicle_name=config.vehicle_name,
             ),
         )
-        _join_future("move", config.timeouts["move"], future)
+        _join_future_guarded(
+            "move",
+            config.timeouts["move"],
+            future,
+            lambda: collision_monitor.check_inflight("move"),
+        )
         _assert_api_control(client, config, "move")
         collision_monitor.check_inflight("move")
         recorder.transition("MOVE_A_TO_B", "PASS")
 
-        arrived = _wait_for_pose_dwell(client, config, config.target, "arrival")
+        arrived = _wait_for_pose_dwell(
+            client,
+            config,
+            config.target,
+            "arrival",
+            lambda: collision_monitor.check_inflight("arrival_dwell"),
+        )
         recorder.result["position_error_m"] = arrived["position_error_m"]
         recorder.transition(
             "VERIFY_ARRIVAL",
@@ -1129,9 +1662,19 @@ def run_smoke(
             config.timeouts["hover"],
             lambda: client.hoverAsync(vehicle_name=config.vehicle_name),
         )
-        _join_future("final_hover", config.timeouts["hover"], future)
+        _join_future_guarded(
+            "final_hover",
+            config.timeouts["hover"],
+            future,
+            lambda: collision_monitor.check_inflight("final_hover"),
+        )
         _assert_api_control(client, config, "final_hover")
-        _wait_for_velocity_dwell(client, config, "hover")
+        _wait_for_velocity_dwell(
+            client,
+            config,
+            "hover",
+            lambda: collision_monitor.check_inflight("final_hover_dwell"),
+        )
         collision_monitor.check_inflight("final_hover")
         recorder.transition("FINAL_HOVER", "PASS")
 
@@ -1143,10 +1686,16 @@ def run_smoke(
                 vehicle_name=config.vehicle_name,
             ),
         )
-        _join_future("land", config.timeouts["land"], future)
+        _join_future_guarded(
+            "land",
+            config.timeouts["land"],
+            future,
+            lambda: collision_monitor.check_landing("land_async"),
+        )
         _assert_api_control(client, config, "land")
         landed = collision_monitor.wait_for_touchdown("land")
         recorder.result["landing_confirmed"] = True
+        recorder.result["landing_state"] = landed
         recorder.transition(
             "LAND",
             "PASS",
@@ -1158,8 +1707,8 @@ def run_smoke(
             config.timeouts["cleanup"],
             lambda: client.armDisarm(False, vehicle_name=config.vehicle_name),
         )
-        if disarm_result is False:
-            raise FlightInvariantError("disarm returned false")
+        if disarm_result is not True:
+            raise FlightInvariantError("disarm did not return true")
         armed = False
         recorder.result["disarm_confirmed"] = True
         recorder.transition("DISARM", "PASS")
@@ -1179,8 +1728,15 @@ def run_smoke(
         recorder.result["api_control_released"] = True
         recorder.transition("RELEASE_API", "PASS")
 
-        final_state = _get_state(client, config, "vehicle_check")
-        recorder.result["final_state"] = final_state
+        reset_state = _reset_and_verify(
+            client, config, recorder, collision_monitor
+        )
+        recorder.result["final_state"] = reset_state
+        recorder.transition(
+            "RESET_VERIFY",
+            "PASS",
+            f"position_error_m={reset_state['position_error_m']:.6f}",
+        )
         completed = True
     except (ConfigurationError, FlightInvariantError) as exc:
         recorder.error(str(exc))
@@ -1199,6 +1755,27 @@ def run_smoke(
                 armed=armed,
                 api_control=api_control,
             )
+        if (
+            client is not None
+            and collision_monitor is not None
+            and not recorder.result["reset_confirmed"]
+            and not recorder.result["reset_attempted"]
+            and recorder.result["disarm_confirmed"]
+            and recorder.result["api_control_released"]
+        ):
+            try:
+                reset_state = _reset_and_verify(
+                    client, config, recorder, collision_monitor
+                )
+                recorder.result["final_state"] = reset_state
+                recorder.transition(
+                    "ABORT_RESET_VERIFY",
+                    "PASS",
+                    f"position_error_m={reset_state['position_error_m']:.6f}",
+                )
+            except FlightInvariantError as exc:
+                recorder.error(str(exc))
+                recorder.transition("ABORT_RESET_VERIFY", "FAIL", str(exc))
         recorder.result["cleanup_complete"] = (
             not cleanup_required
             or (
@@ -1214,6 +1791,7 @@ def run_smoke(
             recorder.result["landing_confirmed"],
             recorder.result["disarm_confirmed"],
             recorder.result["api_control_released"],
+            recorder.result["reset_confirmed"],
             recorder.result["cleanup_complete"],
         )
     )

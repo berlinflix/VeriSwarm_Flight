@@ -1,14 +1,17 @@
 import json
+import math
 import time
 from types import SimpleNamespace
 
 import pytest
+import sim.cosys_smoke_flight as smoke_module
 
 from sim.cosys_smoke_flight import (
     CONFIG_SCHEMA,
     ConfigurationError,
     _flight_contract_sha256,
     _write_create_once,
+    main,
     run_smoke,
     validate_config,
 )
@@ -55,6 +58,13 @@ def route_config():
         "touchdown": {
             "expected_ground_object": "Ground",
             "stationary_velocity_tolerance_mps": 0.05,
+            "stationary_angular_velocity_tolerance_rps": 0.05,
+            "max_landing_linear_speed_mps": 1.0,
+            "max_landing_angular_speed_rps": 0.5,
+            "max_landing_roll_pitch_deg": 10.0,
+            "max_penetration_depth_m": 0.05,
+            "landing_zone_radius_m": 0.5,
+            "landing_dwell_seconds": 2.0,
             "landed_state_deviation": {
                 "id": "QB-LANDED-STATE-001",
                 "approved": False,
@@ -71,8 +81,9 @@ def route_config():
             "hover": 0.2,
             "move": 0.2,
             "arrival": 0.2,
-            "land": 0.2,
-            "cleanup": 0.2,
+            "land": 2.5,
+            "cleanup": 2.5,
+            "reset": 0.2,
         },
         "evidence": {"output_path": "airsim_smoke.json"},
     }
@@ -102,6 +113,19 @@ class FakeClient:
         in_flight_collision=False,
         stale_landed_after_touchdown=False,
         touchdown_delay_checks=0,
+        landing_linear_speed=0.0,
+        landing_angular_speed=0.0,
+        landing_roll_deg=0.0,
+        penetration_depth=0.0,
+        landing_offset_x=0.0,
+        disarm_result=True,
+        reset_position=None,
+        reset_velocity=None,
+        reset_angular_velocity=None,
+        reset_landed_state=0,
+        reset_api_control=False,
+        post_contact_linear_speed_sequence=None,
+        collision_during_route_poll=False,
     ):
         self.roster = roster or ["alpha", "bravo", "charlie"]
         self.move_delay = move_delay
@@ -110,10 +134,28 @@ class FakeClient:
         self.in_flight_collision = in_flight_collision
         self.stale_landed_after_touchdown = stale_landed_after_touchdown
         self.touchdown_delay_checks = touchdown_delay_checks
+        self.landing_linear_speed = landing_linear_speed
+        self.landing_angular_speed = landing_angular_speed
+        self.landing_roll_deg = landing_roll_deg
+        self.penetration_depth = penetration_depth
+        self.landing_offset_x = landing_offset_x
+        self.disarm_result = disarm_result
+        self.reset_position = reset_position
+        self.reset_velocity = reset_velocity
+        self.reset_angular_velocity = reset_angular_velocity
+        self.reset_landed_state = reset_landed_state
+        self.reset_api_control = reset_api_control
+        self.post_contact_linear_speed_sequence = list(
+            post_contact_linear_speed_sequence or []
+        )
+        self.collision_during_route_poll = collision_during_route_poll
+        self.route_future_active = False
         self.touchdown_pending = None
+        self.landing_started = False
         self.move_call_count = 0
         self.position = [0.0, 0.0, 0.0]
         self.velocity = [0.0, 0.0, 0.0]
+        self.angular_velocity = [0.0, 0.0, 0.0]
         self.api_control = False
         self.armed = False
         self.landed_state = 0
@@ -139,6 +181,8 @@ class FakeClient:
 
     def armDisarm(self, armed, vehicle_name=""):
         self.calls.append(("armDisarm", armed, vehicle_name))
+        if not armed and self.disarm_result is not True:
+            return self.disarm_result
         self.armed = armed
         return True
 
@@ -160,6 +204,8 @@ class FakeClient:
         vehicle_name="",
     ):
         self.move_call_count += 1
+        if self.move_call_count >= 2:
+            self.route_future_active = True
         self.calls.append(
             (
                 "moveToPositionAsync",
@@ -181,6 +227,7 @@ class FakeClient:
                 self.collided = True
                 self.collision_object = "Building"
                 self.collision_timestamp += 1.0
+            self.route_future_active = False
 
         return FakeFuture(arrive, self.move_delay)
 
@@ -188,6 +235,10 @@ class FakeClient:
         self.calls.append(("landAsync", timeout_sec, vehicle_name))
 
         def begin_touchdown():
+            self.landing_started = True
+            self.velocity = [self.landing_linear_speed, 0.0, 0.0]
+            self.angular_velocity = [self.landing_angular_speed, 0.0, 0.0]
+            self.position[0] += self.landing_offset_x
             self.touchdown_pending = self.touchdown_delay_checks
             if self.touchdown_pending == 0:
                 self._complete_touchdown()
@@ -195,10 +246,12 @@ class FakeClient:
         return FakeFuture(begin_touchdown)
 
     def _complete_touchdown(self):
+        self.calls.append("ground_contact")
         self.collided = True
         self.collision_object = "Ground"
         self.collision_timestamp += 1.0
         self.velocity = [0.0, 0.0, 0.0]
+        self.angular_velocity = [0.0, 0.0, 0.0]
         self.landed_state = 1 if self.stale_landed_after_touchdown else 0
         self.touchdown_pending = None
 
@@ -207,6 +260,15 @@ class FakeClient:
             x_val=values[0], y_val=values[1], z_val=values[2]
         )
         position = list(self.position)
+        velocity = list(self.velocity)
+        if (
+            self.landing_started
+            and self.touchdown_pending is None
+            and self.collided
+            and self.collision_object == "Ground"
+            and self.post_contact_linear_speed_sequence
+        ):
+            velocity[0] = self.post_contact_linear_speed_sequence.pop(0)
         if self.nonfinite_telemetry:
             position[0] = float("nan")
         return SimpleNamespace(
@@ -214,11 +276,38 @@ class FakeClient:
             landed_state=self.landed_state,
             kinematics_estimated=SimpleNamespace(
                 position=vector(position),
-                linear_velocity=vector(self.velocity),
+                linear_velocity=vector(velocity),
+                angular_velocity=vector(self.angular_velocity),
+                orientation=SimpleNamespace(
+                    w_val=math.cos(math.radians(self.landing_roll_deg) / 2.0),
+                    x_val=math.sin(math.radians(self.landing_roll_deg) / 2.0),
+                    y_val=0.0,
+                    z_val=0.0,
+                ),
             ),
         )
 
+    def reset(self):
+        self.calls.append("reset")
+        self.position = list(self.reset_position or [0.0, 0.0, 0.0])
+        self.velocity = list(self.reset_velocity or [0.0, 0.0, 0.0])
+        self.angular_velocity = list(
+            self.reset_angular_velocity or [0.0, 0.0, 0.0]
+        )
+        self.landed_state = self.reset_landed_state
+        self.api_control = self.reset_api_control
+        self.armed = False
+        self.collided = True
+        self.collision_object = "Ground"
+        self.collision_timestamp += 1.0
+
     def simGetCollisionInfo(self, vehicle_name=""):
+        self.calls.append("simGetCollisionInfo")
+        if self.collision_during_route_poll and self.route_future_active:
+            self.collided = True
+            self.collision_object = "Building"
+            self.collision_timestamp += 1.0
+            self.collision_during_route_poll = False
         if self.touchdown_pending is not None:
             if self.touchdown_pending <= 0:
                 self._complete_touchdown()
@@ -229,6 +318,18 @@ class FakeClient:
             object_name=(self.collision_object or "test-wall") if self.collided else "",
             object_id=7 if self.collided else -1,
             time_stamp=self.collision_timestamp,
+            penetration_depth=self.penetration_depth,
+            normal=SimpleNamespace(x_val=0.0, y_val=0.0, z_val=-1.0),
+            impact_point=SimpleNamespace(
+                x_val=self.position[0],
+                y_val=self.position[1],
+                z_val=self.position[2],
+            ),
+            position=SimpleNamespace(
+                x_val=self.position[0],
+                y_val=self.position[1],
+                z_val=self.position[2],
+            ),
         )
 
 
@@ -272,6 +373,14 @@ def test_unapproved_deviation_cannot_claim_suyash_approval_fields():
         validate_config(raw)
 
 
+def test_touchdown_dwell_is_frozen_at_two_seconds():
+    raw = route_config()
+    raw["touchdown"]["landing_dwell_seconds"] = 1.99
+
+    with pytest.raises(ConfigurationError, match="exactly 2.0"):
+        validate_config(raw)
+
+
 def test_flight_contract_hash_ignores_create_once_output_path():
     first = route_config()
     second = route_config()
@@ -300,11 +409,18 @@ def test_happy_path_records_landing_disarm_release_and_zero_collisions():
     assert result["landing_confirmed"] is True
     assert result["disarm_confirmed"] is True
     assert result["api_control_released"] is True
+    assert result["reset_confirmed"] is True
+    assert result["reset_state"]["position_error_m"] == 0.0
+    assert result["reset_state"]["api_control_enabled"] is False
+    assert result["touchdown_dwell"]["completed_seconds"] >= 2.0
     assert client.armed is False
     assert client.api_control is False
     transitions = [row["state"] for row in result["transitions"]]
     assert transitions.index("MOVE_A_TO_B") < transitions.index("FINAL_HOVER")
     assert transitions.index("FINAL_HOVER") < transitions.index("LAND")
+    assert transitions.index("RELEASE_API") < transitions.index("RESET_VERIFY")
+    release_index = client.calls.index(("enableApiControl", False, "alpha"))
+    assert release_index < client.calls.index("reset")
 
 
 def test_expected_startup_ground_contact_is_baselined_not_counted():
@@ -321,10 +437,37 @@ def test_expected_startup_ground_contact_is_baselined_not_counted():
     assert result["pass"] is True
     assert result["initial_collision"]["object_name"] == "Ground"
     assert result["collision_count"] == 0
+    assert set(result["initial_collision"]) >= {
+        "has_collided",
+        "object_name",
+        "object_id",
+        "timestamp",
+        "penetration_depth_m",
+        "normal",
+        "impact_point",
+        "position",
+    }
     assert [row["phase"] for row in result["ground_contacts"]] == [
         "startup",
         "touchdown",
     ]
+
+
+def test_startup_ground_contact_must_be_stationary():
+    config = validate_config(route_config())
+    client = FakeClient(startup_ground_contact=True)
+    client.velocity = [0.1, 0.0, 0.0]
+
+    result = run_smoke(
+        config,
+        "2" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert any("startup Ground contact is not stationary" in error for error in result["errors"])
+    assert client.api_control is False
 
 
 def test_missing_vehicle_fails_before_api_control():
@@ -402,7 +545,28 @@ def test_new_in_flight_collision_timestamp_fails():
     assert any("non-ground contact during move" in error for error in result["errors"])
 
 
-def test_delayed_touchdown_is_polled_until_ground_and_stationary():
+def test_collision_is_detected_while_transit_future_is_still_running():
+    config = validate_config(route_config())
+    client = FakeClient(
+        move_delay=0.1,
+        collision_during_route_poll=True,
+    )
+
+    result = run_smoke(
+        config,
+        "4" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert result["collision_count"] >= 1
+    assert any(
+        "non-ground contact during move" in error for error in result["errors"]
+    )
+
+
+def test_early_returning_land_future_waits_for_current_ground_and_two_second_dwell():
     config = validate_config(route_config())
     client = FakeClient(touchdown_delay_checks=2)
 
@@ -416,6 +580,73 @@ def test_delayed_touchdown_is_polled_until_ground_and_stationary():
     assert result["pass"] is True
     assert result["landing_confirmed"] is True
     assert result["ground_contacts"][-1]["phase"] == "touchdown"
+    assert result["touchdown_dwell"]["contact_event_timestamp"] is not None
+    assert result["touchdown_dwell"]["completed_seconds"] >= 2.0
+    assert client.calls.index("ground_contact") < client.calls.index(
+        ("armDisarm", False, "alpha")
+    )
+
+
+def test_touchdown_dwell_resets_after_stationary_threshold_violation():
+    config = validate_config(route_config())
+    client = FakeClient(
+        post_contact_linear_speed_sequence=[0.0, 0.0, 0.2, 0.0]
+    )
+
+    result = run_smoke(
+        config,
+        "7" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is True
+    assert result["touchdown_dwell"]["reset_count"] >= 1
+    assert any(
+        "stationary linear speed" in violation
+        for sample in result["touchdown_threshold_violations"]
+        for violation in sample["violations"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("client_kwargs", "expected_error"),
+    [
+        (
+            {"landing_linear_speed": 1.1, "touchdown_delay_checks": 2},
+            "linear speed",
+        ),
+        (
+            {"landing_angular_speed": 0.6, "touchdown_delay_checks": 2},
+            "angular speed",
+        ),
+        (
+            {"landing_roll_deg": 11.0, "touchdown_delay_checks": 2},
+            "roll/pitch",
+        ),
+        (
+            {"penetration_depth": 0.06, "touchdown_delay_checks": 2},
+            "penetration depth",
+        ),
+        (
+            {"landing_offset_x": 0.6, "touchdown_delay_checks": 2},
+            "landing-zone error",
+        ),
+    ],
+)
+def test_landing_envelope_violation_fails_capture(client_kwargs, expected_error):
+    config = validate_config(route_config())
+    client = FakeClient(**client_kwargs)
+
+    result = run_smoke(
+        config,
+        "8" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert any(expected_error in error for error in result["errors"])
 
 
 def test_stale_landed_state_requires_explicit_deviation_approval():
@@ -458,6 +689,96 @@ def test_approved_stale_landed_state_deviation_is_recorded_when_applied():
     assert recorded["approved"] is True
     assert recorded["applied"] is True
     assert recorded["approval_reference"] == "written-QB-LANDED-STATE-001"
+
+
+def test_disarm_must_return_true_and_failed_capture_still_releases_api():
+    config = validate_config(route_config())
+    client = FakeClient(disarm_result=False)
+
+    result = run_smoke(
+        config,
+        "9" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert result["disarm_confirmed"] is False
+    assert result["api_control_released"] is True
+    assert result["reset_confirmed"] is False
+    assert any("disarm did not return true" in error for error in result["errors"])
+
+
+@pytest.mark.parametrize(
+    "client_kwargs",
+    [
+        {"reset_position": [1.0, 0.0, 0.0]},
+        {"reset_velocity": [0.1, 0.0, 0.0]},
+        {"reset_angular_velocity": [0.1, 0.0, 0.0]},
+        {"reset_landed_state": 1},
+    ],
+)
+def test_reset_must_restore_a_stationary_landed_and_api_off(client_kwargs):
+    raw = route_config()
+    raw["timeouts_seconds"]["reset"] = 0.05
+    config = validate_config(raw)
+    client = FakeClient(**client_kwargs)
+
+    result = run_smoke(
+        config,
+        "0" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert result["api_control_released"] is True
+    assert result["reset_attempted"] is True
+    assert result["reset_confirmed"] is False
+    assert any("reset did not restore" in error for error in result["errors"])
+
+
+def test_reset_fails_if_api_control_reenables():
+    config = validate_config(route_config())
+    client = FakeClient(reset_api_control=True)
+
+    result = run_smoke(
+        config,
+        "a" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert result["reset_confirmed"] is False
+    assert any(
+        "API control became enabled during reset verification" in error
+        for error in result["errors"]
+    )
+
+
+class ApiReleaseRefusalClient(FakeClient):
+    def enableApiControl(self, enabled, vehicle_name=""):
+        self.calls.append(("enableApiControl", enabled, vehicle_name))
+        if enabled:
+            self.api_control = True
+
+
+def test_api_control_off_must_be_observed_before_reset():
+    config = validate_config(route_config())
+    client = ApiReleaseRefusalClient()
+
+    result = run_smoke(
+        config,
+        "b" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert result["api_control_released"] is False
+    assert result["reset_attempted"] is False
+    assert any("API control remained enabled" in error for error in result["errors"])
 
 
 def test_nonfinite_live_telemetry_fails_before_api_control():
@@ -531,6 +852,29 @@ def test_cleanup_failure_is_retained_and_cannot_pass():
     assert any("cleanup land unavailable" in error for error in result["errors"])
     assert any("cleanup disarm unavailable" in error for error in result["errors"])
     assert any("cleanup API release unavailable" in error for error in result["errors"])
+
+
+def test_main_returns_nonzero_and_preserves_json_for_failed_capture(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "route.json"
+    output_path = tmp_path / "failed.json"
+    config_path.write_text(json.dumps(route_config()), encoding="utf-8")
+    client = FakeClient(roster=["bravo"])
+    monkeypatch.setattr(
+        smoke_module,
+        "_live_client_factory",
+        lambda _config: (client, 0),
+    )
+
+    exit_code = main(
+        ["--config", str(config_path), "--out", str(output_path)]
+    )
+
+    assert exit_code != 0
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert result["pass"] is False
+    assert result["process_result"] == "FAIL"
 
 
 def test_evidence_output_is_create_once(tmp_path):
