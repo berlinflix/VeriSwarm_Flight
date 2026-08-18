@@ -408,7 +408,9 @@ def test_happy_path_records_landing_disarm_release_and_zero_collisions():
     assert result["collision_count"] == 0
     assert result["landing_confirmed"] is True
     assert result["disarm_confirmed"] is True
+    assert result["disarm_return"] is True
     assert result["api_control_released"] is True
+    assert result["api_control_enabled_after_release"] is False
     assert result["reset_confirmed"] is True
     assert result["reset_state"]["position_error_m"] == 0.0
     assert result["reset_state"]["api_control_enabled"] is False
@@ -579,7 +581,14 @@ def test_early_returning_land_future_waits_for_current_ground_and_two_second_dwe
 
     assert result["pass"] is True
     assert result["landing_confirmed"] is True
+    assert result["land_async_join"]["phase"] == "land_async_join"
+    assert result["land_async_join"]["state"]["landed_state"] == 1
+    assert result["land_async_join"]["collision"]["has_collided"] is False
     assert result["ground_contacts"][-1]["phase"] == "touchdown"
+    assert (
+        result["land_async_join"]["collision"]["timestamp"]
+        < result["ground_contacts"][-1]["timestamp"]
+    )
     assert result["touchdown_dwell"]["contact_event_timestamp"] is not None
     assert result["touchdown_dwell"]["completed_seconds"] >= 2.0
     assert client.calls.index("ground_contact") < client.calls.index(
@@ -590,7 +599,7 @@ def test_early_returning_land_future_waits_for_current_ground_and_two_second_dwe
 def test_touchdown_dwell_resets_after_stationary_threshold_violation():
     config = validate_config(route_config())
     client = FakeClient(
-        post_contact_linear_speed_sequence=[0.0, 0.0, 0.2, 0.0]
+        post_contact_linear_speed_sequence=[0.0, 0.0, 0.0, 0.2, 0.0]
     )
 
     result = run_smoke(
@@ -670,12 +679,17 @@ def test_stale_landed_state_requires_explicit_deviation_approval():
 
 def test_approved_stale_landed_state_deviation_is_recorded_when_applied():
     raw = route_config()
+    raw["runtime"]["qualification_configuration"] = "Q-B"
+    raw["runtime"]["environment_family"] = "Blocks"
+    raw["vehicle"]["name"] = "Drone1"
     deviation = raw["touchdown"]["landed_state_deviation"]
     deviation["approved"] = True
     deviation["approved_by"] = "Suyash"
     deviation["approval_reference"] = "written-QB-LANDED-STATE-001"
     config = validate_config(raw)
-    client = FakeClient(stale_landed_after_touchdown=True)
+    client = FakeClient(
+        roster=["Drone1"], stale_landed_after_touchdown=True
+    )
 
     result = run_smoke(
         config,
@@ -689,6 +703,17 @@ def test_approved_stale_landed_state_deviation_is_recorded_when_applied():
     assert recorded["approved"] is True
     assert recorded["applied"] is True
     assert recorded["approval_reference"] == "written-QB-LANDED-STATE-001"
+
+
+def test_landed_state_deviation_cannot_apply_outside_q_b_simpleflight():
+    raw = route_config()
+    deviation = raw["touchdown"]["landed_state_deviation"]
+    deviation["approved"] = True
+    deviation["approved_by"] = "Suyash"
+    deviation["approval_reference"] = "QB-LANDED-STATE-001-COMPARISON-01"
+
+    with pytest.raises(ConfigurationError, match="only to Q-B SimpleFlight"):
+        validate_config(raw)
 
 
 def test_disarm_must_return_true_and_failed_capture_still_releases_api():

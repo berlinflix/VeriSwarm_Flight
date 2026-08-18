@@ -307,6 +307,18 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
         raise ConfigurationError(
             f"{decision} requires environment_family={expected_family!r}"
         )
+    vehicle_name = _text(
+        _required(vehicle, "name", "config.vehicle"), "config.vehicle.name"
+    )
+    vehicle_type = _text(
+        _required(vehicle, "type", "config.vehicle"), "config.vehicle.type"
+    )
+    if decision == "Q-B" and (
+        vehicle_name != "Drone1" or vehicle_type != "SimpleFlight"
+    ):
+        raise ConfigurationError(
+            "Q-B requires raw vehicle name 'Drone1' and type 'SimpleFlight'"
+        )
     unreal_version = _text(
         _required(runtime_raw, "unreal_engine_version", "config.runtime"),
         "config.runtime.unreal_engine_version",
@@ -449,6 +461,10 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
             raise ConfigurationError(
                 "QB-LANDED-STATE-001 must be explicitly approved by Suyash"
             )
+        if decision != "Q-B" or vehicle_type != "SimpleFlight":
+            raise ConfigurationError(
+                "QB-LANDED-STATE-001 is scoped only to Q-B SimpleFlight"
+            )
     elif approved_by_raw is not None or approval_reference_raw is not None:
         raise ConfigurationError(
             "unapproved landed-state deviation must keep approval fields null"
@@ -493,12 +509,8 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
             "config.endpoint.rpc_timeout_seconds",
             positive=True,
         ),
-        vehicle_name=_text(
-            _required(vehicle, "name", "config.vehicle"), "config.vehicle.name"
-        ),
-        vehicle_type=_text(
-            _required(vehicle, "type", "config.vehicle"), "config.vehicle.type"
-        ),
+        vehicle_name=vehicle_name,
+        vehicle_type=vehicle_type,
         frame=frame,
         start=start,
         target=target,
@@ -819,6 +831,7 @@ class EvidenceRecorder:
             "collisions": [],
             "initial_collision": None,
             "ground_contacts": [],
+            "land_async_join": None,
             "touchdown_dwell": {
                 "required_seconds": config.touchdown.landing_dwell_seconds,
                 "contact_event_timestamp": None,
@@ -830,7 +843,9 @@ class EvidenceRecorder:
             "landing_confirmed": False,
             "landing_state": None,
             "disarm_confirmed": False,
+            "disarm_return": None,
             "api_control_released": False,
+            "api_control_enabled_after_release": None,
             "reset_attempted": False,
             "reset_confirmed": False,
             "reset_state": None,
@@ -1083,6 +1098,22 @@ class CollisionMonitor:
         )
         if violations:
             raise FlightInvariantError(f"{phase} envelope violation: {violations[0]}")
+
+    def capture_landing_snapshot(self, phase: str) -> dict[str, Any]:
+        state = _get_state(self.client, self.config, "land")
+        collision = self._read("land")
+        horizontal_error, violations = self._landing_envelope(
+            state, collision, phase
+        )
+        snapshot = {
+            "captured_ns": time.time_ns(),
+            "phase": phase,
+            "state": state,
+            "collision": collision,
+            "landing_zone_error_m": horizontal_error,
+            "envelope_violations": list(violations),
+        }
+        return snapshot
 
     def wait_for_touchdown(
         self, timeout_name: str, *, enforce_landing_zone: bool = True
@@ -1439,6 +1470,7 @@ def _safe_cleanup(
                 timeout,
                 lambda: client.armDisarm(False, vehicle_name=config.vehicle_name),
             )
+            recorder.result["disarm_return"] = result
             if result is not True:
                 raise FlightInvariantError("abort_disarm did not return true")
             recorder.result["disarm_confirmed"] = True
@@ -1460,6 +1492,9 @@ def _safe_cleanup(
                 "abort_verify_api_release",
                 timeout,
                 lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+            )
+            recorder.result["api_control_enabled_after_release"] = bool(
+                still_enabled
             )
             if still_enabled:
                 raise FlightInvariantError("API control remained enabled after cleanup")
@@ -1692,6 +1727,26 @@ def run_smoke(
             future,
             lambda: collision_monitor.check_landing("land_async"),
         )
+        land_join_snapshot = collision_monitor.capture_landing_snapshot(
+            "land_async_join"
+        )
+        recorder.result["land_async_join"] = land_join_snapshot
+        join_violations = land_join_snapshot["envelope_violations"]
+        recorder.transition(
+            "LAND_ASYNC_JOIN",
+            "FAIL" if join_violations else "PASS",
+            "landed_state="
+            f"{land_join_snapshot['state']['landed_state']},"
+            "speed_mps="
+            f"{land_join_snapshot['state']['speed_mps']:.6f},"
+            "ground_event="
+            f"{land_join_snapshot['collision']['has_collided']}",
+        )
+        if join_violations:
+            raise FlightInvariantError(
+                "land_async_join envelope violation: "
+                f"{join_violations[0]}"
+            )
         _assert_api_control(client, config, "land")
         landed = collision_monitor.wait_for_touchdown("land")
         recorder.result["landing_confirmed"] = True
@@ -1707,6 +1762,7 @@ def run_smoke(
             config.timeouts["cleanup"],
             lambda: client.armDisarm(False, vehicle_name=config.vehicle_name),
         )
+        recorder.result["disarm_return"] = disarm_result
         if disarm_result is not True:
             raise FlightInvariantError("disarm did not return true")
         armed = False
@@ -1718,11 +1774,15 @@ def run_smoke(
             config.timeouts["cleanup"],
             lambda: client.enableApiControl(False, vehicle_name=config.vehicle_name),
         )
-        if _call_with_timeout(
+        api_control_after_release = _call_with_timeout(
             "verify_api_release",
             config.timeouts["cleanup"],
             lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
-        ):
+        )
+        recorder.result["api_control_enabled_after_release"] = bool(
+            api_control_after_release
+        )
+        if api_control_after_release:
             raise FlightInvariantError("API control remained enabled after release")
         api_control = False
         recorder.result["api_control_released"] = True
