@@ -554,6 +554,13 @@ def test_approved_deviation_requires_exact_frozen_reference():
         validate_config(raw)
 
 
+def test_frozen_deviation_reference_includes_disposition_filename_and_hash():
+    assert APPROVED_DEVIATION_REFERENCE == (
+        "SUYASH_QB_LANDED_STATE_001_DISPOSITION_2026-08-19.txt "
+        "sha256:8836ACEAD75A64FF21EA5D1E0DB21B0402ACA0BDC88FDDAF4C3135C9A514EA0B"
+    )
+
+
 def test_touchdown_dwell_is_frozen_at_two_seconds():
     raw = route_config()
     raw["touchdown"]["landing_dwell_seconds"] = 1.99

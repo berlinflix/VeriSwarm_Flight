@@ -21,15 +21,16 @@ The deviation result is valid only when the recorded values are exactly:
   "id": "QB-LANDED-STATE-001",
   "approved": true,
   "approved_by": "Suyash",
-  "approval_reference": "Suyash-QB-LANDED-STATE-001-2026-08-19",
+  "approval_reference": "SUYASH_QB_LANDED_STATE_001_DISPOSITION_2026-08-19.txt sha256:8836ACEAD75A64FF21EA5D1E0DB21B0402ACA0BDC88FDDAF4C3135C9A514EA0B",
   "applied": true
 }
 ```
 
 The frozen configuration SHA-256 binds this approval reference to the rest of
-the run input. The campaign handoff must separately verify the frozen approval
-artifact filename/hash; the runner does not invent or reconstruct that private
-artifact.
+the run input. It identifies Suyash's independently frozen
+`SUYASH_QB_LANDED_STATE_001_DISPOSITION_2026-08-19.txt` artifact (2,488 bytes,
+SHA-256 `8836ACEAD75A64FF21EA5D1E0DB21B0402ACA0BDC88FDDAF4C3135C9A514EA0B`).
+The runner never invents or reconstructs that private artifact.
 
 `rpc_execution` records the executor model, whether a fresh fail-safe context
 was created after a timeout, and every timeout observed. A timed-out live RPC
