@@ -66,6 +66,35 @@ class ProcessLoopSensitiveClient:
         assert id(smoke_module.asyncio.get_event_loop()) == self.owner_loop
 
 
+class ProcessBlockingFuture:
+    def join(self):
+        while True:
+            time.sleep(0.01)
+
+
+class ProcessSafetyAbortClient:
+    """Process fake whose command can end only when its owner process is killed."""
+
+    def __init__(self):
+        self.owner_pid = os.getpid()
+        self.owner_thread = threading.get_ident()
+        self.owner_loop = id(smoke_module.asyncio.get_event_loop())
+
+    def hoverAsync(self, vehicle_name=""):
+        return ProcessBlockingFuture()
+
+    def armDisarm(self, armed, vehicle_name=""):
+        assert os.getpid() == self.owner_pid
+        assert threading.get_ident() == self.owner_thread
+        assert id(smoke_module.asyncio.get_event_loop()) == self.owner_loop
+        return True
+
+    def close(self):
+        assert os.getpid() == self.owner_pid
+        assert threading.get_ident() == self.owner_thread
+        assert id(smoke_module.asyncio.get_event_loop()) == self.owner_loop
+
+
 class DirectLoopSensitiveClient:
     def __init__(self):
         self.owner_thread = threading.get_ident()
@@ -223,8 +252,59 @@ def test_process_rpc_timeout_terminates_orphan_before_late_completion(tmp_path):
             smoke_module.FlightInvariantError, match="unusable"
         ):
             worker.call("ping", 0.1, "ping", (), {})
+        assert worker.close() is False
     finally:
         worker.close()
+
+
+def test_safety_failure_aborts_active_command_and_rebuilds_cleanup_context():
+    client = smoke_module._ProcessAffineCosysClient(
+        ProcessSafetyAbortClient,
+        startup_timeout_seconds=2.0,
+        default_timeout_seconds=1.0,
+    )
+    command_worker = client._command
+    future = smoke_module._rpc_call(
+        client,
+        "hover_start",
+        1.0,
+        "hoverAsync",
+        vehicle_name="Drone1",
+    )
+    original = smoke_module.FlightInvariantError("new in-flight collision")
+    try:
+        with pytest.raises(smoke_module.FlightInvariantError) as raised:
+            smoke_module._join_future_guarded(
+                "hover",
+                1.0,
+                future,
+                lambda: (_ for _ in ()).throw(original),
+            )
+
+        assert raised.value is original
+        assert getattr(original, "_cosys_inflight_command_aborted") is True
+        assert getattr(original, "_cosys_join_thread_exited") is True
+        assert command_worker.usable is False
+        assert command_worker._process.is_alive() is False
+        assert not any(
+            thread.name == "cosys-hover-join" and thread.is_alive()
+            for thread in threading.enumerate()
+        )
+
+        client.begin_failsafe_cleanup()
+        assert client._command is not command_worker
+        assert client._command.usable is True
+        assert client._observation.usable is True
+        assert smoke_module._rpc_call(
+            client,
+            "cleanup_disarm",
+            1.0,
+            "armDisarm",
+            False,
+            vehicle_name="Drone1",
+        ) is True
+    finally:
+        assert client.close() is False
 
 
 class FakeClient:
@@ -481,6 +561,40 @@ class TimeoutAwareClient:
         }
 
 
+class SafetyAbortRunFuture:
+    def __init__(self):
+        self._release = threading.Event()
+
+    def join(self):
+        self._release.wait(timeout=1.0)
+
+    def abort_inflight(self, label, reason):
+        self._release.set()
+
+
+class SafetyAbortRunClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.failsafe_started = False
+
+    def takeoffAsync(self, timeout_sec=20, vehicle_name=""):
+        self.calls.append(("takeoffAsync", timeout_sec, vehicle_name))
+        self.collided = True
+        self.collision_object = "Building"
+        self.collision_timestamp += 1.0
+        return SafetyAbortRunFuture()
+
+    def begin_failsafe_cleanup(self):
+        self.failsafe_started = True
+
+    def diagnostics(self):
+        return {
+            "execution_model": "test_abort_context",
+            "failsafe_context_created": self.failsafe_started,
+            "timeouts": [],
+        }
+
+
 def test_rpc_timeout_marks_failure_and_enters_failsafe_context():
     config = validate_config(route_config())
     client = TimeoutAwareClient()
@@ -498,6 +612,34 @@ def test_rpc_timeout_marks_failure_and_enters_failsafe_context():
     assert result["rpc_execution"]["failsafe_context_created"] is True
     assert any(
         transition["state"] == "RPC_TIMEOUT_FAILSAFE_CONTEXT"
+        and transition["outcome"] == "PASS"
+        for transition in result["transitions"]
+    )
+
+
+def test_safety_abort_uses_failsafe_context_and_main_returns_nonzero(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "route.json"
+    output_path = tmp_path / "safety-abort.json"
+    config_path.write_text(json.dumps(route_config()), encoding="utf-8")
+    client = SafetyAbortRunClient()
+    monkeypatch.setattr(
+        smoke_module,
+        "_live_client_factory",
+        lambda _config: (client, 0),
+    )
+
+    exit_code = main(["--config", str(config_path), "--out", str(output_path)])
+
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code != 0
+    assert result["pass"] is False
+    assert result["process_result"] == "FAIL"
+    assert client.failsafe_started is True
+    assert result["rpc_execution"]["failsafe_context_created"] is True
+    assert any(
+        transition["state"] == "RPC_ABORT_FAILSAFE_CONTEXT"
         and transition["outcome"] == "PASS"
         for transition in result["transitions"]
     )
@@ -1136,6 +1278,43 @@ def test_preflight_cli_is_create_once_read_only_and_closes_client(
         ("getMultirotorState", "Drone1"),
         "close",
     ]
+
+
+def test_preflight_scope_is_refused_before_live_client_construction(
+    tmp_path, monkeypatch
+):
+    raw = route_config()
+    raw["runtime"]["qualification_configuration"] = "Q-B"
+    raw["runtime"]["environment_family"] = "Blocks"
+    raw["vehicle"]["name"] = "Drone1"
+    raw["endpoint"]["host"] = "192.168.50.11"
+    config_path = tmp_path / "qb-invalid-scope.json"
+    output_path = tmp_path / "QB-PREFLIGHT-INVALID-SCOPE.json"
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    factory_called = False
+
+    def refuse_factory(_config):
+        nonlocal factory_called
+        factory_called = True
+        raise AssertionError("preflight scope should refuse before construction")
+
+    monkeypatch.setattr(smoke_module, "_live_client_factory", refuse_factory)
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--out",
+            str(output_path),
+            "--preflight-only",
+        ]
+    )
+
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code != 0
+    assert factory_called is False
+    assert result["failure_class"] == "PREFLIGHT_SCOPE_REFUSED"
+    assert result["process_result"] == "FAIL"
 
 
 def test_preflight_fails_when_client_shutdown_is_not_clean(tmp_path, monkeypatch):

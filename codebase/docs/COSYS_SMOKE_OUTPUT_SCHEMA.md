@@ -36,6 +36,12 @@ The runner never invents or reconstructs that private artifact.
 was created after a timeout, and every timeout observed. A timed-out live RPC
 process is terminated and cannot later contribute a successful result.
 
+The same abort rule applies when a phase safety check fails while an async
+command is still joining: the command-owner process is terminated, its local
+join thread is awaited, and the original collision/safety error is retained.
+Before abort cleanup starts, the runner creates fresh command and observation
+contexts; cleanup never waits behind the terminated command's RPC lock.
+
 Configuration and startup refusals use `process_result: "FAIL"`; their more
 specific reason is retained in `failure_class`.
 
@@ -48,7 +54,8 @@ python -m sim.cosys_smoke_flight --preflight-only --config PATH_TO_FROZEN_QB_CON
 ```
 
 This mode refuses any endpoint except `127.0.0.1:41451`, any runtime except
-Q-B, or any vehicle name except raw `Drone1`. It performs only:
+Q-B, or any vehicle name except raw `Drone1` **before constructing a client or
+starting a network/process operation**. It performs only:
 
 1. client construction;
 2. `ping()`;
@@ -58,4 +65,6 @@ Q-B, or any vehicle name except raw `Drone1`. It performs only:
 
 It never enables API control, arms, takes off, resets or moves the vehicle.
 The JSON passes only when the read-only checks and clean client shutdown all
-succeed. Console capture remains an operator-owned, create-once companion file.
+succeed. A poisoned or force-terminated RPC context reports
+`client_shutdown: false`; it is never represented as a clean shutdown. Console
+capture remains an operator-owned, create-once companion file.

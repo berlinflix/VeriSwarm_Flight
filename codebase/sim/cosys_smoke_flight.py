@@ -158,6 +158,7 @@ class _RpcProcessWorker:
         self._request_id = 0
         self._usable = True
         self._closed = False
+        self._shutdown_clean: bool | None = None
         context = multiprocessing.get_context("spawn")
         parent_connection, child_connection = context.Pipe()
         self._connection = parent_connection
@@ -201,20 +202,36 @@ class _RpcProcessWorker:
             process.kill()
             process.join(timeout=1.0)
 
-    def _poison(self, reason: str, timeout_seconds: float) -> None:
+    def _poison(
+        self,
+        reason: str,
+        timeout_seconds: float,
+        *,
+        notify_timeout: bool = True,
+    ) -> None:
         notify = False
         with self._state_lock:
             if self._usable:
                 self._usable = False
                 notify = True
+            self._shutdown_clean = False
         self._terminate_process()
-        if notify and self._on_timeout is not None:
+        if notify and notify_timeout and self._on_timeout is not None:
             self._on_timeout(reason, timeout_seconds)
 
     def abort_timeout(self, label: str, timeout_seconds: float) -> None:
         self._poison(
             f"{label} exceeded {timeout_seconds:.3f}s",
             timeout_seconds,
+        )
+
+    def abort_inflight(self, label: str, reason: str) -> None:
+        """Terminate an active command after a safety invariant fails."""
+
+        self._poison(
+            f"{label} aborted after safety invariant: {reason}",
+            0.0,
+            notify_timeout=False,
         )
 
     def _request(
@@ -284,7 +301,7 @@ class _RpcProcessWorker:
     def close(self) -> bool:
         with self._state_lock:
             if self._closed:
-                return True
+                return self._shutdown_clean is True
             self._closed = True
             was_usable = self._usable
             self._usable = False
@@ -306,7 +323,9 @@ class _RpcProcessWorker:
             self._connection.close()
         except OSError:
             pass
-        return graceful or not was_usable
+        with self._state_lock:
+            self._shutdown_clean = graceful
+        return graceful
 
 
 class _ProcessRpcFuture:
@@ -323,6 +342,9 @@ class _ProcessRpcFuture:
 
     def abort_timeout(self, label: str, timeout_seconds: float) -> None:
         self._worker.abort_timeout(label, timeout_seconds)
+
+    def abort_inflight(self, label: str, reason: str) -> None:
+        self._worker.abort_inflight(label, reason)
 
 
 class _ProcessAffineCosysClient:
@@ -358,6 +380,7 @@ class _ProcessAffineCosysClient:
         self._default_timeout_seconds = default_timeout_seconds
         self._timeouts: list[dict[str, Any]] = []
         self._failsafe_mode = False
+        self._had_forced_termination = False
         self._closed = False
         self._command = self._new_worker("command")
         try:
@@ -433,8 +456,10 @@ class _ProcessAffineCosysClient:
         if self._closed or self._failsafe_mode:
             return
         self._failsafe_mode = True
-        self._command.close()
-        self._observation.close()
+        command_closed = self._command.close()
+        observation_closed = self._observation.close()
+        if not command_closed or not observation_closed:
+            self._had_forced_termination = True
         self._command = self._new_worker("failsafe-command")
         try:
             self._observation = self._new_worker("failsafe-observation")
@@ -451,11 +476,15 @@ class _ProcessAffineCosysClient:
 
     def close(self) -> bool:
         if self._closed:
-            return True
+            return not self._had_forced_termination
         self._closed = True
         observation_closed = self._observation.close()
         command_closed = self._command.close()
-        return observation_closed and command_closed
+        return (
+            not self._had_forced_termination
+            and observation_closed
+            and command_closed
+        )
 
 
 @dataclass(frozen=True)
@@ -1148,6 +1177,7 @@ def _join_future_guarded(
 
     join_with_timeout = getattr(future, "join_with_timeout", None)
     abort_timeout = getattr(future, "abort_timeout", None)
+    abort_inflight = getattr(future, "abort_inflight", None)
     if not hasattr(future, "join"):
         if not callable(join_with_timeout):
             raise FlightInvariantError(f"{label} returned no joinable future")
@@ -1169,14 +1199,42 @@ def _join_future_guarded(
         daemon=not callable(join_with_timeout),
     )
     worker.start()
+
+    def abort_after_safety_failure(original: BaseException) -> None:
+        """Stop the command before letting a safety failure escape the join loop."""
+
+        try:
+            if callable(abort_inflight):
+                abort_inflight(label, str(original))
+        finally:
+            worker.join(timeout=1.0)
+            try:
+                setattr(original, "_cosys_inflight_command_aborted", True)
+                setattr(
+                    original,
+                    "_cosys_join_thread_exited",
+                    not worker.is_alive(),
+                )
+            except BaseException:
+                # Preserve the original safety exception even for unusual exception types.
+                pass
+
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         try:
             succeeded, value = results.get(timeout=0.01)
         except queue.Empty:
-            safety_check()
+            try:
+                safety_check()
+            except BaseException as exc:
+                abort_after_safety_failure(exc)
+                raise
             continue
-        safety_check()
+        try:
+            safety_check()
+        except BaseException as exc:
+            abort_after_safety_failure(exc)
+            raise
         if not succeeded:
             if isinstance(value, FlightInvariantError):
                 raise value
@@ -1971,6 +2029,36 @@ def _safe_cleanup(
             recorder.transition("ABORT_RELEASE_API", "FAIL", str(exc))
 
 
+def _begin_failsafe_cleanup_context(
+    client: Any | None,
+    exc: BaseException,
+    recorder: EvidenceRecorder,
+) -> None:
+    """Replace aborted/expired live RPC contexts before any cleanup command."""
+
+    if client is None:
+        return
+    aborted_inflight = bool(
+        getattr(exc, "_cosys_inflight_command_aborted", False)
+    )
+    if not isinstance(exc, StageTimeout) and not aborted_inflight:
+        return
+    begin_failsafe = getattr(client, "begin_failsafe_cleanup", None)
+    if not callable(begin_failsafe):
+        return
+    transition = (
+        "RPC_ABORT_FAILSAFE_CONTEXT"
+        if aborted_inflight
+        else "RPC_TIMEOUT_FAILSAFE_CONTEXT"
+    )
+    try:
+        begin_failsafe()
+        recorder.transition(transition, "PASS")
+    except FlightInvariantError as cleanup_context_exc:
+        recorder.error(str(cleanup_context_exc))
+        recorder.transition(transition, "FAIL", str(cleanup_context_exc))
+
+
 def run_smoke(
     config: SmokeConfig,
     config_sha256: str,
@@ -2265,21 +2353,7 @@ def run_smoke(
         )
         completed = True
     except (ConfigurationError, FlightInvariantError) as exc:
-        if isinstance(exc, StageTimeout) and client is not None:
-            begin_failsafe = getattr(client, "begin_failsafe_cleanup", None)
-            if callable(begin_failsafe):
-                try:
-                    begin_failsafe()
-                    recorder.transition(
-                        "RPC_TIMEOUT_FAILSAFE_CONTEXT", "PASS"
-                    )
-                except FlightInvariantError as cleanup_context_exc:
-                    recorder.error(str(cleanup_context_exc))
-                    recorder.transition(
-                        "RPC_TIMEOUT_FAILSAFE_CONTEXT",
-                        "FAIL",
-                        str(cleanup_context_exc),
-                    )
+        _begin_failsafe_cleanup_context(client, exc, recorder)
         recorder.error(str(exc))
         recorder.transition("FAIL", "FAIL", str(exc))
     except Exception as exc:  # vendor exceptions still produce evidence and cleanup
@@ -2366,6 +2440,21 @@ def _live_client_factory(config: SmokeConfig) -> tuple[Any, int]:
     return client, int(cosysairsim.LandedState.Landed)
 
 
+def _validate_read_only_preflight_scope(config: SmokeConfig) -> None:
+    """Refuse any non-local Q-B preflight before opening a client or RPC process."""
+
+    if config.runtime.qualification_configuration != "Q-B":
+        raise FlightInvariantError("read-only preflight requires Q-B runtime")
+    if config.host != "127.0.0.1" or config.port != 41451:
+        raise FlightInvariantError(
+            "read-only preflight requires endpoint 127.0.0.1:41451"
+        )
+    if config.vehicle_name != "Drone1":
+        raise FlightInvariantError(
+            "read-only preflight requires exact raw vehicle name Drone1"
+        )
+
+
 def run_read_only_preflight(
     config: SmokeConfig,
     config_sha256: str,
@@ -2396,16 +2485,7 @@ def run_read_only_preflight(
         "process_result": "FAIL",
     }
     try:
-        if config.runtime.qualification_configuration != "Q-B":
-            raise FlightInvariantError("read-only preflight requires Q-B runtime")
-        if config.host != "127.0.0.1" or config.port != 41451:
-            raise FlightInvariantError(
-                "read-only preflight requires endpoint 127.0.0.1:41451"
-            )
-        if config.vehicle_name != "Drone1":
-            raise FlightInvariantError(
-                "read-only preflight requires exact raw vehicle name Drone1"
-            )
+        _validate_read_only_preflight_scope(config)
         ping = _rpc_call(
             client, "preflight_ping", config.timeouts["connect"], "ping"
         )
@@ -2527,6 +2607,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     if output_path.exists():
         print(f"ERROR: refusing to overwrite evidence file: {output_path}")
         return 2
+
+    if args.preflight_only:
+        try:
+            _validate_read_only_preflight_scope(config)
+        except FlightInvariantError as exc:
+            result = {
+                "schema": PREFLIGHT_OUTPUT_SCHEMA,
+                "created_ns": time.time_ns(),
+                "config_sha256": config_sha256,
+                "errors": [str(exc)],
+                "pass": False,
+                "process_result": "FAIL",
+                "failure_class": "PREFLIGHT_SCOPE_REFUSED",
+            }
+            try:
+                _write_create_once(output_path, result)
+            except (OSError, ConfigurationError) as write_exc:
+                print(f"ERROR: {write_exc}")
+                return 2
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 2
 
     client: Any | None = None
     try:
