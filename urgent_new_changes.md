@@ -42,6 +42,36 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
+### 2026-08-19 — Webcam hardware and ownership changed; live tool implemented
+**Status:** FOLDED
+**Changed:** the physical rig is one USB webcam plus one tripod-mounted Android
+DroidCam source, not two matched USB webcams. `codebase/tools/covis_live.py`, its focused
+tests and `codebase/docs/COVIS_LIVE.md` now exist locally. Ayush is primary camera-rig
+operator. Samik owns implementation, technical oversight and recovery. Abhijan applies
+the attack artifact. Suyash independently accepts evidence and retains GO/NO-GO.
+
+ORB/RANSAC is only the co-visibility gate. Feature overlap alone may report `COVISIBLE`
+but never semantic agreement. `AGREE`/`DISPUTE` requires healthy frames with sufficiently
+close host receive times, co-visibility and measured claims from the pinned detector. This
+is not hardware exposure synchronization. Camera loss, blur, stale/skewed frames,
+inadequate overlap or inference failure is `ABSTAIN`.
+
+The physical demo reports view-overlap IoU and best same-class detector-box IoU only after
+RANSAC projects Camera A into Camera B's image plane. Raw cross-view boxes are never
+compared; these values are planar demo measurements, not calibrated 3-D IoU. There is no
+second USB fallback: if DroidCam fails its time-box, the same phone uses a frozen,
+prevalidated local MJPEG/RTSP source and a new run ID.
+
+**Makes stale:** older statements assigning `covis_live` implementation/rig operation to
+Suyash or Abhijan, and any hardware diagram requiring two identical USB webcams.
+
+**Who must act:** Ayush freezes/operates Camera A USB and Camera B DroidCam and retains the
+run evidence; Samik reviews the Jetson stack/command/thresholds and verifies release before
+OP-TEE; Abhijan applies/removes the attack; Suyash reviews the final evidence.
+
+**Why:** this matches the hardware actually available and prevents feature matching from
+being overstated as adversarial semantic detection.
+
 ### 2026-08-18 — Protocol v4 supersedes v3: attested, class-aware observations
 **Status:** OPEN
 **Changed:** `PROTOCOL_VERSION` is **4**. Every `Receipt` carries a

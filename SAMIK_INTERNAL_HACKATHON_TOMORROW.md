@@ -14,6 +14,25 @@ You may begin the smoke client before Pratik finishes the immutable handoff, but
 
 Use Codex for the smoke-flight state machine, focused tests/mocks, Bravo launch validation and failure-path review. Require it to inspect the installed AirSim/CoSys client version before choosing API calls. Review every diff yourself and validate against Pratik's actual simulator; a mock-only pass does not satisfy the acceptance check. Do not edit Suyash's shared protocol interfaces without an agreed handoff.
 
+### S-T0 — Oversee Ayush's USB + DroidCam demonstrator
+
+- Own the technical correctness of `codebase/tools/covis_live.py` and
+  `codebase/docs/COVIS_LIVE.md`; Ayush is primary physical operator.
+- Freeze Camera A as the USB webcam and Camera B as the Android DroidCam source.
+- Run feature-only alignment first, then the pinned-model semantic mode.
+- Require the operator window to show both live feeds with the exact YOLO
+  boxes, class names and confidence used by the retained decision; a
+  numbers-only display is not the deliverable.
+- Confirm ORB/RANSAC is described only as a co-visibility gate; semantic
+  `AGREE`/`DISPUTE` requires real measured detector claims.
+- Verify `view_IoU` and same-class `box_IoU` are calculated only after Camera A
+  is projected into Camera B's plane. Never accept raw cross-view box IoU or
+  describe the planar measurement as calibrated 3-D IoU.
+- Reject clean instability and camera-loss/blur/skew events presented as attack success.
+- Require three clean→attack→recovery cycles and `release_verified=true`.
+- After release, close DroidCam and hand the Jetson to the fresh OP-TEE preflight.
+- Act as recovery operator and reviewer; do not run webcam and Alpha concurrently.
+
 ### S-T1 — Implement the CoSys/AirSim smoke-flight script
 
 Create `codebase/sim/cosys_smoke_flight.py` as a narrow transport test, not as the final autonomy stack.

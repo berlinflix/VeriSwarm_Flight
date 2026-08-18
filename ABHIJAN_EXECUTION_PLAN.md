@@ -176,10 +176,10 @@ motion decision under the approved identity. Clean restoration is hash-verified.
 
 #### Physical webcam stage
 
-1. Build the two-camera rig with matched webcams, rigid labelled mounts and recorded
-   separation/range/viewpoint.
-2. Freeze camera indices, resolution, exposure settings where possible, intrinsics and
-   scene lighting.
+1. Ayush builds and operates the rigidly mounted Camera A USB webcam and Camera B Android
+   DroidCam tripod rig under Samik's oversight. Abhijan supplies/applies the attack artifact.
+2. Ayush and Samik freeze sources, resolution, exposure settings where possible,
+   separation/range/viewpoint and scene lighting.
 3. Test the exact printed patch/object at the rehearsed size, material and distance.
 4. Run clean shared view, camera-B movement, patch in camera A, partial/full lens cover,
    glare and blur.
@@ -305,18 +305,17 @@ command → task recovery` without trusting a UI label.
 
 ## 5. Physical-rig responsibilities
 
-Abhijan owns:
+Ayush owns the USB webcam, Android phone/tripod, mounts, labels and source mapping under
+Samik's technical oversight. Abhijan owns:
 
-- the two matched webcams, mounts, labels and USB layout;
 - the actual printed patch/object and reproducible print specification;
 - lighting, range and viewpoint matrix;
 - choreography and safe judge interaction;
-- verifying `covis_live` releases devices at handover;
 - backup clean/attack recordings and evidence hashes.
 
-Suyash owns the `covis_live` implementation and protocol correctness. Abhijan reports bugs
-with raw frames/configuration; he does not fork the algorithm to make the demonstration
-look better.
+Samik owns/oversees the `covis_live` implementation and verifies release; Suyash performs
+independent evidence acceptance. Abhijan reports bugs with raw frames/configuration; he
+does not fork the algorithm to make the demonstration look better.
 
 ## 6. Console/operator responsibilities
 

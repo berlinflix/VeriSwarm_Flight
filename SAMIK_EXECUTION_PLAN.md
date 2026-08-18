@@ -23,6 +23,8 @@ review dependency; they do not transfer that person's task to Samik.
   `MissionRunner`/`Originator` executes on the Jetson after the webcam handover and signs
   locally through OP-TEE. Samik may operate it over SSH.
 - Do not claim that OP-TEE attests inference. It protects Alpha's signing key only.
+- Oversee Ayush's USB-webcam/Android-DroidCam rig. The camera stage is unarmed and must
+  release both sources before Samik starts Alpha or OP-TEE preflight.
 
 **Protocol-v4 integration baseline (2026-08-18):** the detector-facing seam already
 requires atomic `PerceptionResult(action, claim)` values; measured class-aware claims now
@@ -63,6 +65,8 @@ bury workarounds in code.
 | `codebase/sim/cosys_adapter.py` | Sensor source, state conversion and supervisor-only command sink |
 | `codebase/tools/run_campaign.py` | Checked startup, execution, shutdown, reset and evidence orchestration |
 | `codebase/tools/fetch_models.py` | Registry-driven, hash-verified candidate acquisition |
+| `codebase/tools/covis_live.py` | Unarmed live co-visibility and semantic camera evidence; operated by Ayush |
+| `codebase/docs/COVIS_LIVE.md` | USB/DroidCam setup, evidence and Jetson handover runbook |
 | `codebase/eval/model_selection.py` | Identical benchmark for `yolov8n/s/m` |
 | `codebase/autonomy/mission_manager.py` | Signed mission lifecycle and terminal-state handling |
 | `codebase/autonomy/state_estimator.py` | Estimator/VIO health and uncertainty interface |
