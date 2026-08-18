@@ -54,6 +54,16 @@
       "z": null
     }
   },
+  "touchdown": {
+    "expected_ground_object": "Ground",
+    "stationary_velocity_tolerance_mps": 0.05,
+    "landed_state_deviation": {
+      "id": "QB-LANDED-STATE-001",
+      "approved": false,
+      "approved_by": null,
+      "approval_reference": null
+    }
+  },
   "timeouts_seconds": {
     "connect": null,
     "vehicle_check": null,

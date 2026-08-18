@@ -7,6 +7,7 @@ import pytest
 from sim.cosys_smoke_flight import (
     CONFIG_SCHEMA,
     ConfigurationError,
+    _flight_contract_sha256,
     _write_create_once,
     run_smoke,
     validate_config,
@@ -51,6 +52,16 @@ def route_config():
             "min": {"x": -100.0, "y": -100.0, "z": -20.0},
             "max": {"x": 100.0, "y": 100.0, "z": 1.0},
         },
+        "touchdown": {
+            "expected_ground_object": "Ground",
+            "stationary_velocity_tolerance_mps": 0.05,
+            "landed_state_deviation": {
+                "id": "QB-LANDED-STATE-001",
+                "approved": False,
+                "approved_by": None,
+                "approval_reference": None,
+            },
+        },
         "timeouts_seconds": {
             "connect": 0.2,
             "vehicle_check": 0.2,
@@ -87,18 +98,28 @@ class FakeClient:
         move_delay=0.0,
         lose_control_on_route_move=False,
         nonfinite_telemetry=False,
+        startup_ground_contact=False,
+        in_flight_collision=False,
+        stale_landed_after_touchdown=False,
+        touchdown_delay_checks=0,
     ):
         self.roster = roster or ["alpha", "bravo", "charlie"]
         self.move_delay = move_delay
         self.lose_control_on_route_move = lose_control_on_route_move
         self.nonfinite_telemetry = nonfinite_telemetry
+        self.in_flight_collision = in_flight_collision
+        self.stale_landed_after_touchdown = stale_landed_after_touchdown
+        self.touchdown_delay_checks = touchdown_delay_checks
+        self.touchdown_pending = None
         self.move_call_count = 0
         self.position = [0.0, 0.0, 0.0]
         self.velocity = [0.0, 0.0, 0.0]
         self.api_control = False
         self.armed = False
         self.landed_state = 0
-        self.collided = False
+        self.collided = startup_ground_contact
+        self.collision_object = "Ground" if startup_ground_contact else ""
+        self.collision_timestamp = 1.0 if startup_ground_contact else 0.0
         self.calls = []
 
     def ping(self):
@@ -156,12 +177,30 @@ class FakeClient:
             self.velocity = [0.0, 0.0, 0.0]
             if self.lose_control_on_route_move and self.move_call_count >= 2:
                 self.api_control = False
+            if self.in_flight_collision and self.move_call_count >= 2:
+                self.collided = True
+                self.collision_object = "Building"
+                self.collision_timestamp += 1.0
 
         return FakeFuture(arrive, self.move_delay)
 
     def landAsync(self, timeout_sec=60, vehicle_name=""):
         self.calls.append(("landAsync", timeout_sec, vehicle_name))
-        return FakeFuture(lambda: setattr(self, "landed_state", 0))
+
+        def begin_touchdown():
+            self.touchdown_pending = self.touchdown_delay_checks
+            if self.touchdown_pending == 0:
+                self._complete_touchdown()
+
+        return FakeFuture(begin_touchdown)
+
+    def _complete_touchdown(self):
+        self.collided = True
+        self.collision_object = "Ground"
+        self.collision_timestamp += 1.0
+        self.velocity = [0.0, 0.0, 0.0]
+        self.landed_state = 1 if self.stale_landed_after_touchdown else 0
+        self.touchdown_pending = None
 
     def getMultirotorState(self, vehicle_name=""):
         vector = lambda values: SimpleNamespace(
@@ -180,11 +219,16 @@ class FakeClient:
         )
 
     def simGetCollisionInfo(self, vehicle_name=""):
+        if self.touchdown_pending is not None:
+            if self.touchdown_pending <= 0:
+                self._complete_touchdown()
+            else:
+                self.touchdown_pending -= 1
         return SimpleNamespace(
             has_collided=self.collided,
-            object_name="test-wall" if self.collided else "",
+            object_name=(self.collision_object or "test-wall") if self.collided else "",
             object_id=7 if self.collided else -1,
-            time_stamp=1.0,
+            time_stamp=self.collision_timestamp,
         )
 
 
@@ -220,6 +264,24 @@ def test_route_outside_geofence_is_refused():
         validate_config(raw)
 
 
+def test_unapproved_deviation_cannot_claim_suyash_approval_fields():
+    raw = route_config()
+    raw["touchdown"]["landed_state_deviation"]["approved_by"] = "Suyash"
+
+    with pytest.raises(ConfigurationError, match="approval fields null"):
+        validate_config(raw)
+
+
+def test_flight_contract_hash_ignores_create_once_output_path():
+    first = route_config()
+    second = route_config()
+    second["evidence"]["output_path"] = "cold_run_2.json"
+
+    assert _flight_contract_sha256(validate_config(first)) == _flight_contract_sha256(
+        validate_config(second)
+    )
+
+
 def test_happy_path_records_landing_disarm_release_and_zero_collisions():
     config = validate_config(route_config())
     client = FakeClient()
@@ -243,6 +305,26 @@ def test_happy_path_records_landing_disarm_release_and_zero_collisions():
     transitions = [row["state"] for row in result["transitions"]]
     assert transitions.index("MOVE_A_TO_B") < transitions.index("FINAL_HOVER")
     assert transitions.index("FINAL_HOVER") < transitions.index("LAND")
+
+
+def test_expected_startup_ground_contact_is_baselined_not_counted():
+    config = validate_config(route_config())
+    client = FakeClient(startup_ground_contact=True)
+
+    result = run_smoke(
+        config,
+        "2" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is True
+    assert result["initial_collision"]["object_name"] == "Ground"
+    assert result["collision_count"] == 0
+    assert [row["phase"] for row in result["ground_contacts"]] == [
+        "startup",
+        "touchdown",
+    ]
 
 
 def test_missing_vehicle_fails_before_api_control():
@@ -302,6 +384,80 @@ def test_collision_fails_and_enters_cleanup():
     assert "collision detected" in result["errors"][0]
     assert client.api_control is False
     assert client.armed is False
+
+
+def test_new_in_flight_collision_timestamp_fails():
+    config = validate_config(route_config())
+    client = FakeClient(startup_ground_contact=True, in_flight_collision=True)
+
+    result = run_smoke(
+        config,
+        "3" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert result["collision_count"] >= 1
+    assert any("non-ground contact during move" in error for error in result["errors"])
+
+
+def test_delayed_touchdown_is_polled_until_ground_and_stationary():
+    config = validate_config(route_config())
+    client = FakeClient(touchdown_delay_checks=2)
+
+    result = run_smoke(
+        config,
+        "4" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is True
+    assert result["landing_confirmed"] is True
+    assert result["ground_contacts"][-1]["phase"] == "touchdown"
+
+
+def test_stale_landed_state_requires_explicit_deviation_approval():
+    config = validate_config(route_config())
+    client = FakeClient(stale_landed_after_touchdown=True)
+
+    result = run_smoke(
+        config,
+        "5" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert any("requires Suyash approval" in error for error in result["errors"])
+    assert (
+        result["touchdown_policy"]["landed_state_deviation"]["applied"]
+        is False
+    )
+
+
+def test_approved_stale_landed_state_deviation_is_recorded_when_applied():
+    raw = route_config()
+    deviation = raw["touchdown"]["landed_state_deviation"]
+    deviation["approved"] = True
+    deviation["approved_by"] = "Suyash"
+    deviation["approval_reference"] = "written-QB-LANDED-STATE-001"
+    config = validate_config(raw)
+    client = FakeClient(stale_landed_after_touchdown=True)
+
+    result = run_smoke(
+        config,
+        "6" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is True
+    recorded = result["touchdown_policy"]["landed_state_deviation"]
+    assert recorded["approved"] is True
+    assert recorded["applied"] is True
+    assert recorded["approval_reference"] == "written-QB-LANDED-STATE-001"
 
 
 def test_nonfinite_live_telemetry_fails_before_api_control():
