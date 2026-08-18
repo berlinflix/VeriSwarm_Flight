@@ -94,6 +94,9 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
             phi_min=float(manifest.get("phi_min", 0.0)),
             hfov=math.radians(float(manifest.get("camera_hfov_deg", 69.0))),
             vfov=math.radians(float(manifest.get("camera_vfov_deg", 53.0))),
+            occupancy_tolerance=float(
+                manifest.get("occupancy_tolerance", 0.35)
+            ),
             on_covis=self._emit_covis,
         )
         self.my_pose = common.pose_of(entry)
@@ -178,11 +181,13 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
                 if abs(signed.receipt.timestamp_ns - captured_ns) > max_skew_ns:
                     raise ValueError("local perception snapshot is not time-aligned")
                 my_observation = snapshot.action
+                my_claim = snapshot.claim
                 my_pose = snapshot.pose
             except Exception:
                 # A missing, malformed, or temporally mismatched snapshot is an
                 # abstention. Never inherit the preceding observation.
                 my_observation = None
+                my_claim = None
                 my_pose = None
         else:
             try:
@@ -193,6 +198,7 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
                 )
             except Exception:
                 my_observation = None
+            my_claim = None
             try:
                 my_pose = (
                     self._pose_provider()
@@ -227,6 +233,7 @@ class AttestationServicer(pb_grpc.AttestationServiceServicer):
             my_observation=my_observation,
             my_pose=my_pose,
             originator_pose=originator_pose,
+            my_claim=my_claim,
         )
         with self._lock:
             self._vote_cache[digest] = vote

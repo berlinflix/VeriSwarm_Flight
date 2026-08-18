@@ -18,6 +18,7 @@ import pytest
 from node import common
 from node import server as node_server
 from node.client import Originator
+from perception.claim import PerceptionClaim
 from protocol.peer_consensus import ConsensusOutcome
 
 
@@ -98,6 +99,81 @@ def test_distributed_adversarial_patch_rejects():
     r = _run(obs, output=(1.0, 0.0, 0.0), model_hash=common.APPROVED_MODEL)
     assert r.outcome is ConsensusOutcome.REJECTED
     assert r.dispute_count == 2
+
+
+def test_measured_claim_survives_grpc_and_forms_semantic_quorum():
+    ids = ["alpha", "bravo", "charlie"]
+    man = common.generate_manifest(ids, poses=_formation(ids))
+    empty = PerceptionClaim.from_detections([])
+    servers = []
+    for pid in ids[1:]:
+        man["nodes"][pid]["port"] = 0
+        pose = common.pose_of(man["nodes"][pid])
+        servers.append(node_server.serve(
+            pid,
+            man,
+            broadcast_votes=False,
+            snapshot_provider=lambda pose=pose: SimpleNamespace(
+                captured_ns=time.time_ns(),
+                action=(0.1, 0.0, 0.0),
+                claim=empty,
+                pose=pose,
+            ),
+        ))
+    try:
+        originator = Originator(man, "alpha", ids[1:])
+        outcome = originator.originate(
+            (0.1, 0.0, 0.0),
+            common.APPROVED_MODEL,
+            perception=empty,
+        )
+        originator.close()
+        assert outcome.outcome is ConsensusOutcome.ACCEPTED
+        assert outcome.consensus.semantic_ack_count == 2
+        assert outcome.receipt.perception == empty
+    finally:
+        _stop(servers)
+
+
+def test_measured_presence_disagreement_rejects_over_grpc():
+    ids = ["alpha", "bravo", "charlie"]
+    man = common.generate_manifest(ids, poses=_formation(ids))
+    empty = PerceptionClaim.from_detections([])
+    obstacle = PerceptionClaim(
+        measured=True,
+        detections_present=True,
+        detection_count=1,
+        class_ids=(5,),
+        occupancy=0.36,
+        max_confidence=0.9,
+    )
+    servers = []
+    for pid in ids[1:]:
+        man["nodes"][pid]["port"] = 0
+        pose = common.pose_of(man["nodes"][pid])
+        servers.append(node_server.serve(
+            pid,
+            man,
+            broadcast_votes=False,
+            snapshot_provider=lambda pose=pose: SimpleNamespace(
+                captured_ns=time.time_ns(),
+                action=(0.0, 0.0, 1.0),
+                claim=obstacle,
+                pose=pose,
+            ),
+        ))
+    try:
+        originator = Originator(man, "alpha", ids[1:])
+        outcome = originator.originate(
+            (1.0, 0.0, 0.0),
+            common.APPROVED_MODEL,
+            perception=empty,
+        )
+        originator.close()
+        assert outcome.outcome is ConsensusOutcome.REJECTED
+        assert outcome.dispute_count == 2
+    finally:
+        _stop(servers)
 
 
 # ---------------------------------------------------------------------------

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from dataclasses import replace
 
 import pytest
 
 from node.events import EventLog, read_events, verify_event_chain
 from node.frame_source import StaticSource
 from node.mission import HealthState, MissionRunner
+from perception.claim import PerceptionClaim, PerceptionResult
 from protocol.geometry import Pose
-from protocol.peer_consensus import ConsensusOutcome, ConsensusResult
+from protocol.peer_consensus import ConsensusOutcome, ConsensusResult, receipt_digest
 from protocol.receipts import build_receipt, sha256_hex
 
 np = pytest.importorskip("numpy")
@@ -39,10 +41,17 @@ class FakeOriginator:
     def originate(self, action, model_hash, **kwargs):
         self.calls.append((action, model_hash, kwargs))
         receipt = build_receipt(
-            "alpha", kwargs["input_bytes"], model_hash, action
+            "alpha",
+            kwargs["input_bytes"],
+            model_hash,
+            action,
+            perception=kwargs["perception"],
         )
         return SimpleNamespace(
-            consensus=self.consensus,
+            consensus=replace(
+                self.consensus,
+                target_receipt_hash=receipt_digest(receipt),
+            ),
             sign_ms=0.1,
             consensus_ms=1.2,
             receipt=receipt,
@@ -71,7 +80,10 @@ def _runner(tmp_path, *, depth=60.0, consensus=None, health=None):
             fixed_pose=Pose(0.0, 0.0, 14.0),
             depth=depth,
         ),
-        inference=lambda _frame: (0.5, 0.0, 0.0),
+        inference=lambda _frame: PerceptionResult(
+            (0.5, 0.0, 0.0),
+            PerceptionClaim.from_detections([]),
+        ),
         originator=originator,
         model_hash=sha256_hex(b"model"),
         health_provider=lambda: health or _health(),
@@ -118,12 +130,25 @@ def test_integrated_step_holds_on_any_missing_evidence(
 @pytest.mark.parametrize("bad_action", [(float("nan"), 0.0, 0.0), (2.0, 0.0, 0.0)])
 def test_invalid_inference_action_holds_before_attestation(tmp_path, bad_action):
     runner, originator, commands = _runner(tmp_path)
-    runner.inference = lambda _frame: bad_action
+    runner.inference = lambda _frame: PerceptionResult(
+        bad_action,
+        PerceptionClaim.from_detections([]),
+    )
     step = runner.step()
     assert not step.authorization.allowed
-    assert step.authorization.reason == "invalid_action"
+    assert step.authorization.reason == "perception_failure"
     assert commands[-1][0] == (0.0, 0.0, 0.0)
     assert originator.calls == []
+
+
+def test_action_only_inference_is_rejected_before_attestation(tmp_path):
+    runner, originator, commands = _runner(tmp_path)
+    runner.inference = lambda _frame: (0.5, 0.0, 0.0)
+    step = runner.step()
+    assert not step.authorization.allowed
+    assert step.authorization.reason == "perception_failure"
+    assert originator.calls == []
+    assert commands[-1][0] == (0.0, 0.0, 0.0)
 
 
 def test_frame_source_exception_holds(tmp_path):

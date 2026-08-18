@@ -17,6 +17,17 @@ package veriswarm.v1;
 // ---------------------------------------------------------------------------
 
 
+message PerceptionClaim {
+  bool measured             = 1;
+  bool detections_present   = 2;
+  uint32 detection_count    = 3;
+  double occupancy          = 4;
+  double max_confidence     = 5;
+  double bearing            = 6;
+  repeated uint32 class_ids = 7; // sorted unique IDs in the pinned mission taxonomy
+}
+
+
 message Receipt {
   string drone_id      = 1;
   int64  timestamp_ns  = 2;
@@ -34,6 +45,7 @@ message Receipt {
   repeated double pose_enu = 14; // x,y,z,yaw,pitch,roll in mission ENU
   int64 pose_timestamp_ns = 15;
   double pose_uncertainty_m = 16;
+  PerceptionClaim perception = 17; // signed detector observation for protocol v4
 }
 
 

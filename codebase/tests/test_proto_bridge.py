@@ -19,6 +19,8 @@ from protocol.receipts import (  # noqa: E402
     build_receipt,
     sha256_hex,
 )
+from perception.claim import PerceptionClaim  # noqa: E402
+from perception.yolo_action import Detection  # noqa: E402
 from protocol.peer_consensus import (  # noqa: E402
     PeerVerifier,
     Vote,
@@ -44,12 +46,16 @@ def test_receipt_roundtrip():
         input_bytes=b"\x00" * 64,
         model_hash=APPROVED,
         output=(0.1, -0.3, 0.5),
+        perception=PerceptionClaim.from_detections(
+            [Detection(5, 0.5, 0.5, 0.4, 0.3, 0.9)]
+        ),
     )
     msg = receipt_to_pb(r)
     r2 = receipt_from_pb(msg)
     assert r2 == r
     # Canonical bytes are byte-identical -> signatures will still verify.
     assert r2.canonical() == r.canonical()
+    assert r2.perception.measured
 
 
 def test_signed_receipt_roundtrip_preserves_signature():

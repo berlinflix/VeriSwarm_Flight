@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 
 from node import common
+from perception.claim import PerceptionClaim
 from protocol.geometry import Pose
 from protocol.peer_consensus import (
     REASON_NO_COVISIBILITY,
@@ -41,6 +42,15 @@ APPROVED = sha256_hex(b"yolov8n-weights-v1")
 # obstacle, so an honest co-observer would command a climb.
 PATCHED_ACTION = (1.0, 0.0, 0.0)
 TRUE_ACTION = (0.0, 0.0, 1.0)
+EMPTY_CLAIM = PerceptionClaim.from_detections([])
+OBJECT_CLAIM = PerceptionClaim(
+    measured=True,
+    detections_present=True,
+    detection_count=1,
+    class_ids=(5,),
+    occupancy=0.36,
+    max_confidence=0.9,
+)
 
 
 def _swarm(ids):
@@ -54,8 +64,13 @@ def _swarm(ids):
 
 
 def _receipt(signers, action=PATCHED_ACTION):
+    claim = OBJECT_CLAIM if action == TRUE_ACTION else EMPTY_CLAIM
     receipt = build_receipt(
-        drone_id="alpha", input_bytes=b"frame", model_hash=APPROVED, output=action
+        drone_id="alpha",
+        input_bytes=b"frame",
+        model_hash=APPROVED,
+        output=action,
+        perception=claim,
     )
     return receipt, signers["alpha"].sign(receipt)
 
@@ -85,6 +100,7 @@ def test_far_peers_ack_but_do_not_count_as_semantic_verification():
         votes.append(verifier.vote_on(
             signed, my_observation=TRUE_ACTION,
             my_pose=pose, originator_pose=alpha_pose,
+            my_claim=OBJECT_CLAIM,
         ))
 
     assert all(v.vote.decision is Vote.ACK for v in votes)
@@ -110,7 +126,11 @@ def test_covisible_peers_produce_semantic_acks():
 
     votes = [
         PeerVerifier(p, signers[p], receipt_verifier, o_min=0.1).vote_on(
-            signed, my_observation=TRUE_ACTION, my_pose=pose, originator_pose=alpha_pose
+            signed,
+            my_observation=TRUE_ACTION,
+            my_pose=pose,
+            originator_pose=alpha_pose,
+            my_claim=OBJECT_CLAIM,
         )
         for p, pose in near.items()
     ]
@@ -147,10 +167,12 @@ def test_one_covisible_peer_still_catches_the_patch():
         PeerVerifier("bravo", signers["bravo"], receipt_verifier, o_min=0.1).vote_on(
             signed, my_observation=TRUE_ACTION,
             my_pose=Pose(3.0, 0.0, 14.0), originator_pose=alpha_pose,
+            my_claim=OBJECT_CLAIM,
         ),
         PeerVerifier("charlie", signers["charlie"], receipt_verifier, o_min=0.1).vote_on(
             signed, my_observation=TRUE_ACTION,
             my_pose=Pose(200.0, 0.0, 14.0), originator_pose=alpha_pose,
+            my_claim=OBJECT_CLAIM,
         ),
     ]
 
@@ -206,6 +228,7 @@ def test_covis_diagnostic_reports_the_measured_overlap():
     verifier.vote_on(
         signed, my_observation=TRUE_ACTION,
         my_pose=Pose(200.0, 0.0, 14.0), originator_pose=Pose(0.0, 0.0, 14.0),
+        my_claim=OBJECT_CLAIM,
     )
 
     assert len(seen) == 1
@@ -226,6 +249,7 @@ def test_covis_diagnostic_reports_a_geometric_pass():
     verifier.vote_on(
         signed, my_observation=TRUE_ACTION,
         my_pose=Pose(3.0, 0.0, 14.0), originator_pose=Pose(0.0, 0.0, 14.0),
+        my_claim=OBJECT_CLAIM,
     )
 
     diag = verifier.last_covis

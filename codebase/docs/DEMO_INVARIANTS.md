@@ -72,6 +72,10 @@ patch on a scene where the obstacle is too small to produce enough action
 divergence. It is honest evidence about the operating envelope, and it is cited in
 the paper's limitations. **Do not regenerate it to make the rows pass.**
 
+It is historical protocol-v2 evidence. Keep it for provenance, but never present
+it as protocol-v4 verification: canonical receipt bytes and semantic evidence
+changed, so the v4 campaign must produce a separately named result artifact.
+
 ---
 
 ## 5. `test_action_space_alone_still_has_the_blind_band` asserts a failure

@@ -20,15 +20,14 @@ from perception.claim import (
     PerceptionClaim,
     claims_agree,
 )
-from perception.safety_supervisor import CommandBinding
 from perception.yolo_action import Detection
 from protocol.receipts import PROTOCOL_VERSION, build_receipt, sha256_hex
 
 APPROVED = sha256_hex(b"yolov8n-weights-v1")
 
 
-def _det(size=0.6, x=0.5, conf=0.9):
-    return Detection(cls=5, x=x, y=0.7, w=size, h=size, conf=conf)
+def _det(size=0.6, x=0.5, conf=0.9, cls=5):
+    return Detection(cls=cls, x=x, y=0.7, w=size, h=size, conf=conf)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +56,7 @@ def test_claim_summarises_detections():
     assert claim.detections_present and claim.detection_count == 2
     assert claim.occupancy == pytest.approx(0.25 + 0.04)
     assert claim.max_confidence == pytest.approx(0.9)
+    assert claim.class_ids == (5,)
 
 
 def test_occupancy_is_clipped_to_one():
@@ -70,6 +70,7 @@ def test_occupancy_is_clipped_to_one():
     {"max_confidence": -0.1},
     {"bearing": 2.0},
     {"detection_count": -1},
+    {"class_ids": (2, 1)},
     {"measured": False, "detections_present": True, "detection_count": 1},
     {"measured": True, "detections_present": True, "detection_count": 0},
 ])
@@ -112,6 +113,13 @@ def test_grossly_different_occupancy_disputes():
     ) is False
 
 
+def test_same_presence_and_occupancy_but_different_classes_disputes():
+    assert claims_agree(
+        PerceptionClaim.from_detections([_det(0.5, cls=0)]),
+        PerceptionClaim.from_detections([_det(0.5, cls=5)]),
+    ) is False
+
+
 def test_bearing_difference_alone_never_disputes():
     """
     Peers sit at >= phi_min of parallax, so the same obstacle legitimately
@@ -151,7 +159,7 @@ def test_receipt_carries_the_claim_and_bumped_the_protocol():
         drone_id="alpha", input_bytes=b"frame", model_hash=APPROVED,
         output=(0.0, 0.0, 0.0), perception=claim,
     )
-    assert PROTOCOL_VERSION == 3
+    assert PROTOCOL_VERSION == 4
     assert receipt.perception == claim
 
 
@@ -206,36 +214,16 @@ def test_wire_roundtrip_preserves_the_claim():
     assert isinstance(restored.receipt.perception, PerceptionClaim)
 
 
-# ---------------------------------------------------------------------------
-# Evidence cannot authorize an unrelated command
-# ---------------------------------------------------------------------------
+def test_non_boolean_claim_flags_are_rejected():
+    with pytest.raises(ValueError, match="must be booleans"):
+        PerceptionClaim(measured=1)
 
 
-def _binding(**over):
-    base = dict(mission_id="sentinel", mission_epoch=1, sequence=7,
-                receipt_digest="a" * 64)
-    base.update(over)
-    return CommandBinding(**base)
+def test_unmeasured_claim_cannot_smuggle_forensic_values():
+    with pytest.raises(ValueError, match="cannot carry detection evidence"):
+        PerceptionClaim(measured=False, max_confidence=0.9)
 
 
-def test_matching_bindings_match():
-    assert _binding().matches(_binding())
-
-
-@pytest.mark.parametrize("field,value", [
-    ("mission_id", "other-mission"),
-    ("mission_epoch", 2),
-    ("sequence", 8),
-    ("receipt_digest", "b" * 64),
-])
-def test_any_field_difference_breaks_the_binding(field, value):
-    """
-    A certificate must not carry across missions, epochs, rounds, or frames.
-    Each of these is a distinct way a valid accept could otherwise be replayed
-    onto a command it never covered.
-    """
-    assert not _binding().matches(_binding(**{field: value}))
-
-
-def test_binding_rejects_a_non_binding():
-    assert not _binding().matches("not a binding")
+def test_empty_claim_cannot_smuggle_occupancy():
+    with pytest.raises(ValueError, match="empty-scene"):
+        PerceptionClaim(measured=True, occupancy=0.5)

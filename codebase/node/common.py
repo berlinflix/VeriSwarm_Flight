@@ -29,6 +29,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
 import nacl.signing
 
+from perception.claim import DEFAULT_OCCUPANCY_TOLERANCE
 from protocol.receipts import (
     DEFAULT_MAX_AGE_NS,
     PROTOCOL_VERSION,
@@ -331,6 +332,7 @@ def generate_manifest(
     o_min: float = 0.1,
     phi_min: float = 0.0,
     agreement_threshold: float = 0.5,
+    occupancy_tolerance: float = DEFAULT_OCCUPANCY_TOLERANCE,
     authority: Optional[str] = None,
     mode: str = "simulation",
     mission_id: str = "simulation",
@@ -369,6 +371,7 @@ def generate_manifest(
         "o_min": o_min,
         "phi_min": phi_min,
         "agreement_threshold": agreement_threshold,
+        "occupancy_tolerance": occupancy_tolerance,
         "camera_hfov_deg": camera_hfov_deg,
         "camera_vfov_deg": camera_vfov_deg,
         "nodes": nodes,
@@ -438,6 +441,9 @@ def validate_manifest(manifest: dict, local_node_id: Optional[str] = None) -> No
     agreement = float(manifest.get("agreement_threshold", 0.0))
     if not 0.0 < agreement < math.sqrt(12.0):
         raise ValueError("production manifest has an invalid agreement_threshold")
+    occupancy_tolerance = float(manifest.get("occupancy_tolerance", 0.0))
+    if not 0.0 < occupancy_tolerance <= 1.0:
+        raise ValueError("production manifest has an invalid occupancy_tolerance")
     if float(manifest.get("phi_min", 0.0)) <= 0.0:
         raise ValueError("production manifest requires a calibrated phi_min > 0")
     for name in ("camera_hfov_deg", "camera_vfov_deg"):

@@ -24,29 +24,31 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11\x61ttestation.proto\x12\x0cveriswarm.v1\"\xda\x02\n\x07Receipt\x12\x10\n\x08\x64rone_id\x18\x01 \x01(\t\x12\x14\n\x0ctimestamp_ns\x18\x02 \x01(\x03\x12\x12\n\ninput_hash\x18\x03 \x01(\t\x12\x12\n\nmodel_hash\x18\x04 \x01(\t\x12\x0e\n\x06output\x18\x05 \x03(\x01\x12\r\n\x05nonce\x18\x06 \x01(\t\x12\x18\n\x10protocol_version\x18\x07 \x01(\r\x12\x12\n\nmission_id\x18\x08 \x01(\t\x12\x15\n\rmission_epoch\x18\t \x01(\x04\x12\x10\n\x08sequence\x18\n \x01(\x04\x12\x14\n\x0cruntime_hash\x18\x0b \x01(\t\x12\x14\n\x0c\x61\x63tion_frame\x18\x0c \x01(\t\x12\x14\n\x0cvalid_for_ns\x18\r \x01(\x04\x12\x10\n\x08pose_enu\x18\x0e \x03(\x01\x12\x19\n\x11pose_timestamp_ns\x18\x0f \x01(\x03\x12\x1a\n\x12pose_uncertainty_m\x18\x10 \x01(\x01\"N\n\rSignedReceipt\x12&\n\x07receipt\x18\x01 \x01(\x0b\x32\x15.veriswarm.v1.Receipt\x12\x15\n\rsignature_hex\x18\x02 \x01(\t\"\x85\x01\n\x08PeerVote\x12\x10\n\x08voter_id\x18\x01 \x01(\t\x12\x1b\n\x13target_receipt_hash\x18\x02 \x01(\t\x12$\n\x08\x64\x65\x63ision\x18\x03 \x01(\x0e\x32\x12.veriswarm.v1.Vote\x12\x0e\n\x06reason\x18\x04 \x01(\t\x12\x14\n\x0ctimestamp_ns\x18\x05 \x01(\x03\"I\n\nSignedVote\x12$\n\x04vote\x18\x01 \x01(\x0b\x32\x16.veriswarm.v1.PeerVote\x12\x15\n\rsignature_hex\x18\x02 \x01(\t\"/\n\x0bPushVoteAck\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\x0e\n\x06reason\x18\x02 \x01(\t\"$\n\x0bPingRequest\x12\x15\n\rfrom_drone_id\x18\x01 \x01(\t\";\n\x0cPingResponse\x12\x15\n\rthis_drone_id\x18\x01 \x01(\t\x12\x14\n\x0ctimestamp_ns\x18\x02 \x01(\x03*2\n\x04Vote\x12\x14\n\x10VOTE_UNSPECIFIED\x10\x00\x12\x07\n\x03\x41\x43K\x10\x01\x12\x0b\n\x07\x44ISPUTE\x10\x02\x32\xdc\x01\n\x12\x41ttestationService\x12\x46\n\rSubmitReceipt\x12\x1b.veriswarm.v1.SignedReceipt\x1a\x18.veriswarm.v1.SignedVote\x12?\n\x08PushVote\x12\x18.veriswarm.v1.SignedVote\x1a\x19.veriswarm.v1.PushVoteAck\x12=\n\x04Ping\x12\x19.veriswarm.v1.PingRequest\x1a\x1a.veriswarm.v1.PingResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11\x61ttestation.proto\x12\x0cveriswarm.v1\"\xa7\x01\n\x0fPerceptionClaim\x12\x10\n\x08measured\x18\x01 \x01(\x08\x12\x1a\n\x12\x64\x65tections_present\x18\x02 \x01(\x08\x12\x17\n\x0f\x64\x65tection_count\x18\x03 \x01(\r\x12\x11\n\toccupancy\x18\x04 \x01(\x01\x12\x16\n\x0emax_confidence\x18\x05 \x01(\x01\x12\x0f\n\x07\x62\x65\x61ring\x18\x06 \x01(\x01\x12\x11\n\tclass_ids\x18\x07 \x03(\r\"\x8d\x03\n\x07Receipt\x12\x10\n\x08\x64rone_id\x18\x01 \x01(\t\x12\x14\n\x0ctimestamp_ns\x18\x02 \x01(\x03\x12\x12\n\ninput_hash\x18\x03 \x01(\t\x12\x12\n\nmodel_hash\x18\x04 \x01(\t\x12\x0e\n\x06output\x18\x05 \x03(\x01\x12\r\n\x05nonce\x18\x06 \x01(\t\x12\x18\n\x10protocol_version\x18\x07 \x01(\r\x12\x12\n\nmission_id\x18\x08 \x01(\t\x12\x15\n\rmission_epoch\x18\t \x01(\x04\x12\x10\n\x08sequence\x18\n \x01(\x04\x12\x14\n\x0cruntime_hash\x18\x0b \x01(\t\x12\x14\n\x0c\x61\x63tion_frame\x18\x0c \x01(\t\x12\x14\n\x0cvalid_for_ns\x18\r \x01(\x04\x12\x10\n\x08pose_enu\x18\x0e \x03(\x01\x12\x19\n\x11pose_timestamp_ns\x18\x0f \x01(\x03\x12\x1a\n\x12pose_uncertainty_m\x18\x10 \x01(\x01\x12\x31\n\nperception\x18\x11 \x01(\x0b\x32\x1d.veriswarm.v1.PerceptionClaim\"N\n\rSignedReceipt\x12&\n\x07receipt\x18\x01 \x01(\x0b\x32\x15.veriswarm.v1.Receipt\x12\x15\n\rsignature_hex\x18\x02 \x01(\t\"\x85\x01\n\x08PeerVote\x12\x10\n\x08voter_id\x18\x01 \x01(\t\x12\x1b\n\x13target_receipt_hash\x18\x02 \x01(\t\x12$\n\x08\x64\x65\x63ision\x18\x03 \x01(\x0e\x32\x12.veriswarm.v1.Vote\x12\x0e\n\x06reason\x18\x04 \x01(\t\x12\x14\n\x0ctimestamp_ns\x18\x05 \x01(\x03\"I\n\nSignedVote\x12$\n\x04vote\x18\x01 \x01(\x0b\x32\x16.veriswarm.v1.PeerVote\x12\x15\n\rsignature_hex\x18\x02 \x01(\t\"/\n\x0bPushVoteAck\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\x0e\n\x06reason\x18\x02 \x01(\t\"$\n\x0bPingRequest\x12\x15\n\rfrom_drone_id\x18\x01 \x01(\t\";\n\x0cPingResponse\x12\x15\n\rthis_drone_id\x18\x01 \x01(\t\x12\x14\n\x0ctimestamp_ns\x18\x02 \x01(\x03*2\n\x04Vote\x12\x14\n\x10VOTE_UNSPECIFIED\x10\x00\x12\x07\n\x03\x41\x43K\x10\x01\x12\x0b\n\x07\x44ISPUTE\x10\x02\x32\xdc\x01\n\x12\x41ttestationService\x12\x46\n\rSubmitReceipt\x12\x1b.veriswarm.v1.SignedReceipt\x1a\x18.veriswarm.v1.SignedVote\x12?\n\x08PushVote\x12\x18.veriswarm.v1.SignedVote\x1a\x19.veriswarm.v1.PushVoteAck\x12=\n\x04Ping\x12\x19.veriswarm.v1.PingRequest\x1a\x1a.veriswarm.v1.PingResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'attestation_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_VOTE']._serialized_start=823
-  _globals['_VOTE']._serialized_end=873
-  _globals['_RECEIPT']._serialized_start=36
-  _globals['_RECEIPT']._serialized_end=382
-  _globals['_SIGNEDRECEIPT']._serialized_start=384
-  _globals['_SIGNEDRECEIPT']._serialized_end=462
-  _globals['_PEERVOTE']._serialized_start=465
-  _globals['_PEERVOTE']._serialized_end=598
-  _globals['_SIGNEDVOTE']._serialized_start=600
-  _globals['_SIGNEDVOTE']._serialized_end=673
-  _globals['_PUSHVOTEACK']._serialized_start=675
-  _globals['_PUSHVOTEACK']._serialized_end=722
-  _globals['_PINGREQUEST']._serialized_start=724
-  _globals['_PINGREQUEST']._serialized_end=760
-  _globals['_PINGRESPONSE']._serialized_start=762
-  _globals['_PINGRESPONSE']._serialized_end=821
-  _globals['_ATTESTATIONSERVICE']._serialized_start=876
-  _globals['_ATTESTATIONSERVICE']._serialized_end=1096
+  _globals['_VOTE']._serialized_start=1044
+  _globals['_VOTE']._serialized_end=1094
+  _globals['_PERCEPTIONCLAIM']._serialized_start=36
+  _globals['_PERCEPTIONCLAIM']._serialized_end=203
+  _globals['_RECEIPT']._serialized_start=206
+  _globals['_RECEIPT']._serialized_end=603
+  _globals['_SIGNEDRECEIPT']._serialized_start=605
+  _globals['_SIGNEDRECEIPT']._serialized_end=683
+  _globals['_PEERVOTE']._serialized_start=686
+  _globals['_PEERVOTE']._serialized_end=819
+  _globals['_SIGNEDVOTE']._serialized_start=821
+  _globals['_SIGNEDVOTE']._serialized_end=894
+  _globals['_PUSHVOTEACK']._serialized_start=896
+  _globals['_PUSHVOTEACK']._serialized_end=943
+  _globals['_PINGREQUEST']._serialized_start=945
+  _globals['_PINGREQUEST']._serialized_end=981
+  _globals['_PINGRESPONSE']._serialized_start=983
+  _globals['_PINGRESPONSE']._serialized_end=1042
+  _globals['_ATTESTATIONSERVICE']._serialized_start=1097
+  _globals['_ATTESTATIONSERVICE']._serialized_end=1317
 # @@protoc_insertion_point(module_scope)

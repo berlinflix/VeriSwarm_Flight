@@ -12,8 +12,9 @@ import math
 import numbers
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional
 
+from perception.claim import PerceptionResult
 from perception.depth_check import check_free_space, nearest_range
 from perception.safety_supervisor import Authorization, HOLD_ACTION, SafetySupervisor
 
@@ -63,7 +64,7 @@ class MissionRunner:
         *,
         node_id: str,
         source: FrameSource,
-        inference: Callable[[object], Sequence[float]],
+        inference: Callable[[object], PerceptionResult],
         originator,
         model_hash: str,
         health_provider: Callable[[], HealthState],
@@ -111,7 +112,10 @@ class MissionRunner:
 
         try:
             health = self.health_provider()
-            requested = tuple(float(v) for v in self.inference(frame))
+            perception = self.inference(frame)
+            if not isinstance(perception, PerceptionResult):
+                raise ValueError("inference must return PerceptionResult")
+            requested = perception.action
         except Exception as exc:
             self.events.log(f"perception_failure:{type(exc).__name__}", level="error")
             result = self._hold("perception_failure")
@@ -153,6 +157,7 @@ class MissionRunner:
                 input_bytes=frame_bytes(frame),
                 pose=pose,
                 pose_uncertainty_m=health.pose_uncertainty_m,
+                perception=perception.claim,
             )
         except Exception as exc:
             self.events.log(f"attestation_failure:{type(exc).__name__}", level="error")
@@ -169,8 +174,7 @@ class MissionRunner:
             geofence_clear=health.geofence_clear,
             autopilot_guard_healthy=health.autopilot_guard_healthy,
             all_axis_clearance_confirmed=health.all_axis_clearance_confirmed,
-            command_timestamp_ns=outcome.receipt.timestamp_ns,
-            command_valid_for_ns=outcome.receipt.valid_for_ns,
+            evidence_receipt=outcome.receipt,
             now_ns=outcome.completed_at_ns,
         )
 

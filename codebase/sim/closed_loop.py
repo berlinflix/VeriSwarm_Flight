@@ -16,6 +16,7 @@ import json
 import math
 from dataclasses import asdict, dataclass
 
+from perception.claim import PerceptionClaim
 from perception.depth_check import check_free_space
 from perception.safety_supervisor import SafetySupervisor
 from protocol.geometry import Pose
@@ -85,7 +86,7 @@ class ClosedLoopSimulation:
                 phi_min=23.0,
             )
 
-    def _receipt(self, action, model_hash=APPROVED_MODEL):
+    def _receipt(self, action, model_hash=APPROVED_MODEL, *, claim):
         self.sequence += 1
         pose = self.poses["alpha"]
         receipt = build_receipt(
@@ -99,6 +100,7 @@ class ClosedLoopSimulation:
             runtime_hash=APPROVED_RUNTIME,
             pose_enu=(pose.x, pose.y, pose.z, pose.yaw, pose.pitch, pose.roll),
             pose_uncertainty_m=0.05,
+            perception=claim,
         )
         return self.signers["alpha"].sign(receipt)
 
@@ -113,8 +115,13 @@ class ClosedLoopSimulation:
         delivered_peers=None,
         equivocate=False,
         authorize_after_expiry=False,
+        claimed_claim=None,
+        peer_claim=None,
     ) -> ScenarioResult:
-        signed = self._receipt(claimed_action, model_hash)
+        claimed_claim = claimed_claim or PerceptionClaim.from_detections([])
+        if peer_action is not None and peer_claim is None:
+            peer_claim = PerceptionClaim.from_detections([])
+        signed = self._receipt(claimed_action, model_hash, claim=claimed_claim)
         delivered = set(delivered_peers or IDS[1:])
         votes = []
         for node, peer in self.peers.items():
@@ -125,6 +132,7 @@ class ClosedLoopSimulation:
                 my_observation=peer_action,
                 my_pose=self.poses[node],
                 originator_pose=self.poses["alpha"],
+                my_claim=peer_claim,
             ))
 
         if equivocate:
@@ -150,8 +158,7 @@ class ClosedLoopSimulation:
             state_estimate_healthy=True,
             geofence_clear=True,
             autopilot_guard_healthy=True,
-            command_timestamp_ns=signed.receipt.timestamp_ns,
-            command_valid_for_ns=signed.receipt.valid_for_ns,
+            evidence_receipt=signed.receipt,
             now_ns=(
                 signed.receipt.timestamp_ns + signed.receipt.valid_for_ns + 1
                 if authorize_after_expiry
@@ -188,6 +195,14 @@ class ClosedLoopSimulation:
                 (1.0, 0.0, 0.0),
                 (0.0, 0.0, 1.0),
                 range_m=5.0,
+                peer_claim=PerceptionClaim(
+                    measured=True,
+                    detections_present=True,
+                    detection_count=1,
+                    class_ids=(5,),
+                    occupancy=0.36,
+                    max_confidence=0.9,
+                ),
             ),
             self.run_scenario(
                 "packet_loss",

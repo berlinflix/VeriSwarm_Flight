@@ -1,20 +1,21 @@
 """
-Perception layer: turn real YOLOv8 detections into the action vector that the
-attestation pipeline attests and that peers cross-check.
+Perception layer: turn real YOLOv8 detections into one atomic action-and-claim
+result for the attestation pipeline.
 
 This is the bridge that makes the perception attacks real rather than abstract.
 Each drone runs an object detector on its camera frame, and a small deterministic
 reactive controller (`detections_to_action`) maps the detections to a 3-D action
 (forward, lateral, vertical), each in [-1, 1]. That action is what goes into the
-Receipt's `output`, gets signed, and gets compared across co-visible peers.
+Receipt's `output`; the measured `PerceptionClaim` is signed alongside it and is
+what co-visible peers compare semantically.
 
 The two attacks land naturally here:
   * Model swap  — a drone runs tampered detector weights. `model_hash` over the
     real weight file gives the provenance value, so a swapped model fails the
     allowlist regardless of what it outputs.
-  * Adversarial patch — a patch placed in the scene (`apply_patch`) makes the
-    detector miss or misplace the obstacle, so the fooled drone's action diverges
-    from its co-visible peers and the semantic check catches it.
+  * Adversarial patch — a patch placed in the scene (`apply_patch`) can make the
+    detector miss or misclassify an obstacle, so the fooled drone's signed claim
+    differs from independently measured peer claims.
 
 The controller and `model_hash` are dependency-free and unit-tested. The frame
 helpers take a NumPy image and an Ultralytics YOLO model supplied by the caller,
@@ -24,8 +25,11 @@ so this module imports nothing heavy itself.
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from typing import List, Sequence, Tuple
+
+from .claim import MAX_CLASS_ID, PerceptionClaim, PerceptionResult
 
 ACTION_DIM = 3  # (forward, lateral, vertical), each in [-1, 1]
 
@@ -42,6 +46,13 @@ class Detection:
     w: float  # bbox width
     h: float  # bbox height
     conf: float
+
+    def __post_init__(self) -> None:
+        if type(self.cls) is not int or not (0 <= self.cls <= MAX_CLASS_ID):
+            raise ValueError(f"cls must be an integer in [0, {MAX_CLASS_ID}]")
+        values = (self.x, self.y, self.w, self.h, self.conf)
+        if not all(math.isfinite(v) and 0.0 <= v <= 1.0 for v in values):
+            raise ValueError("normalized detection fields must be finite and in [0, 1]")
 
 
 def _clip(v: float, lo: float = -1.0, hi: float = 1.0) -> float:
@@ -130,9 +141,29 @@ def frame_to_action(
     free_space_confirmed: bool = False,
 ) -> Action:
     """Full perception step: camera frame -> detections -> action vector."""
-    return detections_to_action(
-        frame_to_detections(frame, model, conf),
+    return frame_to_perception(
+        frame,
+        model,
+        conf,
         free_space_confirmed=free_space_confirmed,
+    ).action
+
+
+def frame_to_perception(
+    frame,
+    model,
+    conf: float = 0.25,
+    *,
+    free_space_confirmed: bool = False,
+) -> PerceptionResult:
+    """Run one detector pass and return its action and measured claim atomically."""
+    dets = frame_to_detections(frame, model, conf)
+    return PerceptionResult(
+        action=detections_to_action(
+            dets,
+            free_space_confirmed=free_space_confirmed,
+        ),
+        claim=PerceptionClaim.from_detections(dets),
     )
 
 

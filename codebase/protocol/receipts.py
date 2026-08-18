@@ -8,9 +8,9 @@ produced a specific output at a specific time.
 Signed receipts are broadcast to peer drones who verify:
   (a) the Ed25519 signature is valid under the sender's known public key,
   (b) the model_hash matches an approved allowlist,
-  (c) the output is consistent with peers' own observations
-      (cross-drone output comparison — implemented in `peer_consensus.py`,
-       which uses the Receipt produced here as input).
+  (c) the signed perception claim is consistent with peers' own measured claims
+      (implemented in `peer_consensus.py`, which uses the Receipt produced here
+       as input).
 
 This module implements (a) and (b). Cross-drone semantic comparison is
 intentionally out of scope: receipts.py guarantees *cryptographic*
@@ -49,7 +49,7 @@ _HEX_128_RE = re.compile(r"[0-9a-f]{128}\Z")
 _DRONE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _MISSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 ACTION_DIM = 3
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 DEFAULT_ACTION_FRAME = "BODY_FLU_NORMALIZED_VELOCITY"
 SUPPORTED_ACTION_FRAMES = frozenset({DEFAULT_ACTION_FRAME})
 UNMEASURED_RUNTIME_HASH = hashlib.sha256(b"unmeasured-runtime").hexdigest()

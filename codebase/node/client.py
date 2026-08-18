@@ -15,6 +15,7 @@ from typing import List, Sequence
 import grpc
 
 from protocol import attestation_pb2_grpc as pb_grpc
+from perception.claim import PerceptionClaim
 from protocol.proto_bridge import signed_receipt_to_pb, signed_vote_from_pb
 from protocol.geometry import Pose
 from protocol.peer_consensus import (
@@ -107,6 +108,7 @@ class Originator:
         input_bytes: bytes | None = None,
         pose: Pose | None = None,
         pose_uncertainty_m: float = 0.0,
+        perception: PerceptionClaim | None = None,
     ) -> RoundOutcome:
         t0 = time.perf_counter_ns()
         if input_bytes is None:
@@ -115,6 +117,10 @@ class Originator:
             input_bytes = b"\x00" * 128
         if pose is None and self.manifest.get("mode", "simulation") == "production":
             raise ValueError("production receipt requires a current measured pose")
+        if self.manifest.get("mode", "simulation") == "production" and (
+            not isinstance(perception, PerceptionClaim) or not perception.measured
+        ):
+            raise ValueError("production receipt requires a measured perception claim")
         self._sequence += 1
         local_entry = self.manifest["nodes"][self.originator_id]
         receipt_pose = pose or common.pose_of(local_entry) or Pose(0.0, 0.0, 0.0)
@@ -136,6 +142,7 @@ class Originator:
                 receipt_pose.roll,
             ),
             pose_uncertainty_m=pose_uncertainty_m,
+            perception=perception,
         )
         signed = self.signer.sign(receipt)
         t1 = time.perf_counter_ns()

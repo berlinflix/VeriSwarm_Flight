@@ -25,6 +25,13 @@ not tasks Pratik should absorb.
 - Every environmental change must be represented in a versioned scenario manifest and
   deterministic seed—not an editor-only action.
 
+**Protocol-v4 scene contract (2026-08-18):** autonomy now compares measured detection
+presence plus sorted mission-taxonomy class sets and coarse occupancy before releasing the
+exact command signed in a receipt. Pratik does not implement this protocol, but his scenario
+must provide synchronized, calibrated views that validate it honestly. The audited
+repository suite is **347 passed, 3 skipped**; the three missing-Ultralytics-asset tests must
+be rerun after the pinned assets are installed and must not be described as passes.
+
 ## 2. Files and artifacts Pratik owns
 
 | Path/artifact | Required purpose |
@@ -35,6 +42,7 @@ not tasks Pratik should absorb.
 | `calibration_manifest.json` | Intrinsics/extrinsics, frames, rates, noise and skew bounds |
 | `truth_schema.json` and truth exporter | Isolated scoring data, inaccessible to autonomy |
 | `scenario_modes.json` | Smoke, clean baseline and named campaign modes |
+| `class_taxonomy.json` | Pinned mission IDs and native-label mappings for every approved detector |
 | `data/model_selection/` | Ignored raw tune/held-out frames and labels |
 | `docs/PRATIK_COSYS_REPRODUCTION.md` | Clean installation, launch, reset and export procedure |
 
@@ -163,11 +171,23 @@ truth timestamps suitable for independent scoring.
 2. Record parent object, size, pose, material/texture hash, lighting, range and viewpoints.
 3. Confirm the semantic target is a supported/validated detector class from every required
    clean viewpoint before using it for adversarial evidence.
-4. Preserve rocks/walls/trees/buildings as negative semantic but positive geometric cases.
-5. Supply clean, attacked and occluded variants under deterministic scenario modes.
+4. Pin one mission class-taxonomy manifest and hash. Map every approved detector's native
+   labels into that taxonomy; never assume the same numeric class ID means the same thing
+   across model families.
+5. For every semantic mode, capture synchronized originator/peer frames and calibration
+   identifying the geometrically shared region. Include: target alone; target plus unrelated
+   object; unrelated object alone after target removal; same-class multiple objects; honest
+   partial overlap; and viewpoint occlusion.
+6. Keep object IDs and exact ground truth in the isolated offline truth export only. Online
+   autonomy receives ordinary sensor frames, not the answer or expected class set.
+7. Preserve rocks/walls/trees/buildings as negative semantic but positive geometric cases.
+8. Supply clean, attacked, occluded and honest-disagreement variants under deterministic
+   scenario modes. Do not arrange the cameras merely so class sets happen to agree.
 
-**Gate P6:** the clean target is detectable at the declared range/viewpoints; the physical
-attack delivery is visible in raw frames; geometric navigation never depends on the label.
+**Gate P6:** the clean target is detectable and correctly mapped into the pinned taxonomy at
+the declared range/viewpoints; synchronized raw frames cover target-miss/unrelated-object
+and honest occlusion cases; the physical attack is visible; geometric navigation never
+depends on the label.
 
 ### P7 — model-selection and evaluation datasets
 
@@ -180,7 +200,8 @@ Capture a frozen tune set and a separately frozen held-out set containing:
 - matching calibration/scenario/seed/frame IDs.
 
 Keep raw data outside Git under the ignored data directory. Commit a manifest containing
-file hashes, labels, split IDs, class taxonomy, license/source status and collection
+file hashes, labels, split IDs, native-to-mission class mapping plus taxonomy hash,
+license/source status and collection
 configuration. Freeze held-out IDs before benchmark results are seen; never move hard
 examples into the tune set afterward.
 
@@ -211,6 +232,7 @@ Deliver a content-addressed bundle containing:
 - scenario layer/assets and SHA-256 index;
 - explicit settings and vehicle/sensor configuration;
 - calibration/world/fault-zone/scenario-mode manifests;
+- mission class-taxonomy/native-label mapping and shared-view calibration fixtures;
 - deterministic seeds and reset procedure;
 - smoke A/B handoff and expected roster—not expected mission verdict;
 - dataset/truth schemas and capture procedure;
@@ -240,6 +262,8 @@ Pratik must test and retain evidence for:
 - GNSS denial/spoof/reacquisition raw effects;
 - C2 delay/loss/partition configuration;
 - target clean visibility and adversarial object placement;
+- synchronized co-visible target/unrelated-object/occlusion frame matrix;
+- native-label-to-mission-taxonomy mapping and taxonomy-hash consistency;
 - truth isolation and offline join;
 - export/import on Samik's PC.
 
@@ -258,7 +282,8 @@ Never overwrite a failing scenario export. Assign a new version and retain the f
 2. Deliver the P1 A/B flight handoff immediately.
 3. Export and verify five named vehicles with safe separated poses.
 4. Freeze sensor definitions and calibration.
-5. Add C1–C4 and B scenario elements without breaking smoke mode.
+5. Add C1–C4 and B scenario elements without breaking smoke mode; freeze the protocol-v4
+   mission taxonomy and synchronized multi-view semantic fixtures with C4.
 6. Add truth isolation, ground cues and GPS/C2 profiles.
 7. Capture/freeze the model-selection data.
 8. Package the scenario and make Samik reproduce it from clean state.

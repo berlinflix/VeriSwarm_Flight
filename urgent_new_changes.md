@@ -42,26 +42,34 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
-### 2026-08-18 — Protocol v3: the swarm now attests observations, not decisions
+### 2026-08-18 — Protocol v4 supersedes v3: attested, class-aware observations
 **Status:** OPEN
-**Changed:** `PROTOCOL_VERSION` is **3**. Every `Receipt` carries a
+**Changed:** `PROTOCOL_VERSION` is **4**. Every `Receipt` carries a
 `PerceptionClaim` (`codebase/perception/claim.py`) describing what the detector
 *observed*, alongside the `output` command it *decided*. The semantic layer
 compares claims first and falls back to the old action comparison only when one
-side has no perception evidence.
+side has no perception evidence. That legacy comparison is now **veto-only**:
+disagreement may force a safe hold, but agreement is labelled
+`ok_no_observation` and cannot count toward semantic quorum or authorize motion.
 
 **This closes the blind band.** Comparing control outputs was a category error: a
 command is a lossy, non-injective projection of what was seen, so different
 world-states collapse onto the same vector. A blinded drone emitted `(0,0,0)` and
 an honest peer facing a moderate obstacle emitted `(0.028, 0, 0.324)` — 0.325
 apart, inside theta = 0.5, so the patch passed. No threshold fixes that; the
-information was destroyed before the comparison ran. `detections_present` differs
-regardless of obstacle size, range, or controller gains.
+information was destroyed before the comparison ran. `detections_present`
+closes that specific empty-vs-detected band without depending on controller
+gains. It is not a claim that every semantic attack is solved.
 
 Field choice is driven by viewpoint robustness, because peers sit at `phi_min` of
 parallax and anything strongly viewpoint-dependent would dispute *honest* peers:
 
-* `detections_present` — the primary signal, effectively viewpoint-invariant.
+* `detections_present` — the primary signal after time alignment and the
+  co-visibility gate. Occlusion or threshold effects can still make honest views
+  differ; the fail-safe consequence is a hold.
+* `class_ids` — sorted unique IDs in the pinned mission taxonomy. Different
+  class sets dispute even when both sides detect something, preventing an
+  unrelated detection from masking a target miss.
 * `occupancy` — compared with a wide tolerance (0.35), and only when both peers
   see something.
 * `max_confidence`, `bearing` — carried for the console and forensics, **never
@@ -72,37 +80,42 @@ parallax and anything strongly viewpoint-dependent would dispute *honest* peers:
 and `claims_agree` returns `None` for it rather than `True`. Collapsing those
 would reintroduce the same defect one layer up.
 
-**Evidence is now bound to the command it releases.** `SafetySupervisor.authorize`
-takes `evidence_binding` and `command_binding` (`CommandBinding`: mission_id,
-mission_epoch, sequence, receipt_digest) and refuses unless they match exactly —
-`evidence_command_mismatch`, or `evidence_binding_incomplete` if only one is
-supplied. A signature proves an observation is authentic; it does not prove the
-observation is *about this command*. Without the binding, an accept earned by
-round N's frame could release round M's waypoint command.
+**Evidence is now bound to the command it releases.** `ConsensusResult` carries
+the exact target receipt digest. `SafetySupervisor.authorize` requires the
+actual `evidence_receipt`, recomputes its digest, matches it to the consensus
+target, and requires the requested action to equal the receipt's signed `output`.
+It refuses `evidence_receipt_missing`, `consensus_receipt_mismatch`,
+`evidence_command_mismatch`, or `perception_claim_missing`. The earlier optional
+pair of caller-created `CommandBinding` objects was removed: it did not contain
+the command and two matching fabricated objects proved nothing.
 
 **Makes stale:** any statement that the semantic layer compares action vectors;
-any retained evidence produced under protocol v2 (receipt canonicalization
-changed, so v2 artifacts no longer verify — re-run or version-tag them); any
-`authorize(...)` call site that does not pass both bindings.
+any retained evidence produced under protocol v2 or v3 (receipt canonicalization
+changed, so those artifacts no longer verify — re-run or version-tag them); any
+`authorize(...)` call site that does not pass the evidence receipt.
 
 **Who must act:**
-* **M1 Suyash** — regenerate protocol vectors; re-run any retained closed-loop or
-  campaign evidence under v3; wire `MissionRunner` to build the claim from live
-  detections and to pass both bindings.
-* **M4 Samik** — `waypoint_follower.py` must produce a `CommandBinding` matching
-  the perception receipt that justifies its candidate. A waypoint command with no
-  matching perception evidence is refused, by design.
-* **M2 Abhijan** — two new refusal reasons for the oracle:
-  `evidence_command_mismatch`, `evidence_binding_incomplete`. A campaign that
+* **M1 Suyash** — regenerate protocol vectors and re-run retained campaign
+  evidence under v4. The live transport, mission runner and supervisor are now
+  wired; every detector adapter must return `PerceptionResult`.
+* **M4 Samik** — combine waypoint and avoidance first, then place that exact
+  normalized command in `Receipt.output`; the supervisor will release no other
+  action for that consensus result.
+* **M2 Abhijan** — add the four binding/claim refusal reasons above to the oracle.
+  A campaign that
   replays a valid certificate onto a later round is now a *detectable* attack and
   worth adding.
 * **M3 Pratik** — the `>= 0.7` frame-occupancy rule was partly motivated by the
   blind band, which is now closed. Keep it anyway: it is still required for a
   strong avoidance action.
 
-**Verification:** 346 tests pass (307 before). `tests/test_perception_claim.py`
+**Verification:** 347 tests pass and 3 dependency-gated tests skip (after the
+class-aware and gRPC integration additions). `tests/test_perception_claim.py`
 covers claim construction, comparison, signature coverage, wire round-trip and
-binding; `tests/test_baseline_controller.py` now asserts the band is closed
+claim validation; `tests/test_node.py` proves measured claims survive the real
+gRPC bridge and form/dispute semantic quorum; `tests/test_safety_supervisor.py`
+covers exact receipt-to-command binding. `tests/test_baseline_controller.py`
+asserts the band is closed
 through `claims_agree` across 0.3–0.9 occupancy while keeping the action-space
 failure as a standing witness.
 
@@ -531,8 +544,9 @@ puts all attack truth/delivery under one accountable owner.
 unless independent free-space evidence is positive; an ACCEPTED receipt without semantic
 quorum is DEFER/HOLD; reputation cannot create a reject below the integer quorum; exact
 within-window replay and duplicate sequence numbers are rejected; signed equivocation is
-counted on neither side. Receipts are protocol-v2 and bind mission, epoch, sequence,
-runtime measurement, action frame/validity, and pose metadata. From `codebase/`, run
+counted on neither side. This historical entry described protocol v2 and is superseded
+by the protocol-v4 override at the top of this file. V4 additionally binds a measured,
+class-aware perception claim and the exact releasable action. From `codebase/`, run
 `python -m sim.closed_loop` before any external simulator.
 
 `codebase/node/mission.py` is the only supported perception → consensus → command seam. It

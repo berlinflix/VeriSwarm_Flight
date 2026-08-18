@@ -29,6 +29,14 @@ participants, not tasks Suyash should silently absorb.
 - Do not call the result “military-ready,” “certified,” “foolproof” or formal Byzantine
   agreement. State the tested simulation envelope and remaining real-world gates.
 
+**Audited code baseline (2026-08-18):** protocol v4 is active. A receipt signs a measured,
+class-aware `PerceptionClaim` and the exact candidate command in `Receipt.output`; the gRPC
+bridge preserves the complete claim; action-only agreement is veto-only and cannot form
+semantic quorum; `SafetySupervisor` matches the consensus target digest, actual evidence
+receipt and exact requested action. The current suite is **347 passed, 3 skipped**; all
+three skips are Ultralytics-asset-dependent co-visibility tests, not passes. Re-run and
+record the actual count whenever the baseline changes.
+
 ## 2. Files and artifacts Suyash owns
 
 | Path/artifact | Required purpose |
@@ -55,8 +63,9 @@ participants, not tasks Suyash should silently absorb.
 1. Run the full unit/adversarial suite and `python -m sim.closed_loop` before integration.
 2. Inventory implemented versus planned files. A document command must not be presented as
    runnable when its entry point does not exist.
-3. Record current model/runtime hashes, protocol version, receipt schema, reason codes and
-   known blind-band defect.
+3. Record current model/runtime hashes, protocol-v4 receipt/claim schema, reason codes,
+   the closed action-alias regression and the still-open object-association/shared-ROI
+   limitation.
 4. Freeze the isolated unprotected baseline so it cannot import or call `MissionRunner`,
    `SafetySupervisor`, the Cosys adapter or PX4.
 5. Open a decision log for every contract/protocol change; require regenerated test vectors
@@ -91,14 +100,16 @@ oracle, console and report cannot invent incompatible strings.
 **Gate Y1:** Pratik's sensor sample, Samik's adapter fixtures and Abhijan's manifests pass
 the same conformance suite; malformed/unknown/stale samples are rejected deterministically.
 
-### Y2 — enforce the only motion path
+### Y2 — enforce the only motion path (v4 core implemented; autonomy integration open)
 
 1. Review `MissionRunner`, `SafetySupervisor`, autonomy interfaces and command adapter
    imports/call graph.
 2. Add tests proving planner, detector, consensus, UI, attack runner and simulator helpers
    cannot reach the raw command API.
-3. Bind authorization to exact requested/released action, vehicle, frame, mission/epoch,
-   timestamp, TTL and decision evidence.
+3. Preserve the implemented v4 binding: `ConsensusResult.target_receipt_hash` must match
+   the actual `evidence_receipt`, and the requested action must exactly equal that signed
+   receipt's `output`. Missing claim/evidence, a different receipt or a substituted command
+   must remain a HOLD.
 4. Refactor the integration seam so `PerceptionClaim` is the attested/peer-verified scene
    evidence and Samik's `WaypointProposal` is a separate mission-intent input. Bind their
    versions/IDs and the exact selected candidate in `AutonomyDecisionRecord`; an accepted
@@ -113,23 +124,35 @@ the same conformance suite; malformed/unknown/stale samples are rejected determi
 **Gate Y2:** deterministic tests show no bypass and every absent/invalid evidence path ends
 in a bounded safe result. The clean path still authorizes a valid command.
 
-### Y3 — fix the semantic blind band
+### Y3 — protocol-v4 semantic blind-band fix (implemented; evidence calibration open)
 
-The current control output can alias “no detection” and a moderate obstacle response. Fix
-the protocol semantically rather than choosing a convenient scene:
+The action-alias defect is fixed in code. Do not redesign or downgrade it during autonomy
+integration:
 
-1. Define an attested perception claim containing at least detection presence/count,
-   supported class, confidence/extent summary and associated frame/input hash.
-2. Version the receipt/protocol only if the canonical signed schema changes.
-3. Bind peer comparison to the perception claim as well as the downstream action.
-4. Regenerate protobuf/codegen, canonical vectors, signatures, receipt-size results and
-   cross-version rejection tests.
-5. Sweep object occupancy, confidence and position across the complete range, including the
-   measured 0.5–0.6 band and empty-frame cases.
-6. Preserve depth-based geometric safety independently of semantic labels.
+1. Keep `PerceptionResult(action, claim)` atomic so a claim from one inference cannot be
+   paired accidentally with an action from another.
+2. Keep protocol v4 claim fields bounded and canonical: measured state, detection
+   presence/count, sorted unique mission-taxonomy `class_ids`, occupancy, confidence and
+   bearing. Any signed-field change requires protocol v5, regenerated protobufs and new
+   vectors—never silently mutate v4.
+3. Keep legacy action comparison veto-only. A disagreement may force HOLD; agreement with
+   either claim missing is `ok_no_observation`, never a semantic ACK.
+4. Keep exact receipt-to-command enforcement and the refusal catalogue:
+   `evidence_receipt_missing`, `consensus_receipt_mismatch`,
+   `evidence_command_mismatch`, `perception_claim_missing`.
+5. Regenerate retained canonical/signature/size/campaign evidence under v4 and prove v2/v3
+   receipts cannot mix with v4.
+6. Complete the full occupancy/confidence/position/class sweep, including empty scenes,
+   the 0.5–0.6 regression band, target-plus-unrelated-object scenes and class substitution.
+7. Calibrate honest cross-view false-HOLD behavior. The compact claim does not yet associate
+   individual objects or crop both views to a proven shared ROI; require calibrated
+   multi-view projection/track association before making an object-identity claim.
+8. Preserve independent depth/LiDAR geometric safety regardless of semantic labels.
 
-**Gate Y3:** no-detection cannot be accepted as semantically equivalent to a real moderate
-obstacle merely because actions match; old/new versions do not mix silently.
+**Gate Y3-code:** satisfied by deterministic, protobuf and real loopback-gRPC tests.
+**Gate Y3-evidence remains OPEN:** install the pinned Ultralytics assets, eliminate or
+justify every skip, run the shared-view/class/occupancy matrix and publish thresholds plus
+false-HOLD/false-accept results.
 
 ### Y4 — model registry, approval and signed authority
 
@@ -285,7 +308,9 @@ Suyash must own/add tests for:
 - separation/binding of `PerceptionClaim`, `WaypointProposal` and the exact selected
   command, including substitution and stale-version attempts;
 - command-path import/call-graph bypass attempts;
-- semantic presence/action alias sweep and cross-version receipts;
+- semantic presence/action alias, class-substitution and unrelated-object sweeps;
+- measured-claim JSON/protobuf/gRPC round trips and v2/v3-to-v4 rejection;
+- proof that action-only agreement yields no semantic ACK and cannot authorize motion;
 - authority signature, wrong pinned key and model/runtime mismatch;
 - signer seed/live-key versus manifest identity mismatch;
 - OP-TEE preflight wrong key/mission/epoch, timeout, overwrite and signer loss;
@@ -316,14 +341,16 @@ Never store the authority private key or an OP-TEE private key in evidence.
 
 ## 6. Suyash's immediate work queue
 
-1. Freeze the autonomy/sensor/task/track/command/attack/event contracts, including the
-   explicit `PerceptionClaim`/`WaypointProposal` separation required for protected A→B.
-2. Fix and test the semantic blind band.
+1. Freeze the autonomy/sensor/task/track/command/attack/event contracts around the existing
+   v4 `PerceptionClaim`/final-command receipt binding required for protected A→B.
+2. Publish v4 canonical vectors and complete the open Y3 shared-view/class/asset evidence;
+   do not reimplement the already-fixed action-alias logic.
 3. Complete model registry and independent candidate approval workflow.
-4. Deploy and execute OP-TEE preflight on the real Jetson.
+4. Deploy and execute OP-TEE preflight on the real Jetson using protocol-v4 receipts.
 5. Implement/test `covis_live.py` and its guide.
-6. Implement/test the event collector and console.
-7. Review Samik's command-path/Alpha placement and Abhijan's oracle isolation.
+6. Implement/test the event collector and console with the four v4 refusal reasons.
+7. Review Samik's final-command-before-receipt ordering/Alpha placement and Abhijan's v4
+   oracle isolation.
 8. Maintain gate decisions while integration proceeds.
 9. Assemble and cold-rehearse the final runbook/evidence/claims bundle.
 

@@ -19,9 +19,9 @@ Two layers of checking happen at the peer:
   (a) Cryptographic: signature valid + model_hash on the allowlist.
       Delegated to `ReceiptVerifier` (see `receipts.py`).
 
-  (b) Semantic: does the claimed `output` agree with what this peer
-      observed? Implemented here as `outputs_agree(...)`. The threshold
-      is configurable per-mission.
+  (b) Semantic: does the signed perception claim agree with this peer's
+      independently measured claim? Legacy action comparison may only add a
+      conservative dispute; it can never count as semantic authorization.
 
 The BFT thresholds enforced by `ConsensusEngine`:
 
@@ -204,7 +204,7 @@ class SignedVote:
 # interchangeable, and the distinction is load-bearing:
 #
 #   REASON_OK               the peer co-observed the scene, compared its own
-#                           action against the claim, and they agreed. This is
+#                           measured claim, and the claims agreed. This is
 #                           the ONLY reason that constitutes semantic
 #                           verification.
 #   REASON_NO_COVISIBILITY  the peer abstained on the semantic clause because it
@@ -221,10 +221,9 @@ REASON_OK = "ok"
 REASON_NO_COVISIBILITY = "ok_no_covisibility"
 REASON_NO_OBSERVATION = "ok_no_observation"
 REASON_SEMANTIC_DISAGREEMENT = "semantic_disagreement"
-# Both the claim comparison and the legacy action comparison report under
-# REASON_SEMANTIC_DISAGREEMENT / REASON_OK. They are the same clause with
-# different evidence quality, and splitting the reason string would change
-# what every retained vote means without changing any decision.
+# A legacy action disagreement may report REASON_SEMANTIC_DISAGREEMENT as a
+# conservative veto. Legacy agreement reports REASON_NO_OBSERVATION, never
+# REASON_OK, because it does not count as semantic authorization in protocol v4.
 
 
 @dataclass(frozen=True)
@@ -252,6 +251,9 @@ class ConsensusResult:
     #: Their votes are excluded from both sides; the signed pair is evidence
     #: for an isolation/revocation workflow, not a reason to trust either vote.
     equivocation_voter_ids: frozenset = frozenset()
+    #: Receipt digest all counted votes targeted. The final supervisor checks
+    #: this against the evidence receipt before releasing its exact output.
+    target_receipt_hash: str = ""
 
     def __post_init__(self) -> None:
         counts = (
@@ -285,6 +287,10 @@ class ConsensusResult:
             self.ack_voter_ids | self.dispute_voter_ids
         ):
             raise ValueError("equivocators cannot count toward a decision")
+        if self.target_receipt_hash and not _HASH_RE.fullmatch(
+            self.target_receipt_hash
+        ):
+            raise ValueError("target_receipt_hash must be 64 lowercase hex chars")
 
 
 # ---------------------------------------------------------------------------
@@ -392,9 +398,9 @@ class PeerVerifier:
     and emits a SignedVote.
 
     Cryptographic verification is delegated to `ReceiptVerifier`.
-    Semantic verification (`outputs_agree`) is applied when the local
-    drone has its own observation for the *same* logical timestep
-    (i.e. overlapping field of view).
+    Semantic verification compares measured `PerceptionClaim` values when the
+    local drone has evidence for the same logical timestep and overlapping field
+    of view. Legacy action comparison is veto-only.
 
     Pass `on_covis` to receive a :class:`CoVisDiagnostic` for every receipt this
     peer votes on; the most recent one is also kept on :attr:`last_covis`. Both
@@ -432,6 +438,10 @@ class PeerVerifier:
             raise ValueError("m_min must be a positive integer")
         if not math.isfinite(phi_min) or not 0.0 <= phi_min < 180.0:
             raise ValueError("phi_min must be in [0, 180)")
+        if not math.isfinite(occupancy_tolerance) or not (
+            0.0 < occupancy_tolerance <= 1.0
+        ):
+            raise ValueError("occupancy_tolerance must be in (0, 1]")
         self._signer = signer
         self._receipt_verifier = receipt_verifier
         self._agreement_threshold = agreement_threshold
@@ -579,11 +589,17 @@ class PeerVerifier:
                 reason=crypto_result.reason,
             )
 
-        # Semantic check (C2): only applied when this peer actually co-observed
-        # the originator's scene. When poses (and optionally frames) are given,
-        # gate on co-visibility; without any geometry, fall back to the legacy
-        # behaviour of applying the check whenever a local observation exists.
-        semantic_applicable = my_observation is not None
+        # Semantic check (C2): a protocol-v4 semantic ACK requires two measured
+        # claims. A legacy action vector can still justify a conservative
+        # DISPUTE, but agreement in action space is not semantic evidence and
+        # must never increment semantic_ack_count.
+        origin_claim = signed_receipt.receipt.perception
+        local_claim_measured = (
+            isinstance(my_claim, PerceptionClaim) and my_claim.measured
+        )
+        semantic_applicable = (
+            origin_claim.measured or local_claim_measured or my_observation is not None
+        )
         if not semantic_applicable:
             # No local perception at all. This is an ACK on crypto + provenance
             # only, and it is reported as such so a tally can tell it apart from
@@ -610,8 +626,10 @@ class PeerVerifier:
                     reason=REASON_NO_COVISIBILITY,
                 )
 
-        # Compare OBSERVATIONS first, and fall back to control outputs only when
-        # one side carried no perception evidence.
+        # Compare OBSERVATIONS first. If either claim is missing, the old action
+        # comparison is permitted only as a fail-safe veto. An action-space
+        # agreement remains an abstention because the mapping from observations
+        # to actions is non-injective (the original semantic blind band).
         #
         # Comparing control outputs is a category error: the command is a lossy,
         # non-injective projection of what was seen, so different world-states
@@ -619,10 +637,11 @@ class PeerVerifier:
         # (0, 0, 0) and an honest peer facing a moderate obstacle emits
         # (0.028, 0, 0.324) -- 0.325 apart, inside theta = 0.5, so the patch
         # passes. No threshold fixes that; the information was destroyed before
-        # the comparison. `detections_present` restores it and is independent of
-        # obstacle size, range, and controller gains.
+        # the comparison. `detections_present` restores the missing distinction
+        # without depending on controller gains; synchronized co-visibility is
+        # still required because occlusion and detector thresholds are real.
         claim_verdict = claims_agree(
-            signed_receipt.receipt.perception,
+            origin_claim,
             my_claim,
             occupancy_tolerance=self._occupancy_tolerance,
         )
@@ -632,19 +651,21 @@ class PeerVerifier:
                 decision=Vote.DISPUTE,
                 reason=REASON_SEMANTIC_DISAGREEMENT,
             )
-        if claim_verdict is None and not outputs_agree(
-            signed_receipt.receipt.output,
-            my_observation,
-            threshold=self._agreement_threshold,
-        ):
-            # No perception evidence on one side: the legacy action-space
-            # comparison, which still carries the blind band. Live nodes always
-            # supply a claim, so this path is for the harness and for peers
-            # whose detector did not run.
+        if claim_verdict is None:
+            if my_observation is not None and not outputs_agree(
+                signed_receipt.receipt.output,
+                my_observation,
+                threshold=self._agreement_threshold,
+            ):
+                return self._build_signed_vote(
+                    signed_receipt.receipt,
+                    decision=Vote.DISPUTE,
+                    reason=REASON_SEMANTIC_DISAGREEMENT,
+                )
             return self._build_signed_vote(
                 signed_receipt.receipt,
-                decision=Vote.DISPUTE,
-                reason=REASON_SEMANTIC_DISAGREEMENT,
+                decision=Vote.ACK,
+                reason=REASON_NO_OBSERVATION,
             )
 
         return self._build_signed_vote(
@@ -944,6 +965,7 @@ class ConsensusEngine:
             semantic_ack_count=len(semantic_voters),
             semantic_voter_ids=frozenset(semantic_voters),
             equivocation_voter_ids=frozenset(equivocators),
+            target_receipt_hash=target_hash,
         )
 
         if ack_ok:

@@ -23,6 +23,14 @@ review dependency; they do not transfer that person's task to Samik.
   `MissionRunner`/`Originator` executes on the Jetson after the webcam handover and signs
   locally through OP-TEE. Samik may operate it over SSH.
 - Do not claim that OP-TEE attests inference. It protects Alpha's signing key only.
+
+**Protocol-v4 integration baseline (2026-08-18):** the detector-facing seam already
+requires atomic `PerceptionResult(action, claim)` values; measured class-aware claims now
+survive JSON and gRPC transport; action-only agreement cannot create semantic quorum; and
+the supervisor releases a command only when it equals the signed `Receipt.output` whose
+digest the consensus result targets. The audited suite is **347 passed, 3 skipped** (all
+three skips require missing Ultralytics assets). Samik must consume this contract, not
+recreate the removed `CommandBinding` design.
 - Do not hard-code PC addresses, vehicle names, coordinate offsets, model paths or mission
   thresholds. Load them from validated manifests/CLI arguments.
 
@@ -209,24 +217,31 @@ Do **not** calculate `waypoint_velocity + YOLO_avoidance_velocity`.
 
 The integration rule is:
 
-1. The signed mission, estimator and current A*/coverage path create mission intent.
-2. The waypoint follower creates candidate motion requests toward the next path point.
-3. Depth/LiDAR, occupancy, geofence, dynamics and peer state remove geometrically unsafe
-   candidates.
-4. Semantic perception receipts/certificates establish whether the current scene evidence
-   is trustworthy and may create mission constraints, alerts or replans. They are not a
-   second velocity vector.
-5. `AutonomyDecisionRecord` binds the mission/task, path/map/estimator versions,
-   perception-certificate IDs, rejected constraints and exact selected candidate.
-6. `SafetySupervisor` evaluates that exact selected command, its current evidence and TTL.
-7. Only the supervisor-released command reaches `CommandSink`.
+1. Run the detector once and retain its atomic protocol-v4
+   `PerceptionResult(detector_action, measured_claim)`; never recompute the claim and action
+   in separate calls.
+2. The signed mission, estimator and current A*/coverage path create mission intent, and
+   the waypoint follower produces bounded candidate requests toward the next path point.
+3. Apply semantic constraints from the claim plus depth/LiDAR, occupancy, geofence,
+   dynamics, separation and peer state. Perception is a constraint/evidence input, not a
+   second velocity vector to add to waypoint velocity.
+4. Select exactly one normalized final command—or HOLD—deterministically. Record every
+   rejected candidate and the path/map/estimator/claim versions used.
+5. **Only after selection**, build the protocol-v4 receipt with the measured claim and put
+   that exact final command in `Receipt.output`; then sign/broadcast/tally it. Do not sign a
+   detector action and later replace it with a waypoint command.
+6. `ConsensusResult.target_receipt_hash` must identify that exact receipt.
+7. Call `SafetySupervisor.authorize(final_command, consensus,
+   evidence_receipt=that_receipt, ...)`. A missing claim, another round's receipt or any
+   changed command must HOLD with the corresponding v4 refusal reason.
+8. Only the unchanged supervisor-released command reaches `CommandSink`.
 
-The current `node.mission.MissionRunner` calls `inference(frame)` and treats that result as
-the requested action. Before the protected waypoint gate, refactor this seam so detector
-output becomes a versioned `PerceptionClaim` and waypoint output becomes the separate
-candidate command. Do not disguise a waypoint velocity as detector output, and do not let
-an accepted perception receipt automatically authorize an unrelated command. Suyash owns
-the versioned contract; Samik owns its implementation in `AutonomyRunner`.
+`node.mission.MissionRunner` already requires `PerceptionResult` and enforces the exact
+receipt/output binding for the simple reactive loop. Samik must extend this into
+`AutonomyRunner` by inserting waypoint candidate selection **before receipt construction**.
+Do not revive `CommandBinding`: the removed design was optional, did not contain the
+command and did not prove that consensus covered the released action. Suyash owns the v4
+contract; Samik owns this autonomy integration.
 
 #### S3.4 Fast implementation sequence
 
@@ -234,9 +249,11 @@ the versioned contract; Samik owns its implementation in `AutonomyRunner`.
 2. Implement straight-line and multi-segment following with HOLD/arrival/stuck states.
 3. Add look-ahead, braking-based speed schedule and monotonic waypoint advancement.
 4. Add deterministic candidate generation and integrate `local_safety.py`.
-5. Refactor `MissionRunner`/`AutonomyRunner` to separate `PerceptionClaim` from
-   `WaypointProposal` and bind both in `AutonomyDecisionRecord`.
-6. Connect the selected proposal through `SafetySupervisor → CommandSink`.
+5. Build `AutonomyRunner` on the existing `PerceptionResult` seam; separate the measured
+   claim from `WaypointProposal`, select the final command, and bind all inputs in
+   `AutonomyDecisionRecord` before building its v4 receipt.
+6. Put the exact selected proposal in `Receipt.output`, obtain consensus for that receipt,
+   and pass the same receipt to `SafetySupervisor → CommandSink`.
 7. Run an empty-corridor A→B route, then obstacle/replan, then five distinct routes.
 
 #### S3.5 Required waypoint tests and gates
@@ -383,6 +400,9 @@ Samik must add tests for:
   stuck/replan and candidate ordering;
 - separation of `PerceptionClaim` from `WaypointProposal`, including proof that an accepted
   perception certificate cannot authorize a different/unbound command;
+- protocol-v4 ordering tests proving selection occurs before signing, the consensus target
+  matches the supplied evidence receipt, and round-N evidence cannot release round-M work;
+- missing/unmeasured claims and legacy action-only agreement produce no semantic release;
 - A* replan/no-path/timeout determinism;
 - lease replay/conflict/expiry and node death;
 - process startup rollback and cleanup idempotence;
@@ -415,7 +435,8 @@ teleport, truth leak, overwritten failure or undocumented setting.
 2. Deliver S0 reproduction report.
 3. Implement `cosys_smoke_flight.py` and pass F0–F3.
 4. Implement `cosys_adapter.py` and supervisor-only movement.
-5. Implement `waypoint_follower.py`, the perception/command separation and pass W0–W3.
+5. Implement `waypoint_follower.py` and `AutonomyRunner` with final-command-before-receipt
+   protocol-v4 ordering; pass W0–W3 without introducing `CommandBinding`.
 6. Implement `run_campaign.py`, with the Alpha originator executing on the Jetson.
 7. Integrate state estimator/VIO.
 8. Complete map, A*, local safety and no-path behavior.

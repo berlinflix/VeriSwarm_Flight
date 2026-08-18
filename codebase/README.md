@@ -28,7 +28,8 @@ software. This roots the key operation in the TEE, not the inference pipeline.
 - `signing/` — OP-TEE hardware signing backend (`optee_backend.py`).
 - `optee/` — the OP-TEE Trusted Application (`ta/`) and host Client Application (`host/`).
 - `node/` — bounded gRPC runtime, mission loop, event chain, originator and orchestrators.
-- `perception/` — YOLOv8 detections → action vectors, model hashing, adversarial-patch tooling.
+- `perception/` — atomic YOLOv8 action + class-aware claim results, model hashing,
+  safety supervision, and adversarial-patch tooling.
 - `sim/` — PX4 SITL + Gazebo flight: pose probe, multi-drone co-visibility from flown poses, frame capture, YOLO on frames.
 - `eval/` — experiment runner (`run_all.py`), figure generation (`make_figures.py`), unattested baseline.
 - `tests/` — deterministic unit, integration, adversarial and regression tests.

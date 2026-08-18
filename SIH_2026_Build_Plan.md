@@ -221,8 +221,9 @@ The hardened protocol/safety core already exists in `codebase/`:
 - `node/mission.py` is the only supported perception → consensus → command seam.
 - `perception/safety_supervisor.py` is the only component allowed to release motion.
 - `node/live_node.py` provides an atomic, timestamped perception snapshot.
-- Protocol-v2 receipts bind mission, epoch, sequence, runtime measurement, action
-  frame/validity, and pose metadata.
+- Protocol-v4 receipts bind mission, epoch, sequence, runtime measurement, exact
+  action/frame/validity, pose metadata, and a measured class-aware perception
+  claim. The gRPC bridge preserves every signed field.
 - Exact replay, duplicate sequence misuse, vote equivocation, insufficient semantic
   evidence, stale commands, unknown clearance, and unhealthy state fail closed.
 - `sim/closed_loop.py` is the deterministic pre-Cosys gate.
@@ -577,7 +578,8 @@ Add a simulation-stage `AutonomyDecisionRecord` to the hash-chained event log co
 
 For SIH simulation this is auditable evidence. Before real flight, decide which fields are
 signed/attested and extend protocol compatibility deliberately; do not casually break the
-protocol-v2 receipt during simulator integration.
+protocol-v4 receipt during simulator integration. Any canonical-field change requires a
+new protocol version and regenerated protobuf/signature vectors.
 
 ## Locked ownership
 

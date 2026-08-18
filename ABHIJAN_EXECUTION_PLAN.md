@@ -25,6 +25,13 @@ Abhijan should silently perform for them.
   expectations from the actual roster/quorum configuration.
 - Every campaign begins from a clean verified baseline and ends with proved cleanup.
 
+**Protocol-v4 attack baseline (2026-08-18):** receipts now sign a measured, class-aware
+`PerceptionClaim` and the exact candidate command; protobuf/gRPC preserve the complete
+claim; legacy action comparison is veto-only; and command release requires the actual
+receipt whose digest consensus targeted. The audited suite is **347 passed, 3 skipped**,
+with all three skips caused by missing Ultralytics assets. The oracle must report skips as
+unverified evidence, never silently count them as passes.
+
 ## 2. Files and artifacts Abhijan owns
 
 | Path/artifact | Required purpose |
@@ -118,12 +125,29 @@ Create bounded cases for:
 - signed vote equivocation;
 - clock jump and timestamp outside the accepted window;
 - reordered/duplicated vote traffic.
+- protocol-v2 or protocol-v3 receipt submitted to a v4 node;
+- v4 receipt with the nested perception field removed, downgraded to `unmeasured`, or
+  modified after signing;
+- malformed/unsorted/duplicate/out-of-range `class_ids`, class-set substitution and a
+  target miss hidden behind an unrelated remaining detection;
+- protobuf field-stripping/round-trip mutation that changes canonical receipt bytes;
+- action-only agreement with either claim missing—this may be a crypto ACK but must never
+  increment `semantic_ack_count` or authorize motion;
+- a valid accepted receipt paired with a substituted command;
+- a valid consensus result paired with a different round/mission receipt digest.
 
 Observe real verification reason codes. Never generate a verdict by writing to an event
 file. Retain the original and conflicting signed objects for forensic comparison.
 
-**Gate A2:** unknown, stale, malformed and equivocating inputs cannot contribute to an
-unsafe quorum; evidence identifies the offending identity/object and safe outcome.
+The protocol-v4 supervisor reasons the oracle must recognize are
+`evidence_receipt_missing`, `consensus_receipt_mismatch`,
+`evidence_command_mismatch` and `perception_claim_missing`. A legacy action mismatch may
+still produce `semantic_disagreement` as a conservative veto; legacy agreement without two
+measured claims is `ok_no_observation`, not semantic success.
+
+**Gate A2:** unknown, stale, malformed, downgraded, claim-stripped, command-substituted and
+equivocating inputs cannot contribute to an unsafe release; v2/v3 cannot mix with v4;
+evidence identifies the offending identity/object and safe outcome.
 
 ### A3 — provenance/model campaigns
 
@@ -168,7 +192,10 @@ motion decision under the approved identity. Clean restoration is hash-verified.
 
 Use Pratik's visible 3-D patch/occluder modes and raw camera output. Exercise clean,
 adversarial, occluded, frozen/dropped RGB, frozen/dropped/corrupt depth, NaN/Inf/range
-errors and contradictory modalities.
+errors and contradictory modalities. Add class-aware cases: same presence/occupancy but
+different class, target plus unrelated object, target removed while an unrelated detection
+remains, honest partial-overlap class differences and viewpoint occlusion. Measure both
+unsafe accepts and conservative false HOLDs; do not tune the scene merely to force a pass.
 
 **Gate A4:** clean/attacked inputs are distinguishable in raw evidence; invalid or
 inconsistent perception cannot release unsafe motion; the webcam stage leaves no process
@@ -212,7 +239,9 @@ Create reproducible cases for:
 The attack changes sensor/map/planner/path inputs, not the planner/follower's return value.
 Verify that rocks/trees/walls/buildings affect navigation independently of YOLO labels and
 that no accepted perception certificate can be reused to authorize a substituted waypoint
-command.
+command. Exercise both substitution paths explicitly: change `Receipt.output` after signing
+(signature failure), and keep a valid receipt/consensus while presenting a different final
+command or different receipt to the supervisor (v4 binding refusal).
 
 **Gate A6:** unsafe/unknown routes are never traversed; a complete blockage yields
 HOLD/`NO_PATH`; cleanup restores the clean map/scene state.
@@ -311,6 +340,12 @@ For each attack family include clean baseline, single fault, boundary value, mal
 input, interrupted delivery, failed cleanup and next-run contamination tests. Also test the
 oracle with missing/corrupt/duplicated evidence and false expected results.
 
+For protocol/perception families additionally sweep claim measured/unmeasured state,
+presence, class sets, occupancy/confidence/position, protobuf/JSON transport, v2/v3
+downgrade, target receipt digest and requested command. The oracle must prove that
+`semantic_acks` came from measured claim comparison, not merely `reason=ok` text or action
+similarity.
+
 At minimum report:
 
 - attack delivery success/failure;
@@ -336,7 +371,8 @@ oracle result and checksum index. Preserve every failure under its own run ID.
 2. Implement/test the independent oracle.
 3. Implement runner dry-run, bounded delivery and cleanup verification.
 4. Complete the physical two-webcam rig and exact printed patch tests.
-5. Publish initial replay, model-swap, GNSS, sensor-freeze and partition manifests.
+5. Publish initial v4 downgrade/claim-strip/command-substitution, replay, model-swap, GNSS,
+   sensor-freeze and partition manifests.
 6. Validate each injector against Samik's reviewed boundary after clean flight passes.
 7. Build the C4 demonstration choreography and backup replays.
 8. Run the complete reliability matrix on both frozen simulator installations.

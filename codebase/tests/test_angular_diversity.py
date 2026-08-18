@@ -21,6 +21,7 @@ import math
 import pytest
 
 from node import common
+from perception.claim import PerceptionClaim
 from protocol.geometry import Pose
 from protocol.peer_consensus import (
     REASON_NO_COVISIBILITY,
@@ -32,6 +33,7 @@ from protocol.receipts import ReceiptSigner, ReceiptVerifier, build_receipt, sha
 
 APPROVED = sha256_hex(b"yolov8n-weights-v1")
 ACTION = (0.1, 0.0, 0.0)
+EMPTY_CLAIM = PerceptionClaim.from_detections([])
 
 #: Section 4.3 measured patch suppression falling away between 12 and 23 degrees.
 PHI_MIN = 23.0
@@ -42,7 +44,11 @@ def _pair():
     peer_keys = {d: s.public_key_hex for d, s in signers.items()}
     verifier = ReceiptVerifier(peer_keys=peer_keys, approved_models={APPROVED})
     receipt = build_receipt(
-        drone_id="alpha", input_bytes=b"frame", model_hash=APPROVED, output=ACTION
+        drone_id="alpha",
+        input_bytes=b"frame",
+        model_hash=APPROVED,
+        output=ACTION,
+        perception=EMPTY_CLAIM,
     )
     return signers, verifier, signers["alpha"].sign(receipt)
 
@@ -53,7 +59,11 @@ def _vote(bravo_pose, phi_min, alpha_pose=Pose(0.0, 0.0, 14.0)):
         "bravo", signers["bravo"], verifier, o_min=0.1, phi_min=phi_min
     )
     vote = peer.vote_on(
-        signed, my_observation=ACTION, my_pose=bravo_pose, originator_pose=alpha_pose
+        signed,
+        my_observation=ACTION,
+        my_pose=bravo_pose,
+        originator_pose=alpha_pose,
+        my_claim=EMPTY_CLAIM,
     )
     return vote, peer.last_covis
 
@@ -118,14 +128,22 @@ def test_abstention_does_not_count_as_semantic_verification():
     peer_keys = {d: s.public_key_hex for d, s in signers.items()}
     verifier = ReceiptVerifier(peer_keys=peer_keys, approved_models={APPROVED})
     receipt = build_receipt(
-        drone_id="alpha", input_bytes=b"frame", model_hash=APPROVED, output=ACTION
+        drone_id="alpha",
+        input_bytes=b"frame",
+        model_hash=APPROVED,
+        output=ACTION,
+        perception=EMPTY_CLAIM,
     )
     signed = signers["alpha"].sign(receipt)
 
     alpha = Pose(0.0, 0.0, 14.0)
     votes = [
         PeerVerifier(p, signers[p], verifier, o_min=0.1, phi_min=PHI_MIN).vote_on(
-            signed, my_observation=ACTION, my_pose=pose, originator_pose=alpha
+            signed,
+            my_observation=ACTION,
+            my_pose=pose,
+            originator_pose=alpha,
+            my_claim=EMPTY_CLAIM,
         )
         for p, pose in (("bravo", Pose(0.0, 0.3, 14.0)),
                         ("charlie", Pose(0.0, -0.3, 14.0)))

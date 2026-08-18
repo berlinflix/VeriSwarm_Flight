@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import math
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional
 
+from perception.claim import PerceptionClaim, PerceptionResult
 from protocol.geometry import Pose
 
 from .frame_source import FrameSource, frame_hash
@@ -18,6 +18,7 @@ class PerceptionSnapshot:
     frame: object
     frame_hash: str
     action: tuple[float, float, float]
+    claim: PerceptionClaim
     pose: Optional[Pose]
     depth: object
     captured_ns: int
@@ -34,7 +35,7 @@ class PerceptionWorker:
     def __init__(
         self,
         source: FrameSource,
-        inference: Callable[[object], Sequence[float]],
+        inference: Callable[[object], PerceptionResult],
         *,
         rate_hz: float = 10.0,
         max_age_s: float = 0.25,
@@ -62,15 +63,15 @@ class PerceptionWorker:
             if frame is None:
                 raise RuntimeError("frame_unavailable")
             captured_ns = time.time_ns()
-            action = tuple(float(v) for v in self.inference(frame))
-            if len(action) != 3 or not all(
-                math.isfinite(v) and -1.0 <= v <= 1.0 for v in action
-            ):
-                raise ValueError("inference returned an invalid normalized action")
+            result = self.inference(frame)
+            if not isinstance(result, PerceptionResult):
+                raise ValueError("inference must return PerceptionResult with a measured claim")
+            action = result.action
             snapshot = PerceptionSnapshot(
                 frame=frame,
                 frame_hash=frame_hash(frame),
                 action=action,  # type: ignore[arg-type]
+                claim=result.claim,
                 pose=self.source.pose(),
                 depth=self.source.depth(),
                 captured_ns=captured_ns,

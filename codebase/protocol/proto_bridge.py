@@ -8,6 +8,7 @@ and the signature contract. Protobuf is purely a transport.
 
 Encoding rules:
 - `Receipt.output` (Sequence[float]) <-> repeated double `output`
+- `Receipt.perception` <-> nested `PerceptionClaim`
 - All hash / nonce / signature fields are hex strings on both sides.
 - Enum: protocol Vote.ACK/DISPUTE <-> proto Vote.ACK/DISPUTE.
 
@@ -22,6 +23,7 @@ For any honest SignedReceipt `sr`:
 from __future__ import annotations
 
 from . import attestation_pb2 as pb
+from perception.claim import PerceptionClaim
 from .receipts import Receipt, SignedReceipt
 from .peer_consensus import PeerVote, SignedVote, Vote
 
@@ -47,9 +49,18 @@ def receipt_to_pb(r: Receipt) -> pb.Receipt:
         valid_for_ns=r.valid_for_ns,
         pose_timestamp_ns=r.pose_timestamp_ns,
         pose_uncertainty_m=r.pose_uncertainty_m,
+        perception=pb.PerceptionClaim(
+            measured=r.perception.measured,
+            detections_present=r.perception.detections_present,
+            detection_count=r.perception.detection_count,
+            occupancy=r.perception.occupancy,
+            max_confidence=r.perception.max_confidence,
+            bearing=r.perception.bearing,
+        ),
     )
     msg.output.extend(r.output)
     msg.pose_enu.extend(r.pose_enu)
+    msg.perception.class_ids.extend(r.perception.class_ids)
     return msg
 
 
@@ -71,6 +82,15 @@ def receipt_from_pb(msg: pb.Receipt) -> Receipt:
         pose_enu=tuple(msg.pose_enu),
         pose_timestamp_ns=msg.pose_timestamp_ns,
         pose_uncertainty_m=msg.pose_uncertainty_m,
+        perception=PerceptionClaim(
+            measured=msg.perception.measured,
+            detections_present=msg.perception.detections_present,
+            detection_count=msg.perception.detection_count,
+            occupancy=msg.perception.occupancy,
+            max_confidence=msg.perception.max_confidence,
+            bearing=msg.perception.bearing,
+            class_ids=tuple(msg.perception.class_ids),
+        ),
     )
 
 

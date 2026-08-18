@@ -16,8 +16,26 @@ VOTE_UNSPECIFIED: Vote
 ACK: Vote
 DISPUTE: Vote
 
+class PerceptionClaim(_message.Message):
+    __slots__ = ("measured", "detections_present", "detection_count", "occupancy", "max_confidence", "bearing", "class_ids")
+    MEASURED_FIELD_NUMBER: _ClassVar[int]
+    DETECTIONS_PRESENT_FIELD_NUMBER: _ClassVar[int]
+    DETECTION_COUNT_FIELD_NUMBER: _ClassVar[int]
+    OCCUPANCY_FIELD_NUMBER: _ClassVar[int]
+    MAX_CONFIDENCE_FIELD_NUMBER: _ClassVar[int]
+    BEARING_FIELD_NUMBER: _ClassVar[int]
+    CLASS_IDS_FIELD_NUMBER: _ClassVar[int]
+    measured: bool
+    detections_present: bool
+    detection_count: int
+    occupancy: float
+    max_confidence: float
+    bearing: float
+    class_ids: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, measured: bool = ..., detections_present: bool = ..., detection_count: _Optional[int] = ..., occupancy: _Optional[float] = ..., max_confidence: _Optional[float] = ..., bearing: _Optional[float] = ..., class_ids: _Optional[_Iterable[int]] = ...) -> None: ...
+
 class Receipt(_message.Message):
-    __slots__ = ("drone_id", "timestamp_ns", "input_hash", "model_hash", "output", "nonce", "protocol_version", "mission_id", "mission_epoch", "sequence", "runtime_hash", "action_frame", "valid_for_ns", "pose_enu", "pose_timestamp_ns", "pose_uncertainty_m")
+    __slots__ = ("drone_id", "timestamp_ns", "input_hash", "model_hash", "output", "nonce", "protocol_version", "mission_id", "mission_epoch", "sequence", "runtime_hash", "action_frame", "valid_for_ns", "pose_enu", "pose_timestamp_ns", "pose_uncertainty_m", "perception")
     DRONE_ID_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMP_NS_FIELD_NUMBER: _ClassVar[int]
     INPUT_HASH_FIELD_NUMBER: _ClassVar[int]
@@ -34,6 +52,7 @@ class Receipt(_message.Message):
     POSE_ENU_FIELD_NUMBER: _ClassVar[int]
     POSE_TIMESTAMP_NS_FIELD_NUMBER: _ClassVar[int]
     POSE_UNCERTAINTY_M_FIELD_NUMBER: _ClassVar[int]
+    PERCEPTION_FIELD_NUMBER: _ClassVar[int]
     drone_id: str
     timestamp_ns: int
     input_hash: str
@@ -50,7 +69,8 @@ class Receipt(_message.Message):
     pose_enu: _containers.RepeatedScalarFieldContainer[float]
     pose_timestamp_ns: int
     pose_uncertainty_m: float
-    def __init__(self, drone_id: _Optional[str] = ..., timestamp_ns: _Optional[int] = ..., input_hash: _Optional[str] = ..., model_hash: _Optional[str] = ..., output: _Optional[_Iterable[float]] = ..., nonce: _Optional[str] = ..., protocol_version: _Optional[int] = ..., mission_id: _Optional[str] = ..., mission_epoch: _Optional[int] = ..., sequence: _Optional[int] = ..., runtime_hash: _Optional[str] = ..., action_frame: _Optional[str] = ..., valid_for_ns: _Optional[int] = ..., pose_enu: _Optional[_Iterable[float]] = ..., pose_timestamp_ns: _Optional[int] = ..., pose_uncertainty_m: _Optional[float] = ...) -> None: ...
+    perception: PerceptionClaim
+    def __init__(self, drone_id: _Optional[str] = ..., timestamp_ns: _Optional[int] = ..., input_hash: _Optional[str] = ..., model_hash: _Optional[str] = ..., output: _Optional[_Iterable[float]] = ..., nonce: _Optional[str] = ..., protocol_version: _Optional[int] = ..., mission_id: _Optional[str] = ..., mission_epoch: _Optional[int] = ..., sequence: _Optional[int] = ..., runtime_hash: _Optional[str] = ..., action_frame: _Optional[str] = ..., valid_for_ns: _Optional[int] = ..., pose_enu: _Optional[_Iterable[float]] = ..., pose_timestamp_ns: _Optional[int] = ..., pose_uncertainty_m: _Optional[float] = ..., perception: _Optional[_Union[PerceptionClaim, _Mapping]] = ...) -> None: ...
 
 class SignedReceipt(_message.Message):
     __slots__ = ("receipt", "signature_hex")
