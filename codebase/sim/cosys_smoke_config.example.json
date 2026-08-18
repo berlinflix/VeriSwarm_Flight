@@ -1,0 +1,48 @@
+{
+  "schema": "veriswarm.cosys_route.v1",
+  "endpoint": {
+    "host": null,
+    "port": null,
+    "rpc_timeout_seconds": null
+  },
+  "vehicle": {
+    "name": null,
+    "type": null
+  },
+  "frame": "NED_METRES",
+  "route": {
+    "a": {
+      "x": null,
+      "y": null,
+      "z": null
+    },
+    "takeoff_z_ned_m": null,
+    "b": {
+      "x": null,
+      "y": null,
+      "z": null
+    }
+  },
+  "limits": {
+    "start_tolerance_m": null,
+    "speed_mps": null,
+    "position_tolerance_m": null,
+    "hover_velocity_tolerance_mps": null,
+    "dwell_seconds": null
+  },
+  "timeouts_seconds": {
+    "connect": null,
+    "vehicle_check": null,
+    "api_control": null,
+    "arm": null,
+    "takeoff": null,
+    "hover": null,
+    "move": null,
+    "arrival": null,
+    "land": null,
+    "cleanup": null
+  },
+  "evidence": {
+    "output_path": null
+  }
+}
