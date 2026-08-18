@@ -101,6 +101,92 @@ class FakeFuture:
             self.callback()
 
 
+class EventLoopBoundFuture:
+    def __init__(self, client):
+        self.client = client
+
+    def join(self):
+        self.client.assert_owner()
+        self.client.calls.append("future.join")
+
+
+class EventLoopBoundClient:
+    """Minimal stand-in for rpc-msgpack's thread-bound client."""
+
+    def __init__(self):
+        self.owner_thread = smoke_module.threading.get_ident()
+        self.owner_loop = smoke_module.asyncio.get_event_loop()
+        self.calls = []
+
+    def assert_owner(self):
+        try:
+            current_loop = smoke_module.asyncio.get_event_loop()
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "There is no current event loop in thread "
+                f"{smoke_module.threading.current_thread().name!r}."
+            ) from exc
+        if (
+            smoke_module.threading.get_ident() != self.owner_thread
+            or current_loop is not self.owner_loop
+        ):
+            raise RuntimeError("RPC client used outside its owning event-loop thread")
+
+    def ping(self):
+        self.assert_owner()
+        self.calls.append("ping")
+        return True
+
+    def hoverAsync(self, vehicle_name=""):
+        self.assert_owner()
+        self.calls.append(("hoverAsync", vehicle_name))
+        return EventLoopBoundFuture(self)
+
+    def close(self):
+        self.assert_owner()
+        self.calls.append("close")
+
+
+def test_thread_affine_adapter_reproduces_and_fixes_cosys_ping_loop_failure():
+    direct_loop = smoke_module.asyncio.new_event_loop()
+    smoke_module.asyncio.set_event_loop(direct_loop)
+    direct_client = EventLoopBoundClient()
+    smoke_module.asyncio.set_event_loop(None)
+    try:
+        with pytest.raises(
+            smoke_module.FlightInvariantError,
+            match="no current event loop.*cosys-ping",
+        ):
+            smoke_module._call_with_timeout("ping", 0.2, direct_client.ping)
+    finally:
+        direct_loop.close()
+
+    clients = []
+
+    def factory():
+        client = EventLoopBoundClient()
+        clients.append(client)
+        return client
+
+    client = smoke_module._ThreadAffineCosysClient(factory, 0.2)
+    try:
+        assert smoke_module._call_with_timeout("ping", 0.2, client.ping) is True
+        future = smoke_module._call_with_timeout(
+            "hover_start",
+            0.2,
+            lambda: client.hoverAsync(vehicle_name="Drone1"),
+        )
+        smoke_module._join_future("hover", 0.2, future)
+    finally:
+        client.close()
+
+    assert len(clients) == 2
+    assert "ping" in clients[1].calls
+    assert ("hoverAsync", "Drone1") in clients[0].calls
+    assert "future.join" in clients[0].calls
+    assert all("close" in created.calls for created in clients)
+
+
 class FakeClient:
     def __init__(
         self,

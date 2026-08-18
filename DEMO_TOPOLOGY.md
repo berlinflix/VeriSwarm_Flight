@@ -15,21 +15,21 @@ becomes node `alpha` with local OP-TEE signing for the simulated swarm.
 | | What it shows | Runs on |
 |---|---|---|
 | **A. Simulated swarm** | 5 drones, adversarial patch, consensus, isolation | CoSys AirSim + 5 node processes |
-| **B. Physical co-visibility rig** | the overlap algorithm on two real cameras | Jetson + 2 USB webcams |
+| **B. Physical co-visibility rig** | co-visibility-gated semantic comparison on two real cameras | Jetson + USB webcam + Android DroidCam |
 
-Half B is new — its planned implementation guide is `codebase/docs/COVIS_LIVE.md`;
-until that file and `codebase/tools/covis_live.py` exist and pass their gate, use
-§6 as design requirements rather than runnable instructions.
+Half B's implementation and guide are `codebase/tools/covis_live.py` and
+`codebase/docs/COVIS_LIVE.md`. They are runnable only after focused tests and the
+real Jetson/USB/DroidCam cold gate pass.
 
 ### Implementation status gate
 
 The OP-TEE backend, Alpha manifest-key binding, `tools/optee_preflight.py`,
 `node.server`, and the protocol-only `node.run_phaseb` regression exist. The
-following commands shown in this topology are **planned, not implemented** as of
-2026-08-18: `tools.covis_live`, `tools.event_collector`, `console/app.py`, and
-`tools.run_campaign`. The accepted integrated demonstration is blocked until each
-file exists, has tests, and is cold-started from the final `RUNBOOK.md`. A diagram
-or command name is not evidence that a subsystem exists.
+`tools.covis_live` and its focused tests exist as of 2026-08-19 but still require
+the real Jetson/USB/DroidCam cold gate. `tools.event_collector`, `console/app.py`,
+and `tools.run_campaign` remain planned. The accepted integrated demonstration is
+blocked until every used entry point exists, has tests, and is cold-started from
+the final `RUNBOOK.md`. A diagram or command name is not evidence that a subsystem works.
 
 ---
 
@@ -163,10 +163,13 @@ placement and stage order but does not claim that every planned entry point exis
 **1. J — Jetson webcam process only**
 
 ```text
-python -m tools.covis_live
+python -m tools.covis_live --camera-a CAMERA_A --camera-b CAMERA_B \
+  --weights yolov8n.pt --expected-model-sha256 EXPECTED_SHA256 \
+  --run-id RUN_ID --require-cycles 3
 ```
 
-Run the live two-camera overlap, patch, and lens-cover beats. No swarm node or
+Resolve the exact USB and DroidCam sources using `codebase/docs/COVIS_LIVE.md`;
+never use literal placeholders. Run the live two-camera overlap, patch, and lens-cover beats. No swarm node or
 OP-TEE receipt service runs during this stage. The OP-TEE key remains protected
 even while unused.
 
@@ -277,8 +280,10 @@ need the ground station to stay safe."
 
 ## 6. Half B — the physical co-visibility rig
 
-**New deliverable.** Two USB webcams on the table, both looking at the same
-object from different angles, wired into the Jetson.
+**Physical deliverable.** One USB webcam and one Android phone running DroidCam
+look at the same object from different angles. The USB camera is Camera A; the
+tripod-mounted Android is Camera B. Camera B may be an existing V4L2 virtual
+device or a local `http://PHONE_IP:4747/video` stream.
 
 ```
         object on the table
@@ -286,10 +291,12 @@ object from different angles, wired into the Jetson.
              /     \        ~25-35 cm apart
             /       \       both ~40-60 cm from the object
       ┌────┘         └────┐
-   ┌──┴──┐             ┌──┴──┐
-   │CAM A│             │CAM B│
-   └──┬──┘             └──┬──┘
-      └────USB-A──┬───USB-A┘
+   ┌──┴──────┐       ┌──────┴──────┐
+   │CAM A USB│       │CAM B ANDROID│
+   └────┬────┘       └──────┬──────┘
+        │ USB          DroidCam V4L2
+        │               or local HTTP
+        └─────────┬─────────┘
               ┌───▼────┐
               │ JETSON │  runs tools/covis_live.py
               └────────┘
@@ -302,10 +309,10 @@ hardware they can touch. And it is the only part of the demo a judge can
 *interfere with directly*: slide a camera, hold up the printed patch, cover a
 lens.
 
-**What it shows on screen:** both camera feeds side by side, ORB matches drawn
-between them, the live inlier count against `m_min = 15`, and the co-visible
-verdict. Then, with YOLO enabled on both feeds, each camera's action vector and
-the L2 between them against θ.
+**What it shows on screen:** both camera feeds side by side, live camera health,
+capture skew and the ORB/RANSAC inlier count against `m_min = 15`. With the
+pinned YOLO enabled, it compares measured `PerceptionClaim` values only after
+co-visibility is established. It does not use action-vector distance as semantic proof.
 
 **The three judge-operable moments:**
 
@@ -313,24 +320,24 @@ the L2 between them against θ.
    and the semantic layer abstains. *"It refuses to cross-check two cameras that
    are not looking at the same thing — that is why our false-positive rate is
    low."*
-2. **Hold the printed patch in front of camera A.** A's detections vanish, its
-   action diverges from B's, L2 crosses θ, **DISPUTE**. *"A physical printed
-   attack, caught by a second viewpoint."*
-3. **Cover camera A entirely.** Detections vanish the same way — but so does the
-   scene. Shows that absence of evidence is not evidence of absence, which is
-   exactly the distinction the protected controller makes and the baseline does
-   not.
+2. **Place the rehearsed artifact in Camera A's target line of sight while
+   retaining shared scene texture.** A measured claim mismatch produces
+   **DISPUTE**. *"A physical perception inconsistency, caught by a second viewpoint."*
+3. **Cover Camera A entirely.** Camera health/co-visibility fails and the result
+   becomes **ABSTAIN**, not a false semantic mismatch. This shows that absence of
+   evidence is not evidence of absence.
 
 Point 3 is worth rehearsing because a sharp judge will ask it, and having the
 answer already on screen is far better than explaining it.
 
-**Cameras:** two identical USB webcams, 640×360 is plenty. Identical models keep
-the intrinsics comparable, which matters for the overlap claim. The Jetson has
-4× USB-A, so both plug straight in — no hub.
+**Cameras:** the actual qualifier uses one USB webcam and one tripod-mounted
+Android/DroidCam source at a 640×360 processing target. Different intrinsics and
+transport latency are explicitly treated as health/calibration limitations;
+they may increase honest abstentions and must not be hidden by threshold tuning.
 
-**Software:** `tools/covis_live.py`. Owner split — **Suyash** writes it (it calls
-protocol code directly), **Abhijan** owns the physical rig, the printed patch, and
-the attack choreography, since he owns attack delivery.
+**Software/ownership:** `tools/covis_live.py`. **Ayush** operates the cameras and
+rig; **Samik** owns implementation, oversight and recovery; **Abhijan** owns the
+printed artifact/application; **Suyash** independently accepts evidence and owns GO/NO-GO.
 
 ---
 
@@ -361,8 +368,10 @@ has not been tested.
 - [ ] Console shows `backend: optee` for Alpha; no software fallback is configured
 - [ ] At least one retained Alpha receipt verifies under that same pinned public key
 - [ ] All five nodes appear in the console with monotonic `seq`, no gaps
-- [ ] Both webcams enumerate on the Jetson (`ls /dev/video*`)
+- [ ] USB webcam opens and DroidCam V4L2/HTTP source opens on the Jetson
 - [ ] `covis_live` shows inliers ≥ 15 in the rehearsed camera placement
+- [ ] `view_IoU` and same-class `box_IoU` are measured after homography projection;
+      no raw cross-view box IoU or calibrated-3-D claim is made
 - [ ] The printed patch actually suppresses detection at the rehearsed distance —
       **test the exact print**, since paper, scale, and lighting all matter
 - [ ] Offline mode (`--offline`) runs the full attack sequence with the switch

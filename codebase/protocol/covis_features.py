@@ -59,6 +59,20 @@ class FeatureMatchResult:
         return self.inliers >= m_min
 
 
+@dataclass(frozen=True)
+class FeatureAlignmentResult:
+    """Feature evidence plus the measured homography from frame A to frame B.
+
+    ``homography_a_to_b`` is ``None`` when fewer than four consistent matches
+    exist or RANSAC cannot estimate a model.  It is intentionally typed as an
+    object so importing this light-weight protocol module does not import
+    NumPy/OpenCV in pure-consensus processes.
+    """
+
+    match: FeatureMatchResult
+    homography_a_to_b: object | None
+
+
 def _load_gray(frame):
     """Accept a path, a BGR array, or a grayscale array; return grayscale."""
     import cv2  # lazy
@@ -76,19 +90,20 @@ def _load_gray(frame):
     raise TypeError(f"unsupported frame type: {type(frame)!r}")
 
 
-def feature_match(
+def feature_alignment(
     frame_a,
     frame_b,
     n_features: int = DEFAULT_N_FEATURES,
     ratio: float = DEFAULT_RATIO,
     ransac_reproj: float = DEFAULT_RANSAC_REPROJ,
-) -> FeatureMatchResult:
+) -> FeatureAlignmentResult:
     """
-    Count geometrically-consistent ORB matches between two frames.
+    Estimate the ORB/RANSAC alignment from frame A into frame B.
 
     ``frame_a`` / ``frame_b`` may each be an image path, a BGR ``np.ndarray``,
-    or a grayscale ``np.ndarray``. Returns a :class:`FeatureMatchResult` whose
-    ``inliers`` field is the co-visibility score.
+    or a grayscale ``np.ndarray``.  The match summary remains the co-visibility
+    evidence; the homography allows downstream code to compare image regions in
+    one coordinate system rather than taking invalid raw pixel-coordinate IoU.
     """
     import cv2  # lazy
     import numpy as np
@@ -104,7 +119,9 @@ def feature_match(
     n_kp_b = 0 if kp_b is None else len(kp_b)
 
     if des_a is None or des_b is None or n_kp_a < 2 or n_kp_b < 2:
-        return FeatureMatchResult(0, 0, n_kp_a, n_kp_b)
+        return FeatureAlignmentResult(
+            FeatureMatchResult(0, 0, n_kp_a, n_kp_b), None
+        )
 
     # k=2 nearest neighbours per descriptor for Lowe's ratio test.
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
@@ -120,15 +137,37 @@ def feature_match(
 
     if len(good) < 4:
         # Too few correspondences to fit a homography at all.
-        return FeatureMatchResult(0, len(good), n_kp_a, n_kp_b)
+        return FeatureAlignmentResult(
+            FeatureMatchResult(0, len(good), n_kp_a, n_kp_b), None
+        )
 
     src = np.float32([kp_a[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
     dst = np.float32([kp_b[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
 
-    _, mask = cv2.findHomography(src, dst, cv2.RANSAC, ransac_reproj)
+    homography, mask = cv2.findHomography(src, dst, cv2.RANSAC, ransac_reproj)
     inliers = int(mask.sum()) if mask is not None else 0
 
-    return FeatureMatchResult(inliers, len(good), n_kp_a, n_kp_b)
+    return FeatureAlignmentResult(
+        FeatureMatchResult(inliers, len(good), n_kp_a, n_kp_b),
+        homography,
+    )
+
+
+def feature_match(
+    frame_a,
+    frame_b,
+    n_features: int = DEFAULT_N_FEATURES,
+    ratio: float = DEFAULT_RATIO,
+    ransac_reproj: float = DEFAULT_RANSAC_REPROJ,
+) -> FeatureMatchResult:
+    """Count RANSAC-consistent ORB matches without exposing the transform."""
+    return feature_alignment(
+        frame_a,
+        frame_b,
+        n_features=n_features,
+        ratio=ratio,
+        ransac_reproj=ransac_reproj,
+    ).match
 
 
 def covisible_by_features(

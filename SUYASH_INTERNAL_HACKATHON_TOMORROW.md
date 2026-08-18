@@ -12,11 +12,11 @@ Your blocking handoff is now specified in `SUYASH_TO_SAMIK_QUALIFICATION_HANDOFF
 
 ### Your Codex lane
 
-Run separate bounded Codex tasks for `covis_live`, the qualification protocol runner, and final diff/test review. You remain the sole integrator for shared protocol and manifest files. Before accepting any generated change, inspect its diff, run its focused tests, run the real Jetson preflight where applicable, and record the evidence path. Reject interface redesigns after the T-16 h contract freeze unless they fix a demonstrated blocker.
+Run separate bounded Codex tasks for the qualification protocol runner and final diff/test review. Ayush operates `covis_live` under Samik's technical oversight; Suyash independently accepts its evidence and remains the sole integrator for shared protocol and manifest files. Before accepting any generated change, inspect its diff, run its focused tests, run the real Jetson preflight where applicable, and record the evidence path. Reject interface redesigns after the T-16 h contract freeze unless they fix a demonstrated blocker.
 
-### Y-T1 — Build the minimal physical webcam demonstrator
+### Y-T1 — Review and accept the physical webcam demonstrator
 
-Implement `codebase/tools/covis_live.py` using the existing co-visibility feature code and pinned detector path. Keep it unarmed: it must have no flight or actuator connection.
+Ayush operates the USB-webcam/Android-DroidCam rig and Samik owns implementation, integration and recovery. Suyash reviews `codebase/tools/covis_live.py`, its focused tests and its retained evidence. Keep it unarmed: it must have no flight or actuator connection.
 
 It must:
 

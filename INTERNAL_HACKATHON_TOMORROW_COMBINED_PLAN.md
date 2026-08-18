@@ -14,7 +14,7 @@ Tomorrow is a qualification slice, not the completed protected-autonomy product.
 
 The demo has three sequential beats:
 
-1. **Physical perception attack:** two webcams connected to the Jetson observe the same scene. A clean observation agrees. Abhijan then introduces a controlled printed adversarial/occlusion artifact to one view. The software shows the measured evidence and an agreement, dispute, or abstention outcome.
+1. **Physical perception attack:** one USB webcam and one Android DroidCam feed on the Jetson observe the same scene. A clean observation agrees. Abhijan then introduces a controlled printed adversarial/occlusion artifact to one view. The software shows the measured evidence and an agreement, dispute, or abstention outcome.
 2. **OP-TEE receipt and LAN verification:** stop the webcam process and prove both cameras are released. Alpha then runs on the Jetson, signs its canonical receipt locally through OP-TEE, and Ethernet peers verify it. Clean detector-derived replay evidence is accepted; the deterministic unapproved-model-hash case is rejected and produces HOLD at the decision layer. Freshness, expiry and duplicate-delivery behavior remain offline evidence checks.
 3. **CoSys A-to-B flight:** Pratik's CoSys/AirSim vehicle takes off, flies a short deterministic route from A to B, hovers, lands, and records zero collisions. This is explicitly a transport smoke test for tomorrow; it is not represented as already controlled by the signed protocol decision.
 
@@ -38,7 +38,7 @@ The following entries are **MUST BUILD** items and must not be spoken about as a
 
 | Deliverable | Owner | Acceptance check |
 |---|---|---|
-| Minimal `codebase/tools/covis_live.py` | Suyash | Two cameras open concurrently; clean and attacked evidence is shown and saved; both devices release on exit |
+| Minimal `codebase/tools/covis_live.py` | Ayush, overseen by Samik | USB and DroidCam feeds open concurrently; clean and attacked evidence is shown and saved; both sources release on exit |
 | Minimal LAN qualification runner and measured peer launcher: `codebase/tools/qualification_protocol_demo.py` plus `codebase/tools/qualification_peer.py` | Suyash, with Samik integration support | Alpha runs on Jetson and signs locally; Bravo and Charlie are reached over Ethernet; clean replayed detector evidence yields exactly two semantic ACKs; model swap rejects to HOLD; JSON summary is retained |
 | `codebase/sim/cosys_smoke_flight.py` | Samik | Connect, API control, arm, takeoff, move A-to-B, hover, land, disarm, release control; every wait has a timeout and failure triggers land/abort |
 | Deterministic A/B scene handoff | Pratik | Fixed coordinates, vehicle name, reset steps, RPC address, expected duration, collision check, and one backup recording |
@@ -66,7 +66,8 @@ All four owners may use Codex continuously, but parallel speed is useful only af
 
 | Lane | Primary owner | Frozen output contract |
 |---|---|---|
-| Physical evidence + Alpha trust | Suyash | `covis_live` evidence schema, OP-TEE preflight output, Alpha qualification result |
+| Physical camera evidence | Ayush, overseen by Samik | `covis_live` run configuration, raw/annotated frames, RANSAC-projected view/box IoU, JSONL, three cycles and release proof |
+| Alpha trust + final acceptance | Suyash | OP-TEE preflight output, Alpha qualification result and final GO/NO-GO |
 | LAN peer + vehicle client | Samik | Bravo readiness contract, qualification peer result, `airsim_smoke.json` |
 | Attack + presentation evidence | Abhijan | attack manifest/card, expected-outcome oracle, read-only projected summary |
 | Simulator server + deterministic scene | Pratik | RPC endpoint, vehicle/A/B handoff, reset and abort contract |
@@ -92,7 +93,7 @@ Run this before every rehearsal and again before the panel enters:
 - Confirm TCP reachability for Alpha/Bravo/Charlie protocol ports and AirSim RPC `41451`.
 - Record clock offsets. Use one time source where possible; otherwise record the measured offset in the evidence bundle.
 - Confirm the firewall allows only the required demo ports on the wired profile.
-- Confirm the two webcams enumerate on Jetson and no other process owns them.
+- Confirm the USB webcam and DroidCam source both open on Jetson and no other process owns the selected V4L2 device.
 - Confirm `/dev/tee0`, the pinned Alpha public key, the expected TA, and the OP-TEE client library on Jetson.
 - Confirm CoSys/AirSim reports the expected vehicle name and a reset returns it to A.
 - Confirm projector readability from the back of the room.
@@ -105,7 +106,7 @@ Create a fresh directory such as `results/internal_qualifier/<run-id>/`; never o
 
 - `preflight/network.txt`: IPs, ping results, required-port checks, clock offsets, software commit, and operator names.
 - `webcam/clean.json` and `webcam/attack.json`: timestamps, camera IDs, model hash, measured claims, agreement state, and reason codes.
-- `webcam/`: representative raw frames or a synchronized short recording for the clean and attacked conditions.
+- `webcam/`: representative raw frames or a paired short recording for the clean and attacked conditions; USB/DroidCam host receive times are not hardware synchronization.
 - `optee_preflight.json`: public-key fingerprint, challenge result, verification result, and signing latency.
 - `protocol_summary.json`: clean and attacked decisions, peer reason codes, canonical receipt digest/target hashes, exact requested-versus-receipt output binding, model hash, and freshness/idempotence result. Protocol v4 has no authoritative standalone command-digest field.
 - `airsim_smoke.json`: A/B coordinates, vehicle name, start/end pose, timestamps, timeout state, collision count, landing and disarm result.
@@ -133,7 +134,9 @@ Also say: “This is the qualification slice. We will show a physical perception
 ### 0:30–1:25 — Clean physical evidence
 
 - Show both live webcam views on the Jetson/projector.
-- Point to synchronized timestamps, camera health, model hash, detected classes/occupancy and the clean agreement state.
+- Point to host receive-time skew, camera health, model hash, detected classes,
+  RANSAC-projected view/box IoU and the clean agreement state. Do not claim
+  hardware synchronization, raw cross-view box IoU, calibrated stereo or 3-D IoU.
 - Avoid a dense dashboard. Keep the result and its evidence on one screen.
 
 ### 1:25–2:10 — Abhijan's attack
