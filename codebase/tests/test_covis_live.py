@@ -17,7 +17,11 @@ from tools.covis_live import (  # noqa: E402
     CycleTracker,
     DetectorObservation,
     FramePacket,
+    LiveDemoError,
+    _actual_backend,
+    _backend_api,
     _draw_detections,
+    _open_capture,
     _source_value,
     assess_pair,
     projected_iou_evidence,
@@ -67,6 +71,49 @@ def test_source_parser_preserves_paths_and_urls():
     )
     with pytest.raises(ValueError, match="cannot be empty"):
         _source_value("   ")
+
+
+class _FakeCapture:
+    def __init__(self):
+        self.open_calls = []
+
+    def open(self, *args):
+        self.open_calls.append(args)
+        return True
+
+    def getBackendName(self):
+        return "DSHOW"
+
+
+class _FakeCv2:
+    CAP_ANY = 0
+    CAP_DSHOW = 700
+
+
+def test_explicit_windows_backend_uses_opencv_api_preference():
+    capture = _FakeCapture()
+
+    assert _open_capture(capture, 2, "dshow", _FakeCv2)
+    assert capture.open_calls == [(2, _FakeCv2.CAP_DSHOW)]
+    assert _actual_backend(capture) == "DSHOW"
+
+
+def test_auto_backend_uses_single_argument_open_overload():
+    capture = _FakeCapture()
+    url = "http://10.0.0.4:4747/video"
+
+    assert _open_capture(capture, url, "auto", _FakeCv2)
+    assert capture.open_calls == [(url,)]
+
+
+def test_missing_backend_fails_closed():
+    with pytest.raises(LiveDemoError, match="does not expose backend"):
+        _backend_api("ffmpeg", _FakeCv2)
+
+
+def test_unknown_backend_fails_closed():
+    with pytest.raises(LiveDemoError, match="unsupported capture backend"):
+        _backend_api("invented", _FakeCv2)
 
 
 def test_excessive_capture_skew_abstains_before_matching():

@@ -2,17 +2,17 @@
 
 ## Ownership and safety boundary
 
-- **Ayush is the primary rig operator:** phone, tripod, USB webcam, camera IDs,
-  framing, DroidCam connection, clean/attack/recovery labels and evidence copy.
-- **Samik is the technical owner and reviewer:** Jetson environment, pinned model,
-  `tools/covis_live.py`, thresholds, failure handling, release proof and the
-  webcam-to-OP-TEE handover. Samik oversees Ayush and is the recovery operator.
+- **Ayush owns camera-software design and focused development tests.** Ayush has
+  no runtime cable, IP address or on-stage terminal in the five-cable qualifier.
+- **Samik is the technical owner, reviewer and live operator:** Windows P2
+  environment, camera mapping, pinned model, thresholds, clean/attack/recovery
+  labels, evidence, release proof and the camera-to-Bravo handover.
 - **Abhijan supplies and applies the controlled physical attack artifact.**
 - **Suyash owns final GO/NO-GO and evidence acceptance, not camera operation.**
 
 `covis_live` is unarmed. It has no flight, actuator, receipt-signing or OP-TEE
-interface. The webcam process must exit and release both sources before Alpha or
-the OP-TEE stage begins.
+interface. The webcam process must exit and release both sources before Bravo
+starts on the same P2 host. The later Alpha/OP-TEE preflight runs on the Jetson.
 
 ## What the result means
 
@@ -65,38 +65,48 @@ decision evidence cannot silently diverge.
 5. Label the physical devices `A — USB` and `B — ANDROID`. Never swap them after
    freezing the command.
 
-## 2. Identify the USB webcam on Jetson
+## 2. Identify the USB webcam on Windows P2
 
 Connect only the USB webcam first:
 
-```bash
-ls -l /dev/video*
-ls -l /dev/v4l/by-id/ 2>/dev/null || true
-v4l2-ctl --list-devices
+```powershell
+Get-PnpDevice -Class Camera | Format-Table Status, FriendlyName, InstanceId
+Get-PnpDevice -Class Image | Format-Table Status, FriendlyName, InstanceId
 ```
 
-Prefer the stable `/dev/v4l/by-id/...` symlink when present. If `v4l2-ctl` is not
-installed, `ls` is sufficient for the first probe; do not change packages during
-the final rehearsal.
+If one class is absent, use the other command. Record the USB camera's friendly
+name and instance ID. Windows device numbers are OpenCV indexes, not the PnP
+instance ID, so map the index in the frozen Python environment:
 
-Check that nothing owns the selected device:
+```powershell
+@'
+import cv2
 
-```bash
-fuser -v /dev/video0
+for index in range(6):
+    cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+    ok, frame = cap.read()
+    backend = cap.getBackendName() if cap.isOpened() else None
+    print(index, "opened=", cap.isOpened(), "read=", ok,
+          "shape=", None if frame is None else frame.shape,
+          "backend=", backend)
+    cap.release()
+'@ | python -
 ```
 
-An empty result is expected. Do not kill an unknown process; stop it through its
-normal application first.
+Close Windows Camera, Teams, browsers and every other camera application first.
+Connect only the intended USB camera while mapping it. Record the working index,
+then reconnect the Android source and confirm the two inputs show different
+views. Index stability is accepted only for the frozen P2 hardware/USB-port
+layout; repeat mapping after any port or device change.
 
 ## 3. Connect DroidCam
 
-### Preferred Jetson route: local HTTP video
+### Preferred Windows P2 route: local HTTP video
 
-The current official DroidCam Linux desktop package is distributed for x86-64;
-Jetson is ARM64. Do not install an AMD64 package on Jetson. The simplest route is
-to use the DroidCam app's local video URL during the webcam stage:
+The simplest route avoids a virtual-camera dependency and opens the phone's
+local DroidCam HTTP stream directly in OpenCV:
 
-1. Connect the Android phone and Jetson to the same local Wi-Fi/hotspot.
+1. Connect the Android phone and Samik P2 to the same local Wi-Fi/hotspot.
 2. Open DroidCam on Android and note the displayed phone IP and port (normally
    `4747`).
 3. Use `http://PHONE_IP:4747/video` as Camera B.
@@ -104,36 +114,29 @@ to use the DroidCam app's local video URL during the webcam stage:
 
 Probe it using the same OpenCV environment as VeriSwarm:
 
-```bash
-python - <<'PY'
+```powershell
+@'
 import cv2
 
 url = "http://PHONE_IP:4747/video"
-cap = cv2.VideoCapture(url)
+cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
 ok, frame = cap.read()
 print("opened=", cap.isOpened(), "read=", ok,
-      "shape=", None if frame is None else frame.shape)
+      "shape=", None if frame is None else frame.shape,
+      "backend=", cap.getBackendName() if cap.isOpened() else None)
 cap.release()
 raise SystemExit(0 if ok and frame is not None else 1)
-PY
+'@ | python -
 ```
 
 Replace `PHONE_IP` before running. Stop here if the probe fails.
 
-### Existing working virtual-device route
+### Existing working Windows virtual-camera route
 
-If the already-installed DroidCam client successfully exposes the phone as a
-Jetson V4L2 device, identify that device after starting the phone stream:
-
-```bash
-v4l2-ctl --list-devices
-ls -l /dev/video*
-```
-
-Use that distinct `/dev/videoN` path as Camera B. Do not reinstall DroidCam or
-`v4l2loopback` immediately before the demo. For Android USB discovery, official
-DroidCam guidance requires USB debugging, a data-capable cable and `adb` on
-Linux. Confirm the phone's USB-debugging prompt rather than bypassing it.
+If the already-installed DroidCam Windows client exposes a virtual camera, map
+its separate OpenCV index with the same DirectShow probe. Use that integer as
+Camera B with `--camera-b-backend dshow`. Prove the panels are distinct before
+freezing. Do not install or upgrade the client during final rehearsal.
 
 ### Frozen fallback if DroidCam is unstable
 
@@ -142,11 +145,11 @@ stream drops, buffers badly or cannot meet the clean gate, keep the same Android
 phone and tripod but switch Camera B to a prevalidated local MJPEG/RTSP camera
 app or transport whose URL OpenCV can open. `covis_live` needs no code change:
 
-```bash
-python -m tools.covis_live \
-  --camera-a /dev/video0 --camera-a-name usb_webcam \
-  --camera-b "http://PHONE_IP:PORT/VIDEO_PATH" \
-  --camera-b-name android_local_fallback \
+```powershell
+python -m tools.covis_live `
+  --camera-a 0 --camera-a-name usb_webcam --camera-a-backend dshow `
+  --camera-b "http://PHONE_IP:PORT/VIDEO_PATH" `
+  --camera-b-name android_local_fallback --camera-b-backend ffmpeg `
   --run-id SETUP-PHONE-FALLBACK-01 --require-cycles 0
 ```
 
@@ -156,22 +159,21 @@ reuse evidence from the discarded configuration.
 If no live replacement works, use the retained recording only as an explicitly
 labelled fallback; do not call it a live demonstration.
 
-## 4. Verify the Jetson environment
+## 4. Verify the Windows P2 environment
 
 From the directory containing `tools/`, `protocol/` and `perception/`:
 
-```bash
+```powershell
 python -c "import cv2, numpy; print('OpenCV', cv2.__version__)"
 python -m pytest -q tests/test_covis_features.py tests/test_covis_live.py
 ```
 
-For semantic mode, inspect the existing Jetson-compatible stack before changing
-anything:
+For semantic mode, inspect the frozen P2 stack before changing anything:
 
-```bash
+```powershell
 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 python -c "import ultralytics; print(ultralytics.__version__)"
-sha256sum yolov8n.pt
+Get-FileHash -Algorithm SHA256 .\yolov8n.pt
 ```
 
 The accepted baseline model hash is:
@@ -180,45 +182,51 @@ The accepted baseline model hash is:
 f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36
 ```
 
-Do not install generic desktop PyTorch on Jetson. If Torch or Ultralytics is
-missing, feature-only setup can proceed, but the semantic attack claim cannot be
-demonstrated until a JetPack-compatible stack is reviewed.
+Do not upgrade Torch, Ultralytics or OpenCV after the P2 environment is frozen.
+If Torch or Ultralytics is missing, feature-only setup can proceed, but the
+semantic attack claim cannot be demonstrated until Samik reviews the P2 stack.
 
 ## 5. Feature-only alignment run
 
 This proves capture, health, skew and co-visibility only:
 
-```bash
-python -m tools.covis_live \
-  --camera-a /dev/video0 \
-  --camera-a-name usb_webcam \
-  --camera-b "http://PHONE_IP:4747/video" \
-  --camera-b-name android_droidcam \
-  --width 640 --height 360 --fps 15 \
-  --run-id SETUP-COVIS-01 \
+```powershell
+python -m tools.covis_live `
+  --camera-a 0 `
+  --camera-a-name usb_webcam `
+  --camera-a-backend dshow `
+  --camera-b "http://PHONE_IP:4747/video" `
+  --camera-b-name android_droidcam `
+  --camera-b-backend ffmpeg `
+  --width 640 --height 360 --fps 15 `
+  --run-id SETUP-COVIS-01 `
   --require-cycles 0
 ```
 
-The display must reach `COVISIBLE`. Adjust only the physical framing during this
-setup run. Press `q`; the final line must report `release=True`.
+Replace camera index `0` only if the mapping probe found a different USB index.
+The display must reach `COVISIBLE`, and the `READY` line must report the expected
+backends. Adjust only physical framing during this setup run. Press `q`; the
+final line must report `release=True`.
 
 ## 6. Freeze and run the semantic demonstration
 
 After the clean setup is stable, freeze camera sources, placement and thresholds.
 Do not tune thresholds after seeing attack results.
 
-```bash
-python -m tools.covis_live \
-  --camera-a /dev/video0 \
-  --camera-a-name usb_webcam \
-  --camera-b "http://PHONE_IP:4747/video" \
-  --camera-b-name android_droidcam \
-  --width 640 --height 360 --fps 15 \
-  --max-receive-skew-ms 150 \
-  --m-min 15 \
-  --weights yolov8n.pt \
-  --expected-model-sha256 f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36 \
-  --run-id IHQ-20260819-WEBCAM-01 \
+```powershell
+python -m tools.covis_live `
+  --camera-a 0 `
+  --camera-a-name usb_webcam `
+  --camera-a-backend dshow `
+  --camera-b "http://PHONE_IP:4747/video" `
+  --camera-b-name android_droidcam `
+  --camera-b-backend ffmpeg `
+  --width 640 --height 360 --fps 15 `
+  --max-receive-skew-ms 150 `
+  --m-min 15 `
+  --weights yolov8n.pt `
+  --expected-model-sha256 f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36 `
+  --run-id IHQ-20260819-WEBCAM-01 `
   --require-cycles 3
 ```
 
@@ -244,14 +252,19 @@ Each run creates a new directory under `results/covis_live/<run-id>/` containing
 
 The process refuses to overwrite a run directory. An accepted semantic run exits
 zero only when the required cycles pass and both sources close and reopen.
+`run_config.json` records requested backends. `summary.json` records requested
+and actual OpenCV backends plus a same-backend close/reopen probe for both
+sources.
 
 After `COMPLETE ... release=True`:
 
 1. close DroidCam on the phone/client;
 2. confirm no `covis_live` process remains;
-3. if Camera B used Wi-Fi, disconnect that temporary webcam network path;
-4. run a fresh OP-TEE preflight with a new evidence filename; and
-5. only then start Alpha locally on Jetson.
+3. open and close the USB webcam once with the frozen DirectShow probe if Samik
+   wants an additional manual release witness;
+4. start Bravo on P2 only after camera release is proved;
+5. synchronize clocks and disconnect unrelated Wi-Fi after the camera stage;
+6. Suyash then runs the fresh Jetson OP-TEE preflight before Alpha starts.
 
 ## 8. Troubleshooting without weakening the gate
 
@@ -268,5 +281,6 @@ After `COMPLETE ... release=True`:
 - **GUI unavailable:** run feature-only diagnostics with `--headless
   --duration-seconds N --require-cycles 0`; the panel semantic cycle requires a
   display and explicit operator labels.
-- **Release probe fails:** do not start OP-TEE/Alpha. Stop DroidCam normally,
-  inspect device owners with `fuser -v`, and begin a new run ID after correction.
+- **Release probe fails:** do not start Bravo. Stop DroidCam normally, close
+  Windows camera applications, confirm `covis_live` is gone in Task Manager,
+  rerun the single-source probes, and begin a new run ID after correction.

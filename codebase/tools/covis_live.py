@@ -16,12 +16,12 @@ For the physical demo, the measured homography projects Camera A into Camera B's
 image plane before calculating view-overlap IoU and same-class detector-box IoU.
 Raw box coordinates from different viewpoints are never compared.
 
-Typical Jetson use (from ``codebase``)::
+Typical Windows P2 use (from ``codebase``)::
 
     python -m tools.covis_live \
-      --camera-a /dev/video0 --camera-a-name usb_webcam \
+      --camera-a 0 --camera-a-name usb_webcam --camera-a-backend dshow \
       --camera-b http://192.168.1.25:4747/video \
-      --camera-b-name android_droidcam \
+      --camera-b-name android_droidcam --camera-b-backend ffmpeg \
       --weights yolov8n.pt \
       --expected-model-sha256 f59b3d... \
       --run-id IHQ-20260819-WEBCAM-01 --require-cycles 3
@@ -62,6 +62,14 @@ VALID_DECISIONS = {"AGREE", "DISPUTE", "ABSTAIN", "COVISIBLE"}
 ATTACK_EVIDENCE_REASONS = {
     "semantic_disagreement",
     "feature_overlap_below_threshold",
+}
+CAPTURE_BACKENDS = {
+    "auto": "CAP_ANY",
+    "dshow": "CAP_DSHOW",
+    "msmf": "CAP_MSMF",
+    "v4l2": "CAP_V4L2",
+    "ffmpeg": "CAP_FFMPEG",
+    "gstreamer": "CAP_GSTREAMER",
 }
 
 
@@ -147,6 +155,44 @@ def _source_value(text: str) -> int | str:
 
 def _source_identity(source: int | str) -> str:
     return str(source)
+
+
+def _backend_api(backend: str, cv2_module: Any) -> int:
+    """Resolve a stable, named OpenCV capture backend without platform guessing."""
+    try:
+        attribute = CAPTURE_BACKENDS[backend]
+    except KeyError as exc:
+        raise LiveDemoError(f"unsupported capture backend {backend!r}") from exc
+    if not hasattr(cv2_module, attribute):
+        raise LiveDemoError(
+            f"OpenCV does not expose backend {backend!r} ({attribute})"
+        )
+    return int(getattr(cv2_module, attribute))
+
+
+def _open_capture(
+    capture: Any,
+    source: int | str,
+    backend: str,
+    cv2_module: Any,
+) -> bool:
+    """Open one source using the requested backend and its exact Python overload."""
+    api = _backend_api(backend, cv2_module)
+    if backend == "auto":
+        return bool(capture.open(source))
+    return bool(capture.open(source, api))
+
+
+def _actual_backend(capture: Any) -> str | None:
+    """Return OpenCV's selected backend when supported by the installed build."""
+    getter = getattr(capture, "getBackendName", None)
+    if getter is None:
+        return None
+    try:
+        value = str(getter()).strip()
+    except Exception:
+        return None
+    return value or None
 
 
 def _claim_json(claim: PerceptionClaim | None) -> dict[str, Any] | None:
@@ -512,6 +558,7 @@ class CaptureWorker:
         *,
         name: str,
         source: int | str,
+        backend: str,
         cv2_module: Any,
         width: int,
         height: int,
@@ -519,6 +566,7 @@ class CaptureWorker:
     ) -> None:
         self.name = name
         self.source = source
+        self.backend = backend
         self.cv2 = cv2_module
         self.width = width
         self.height = height
@@ -532,6 +580,7 @@ class CaptureWorker:
         self._sequence = 0
         self._consecutive_failures = 0
         self.error: str | None = None
+        self.actual_backend: str | None = None
 
     def start(self) -> None:
         if self._thread is not None:
@@ -551,11 +600,15 @@ class CaptureWorker:
                 capture.set(self.cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)
             if hasattr(self.cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
                 capture.set(self.cv2.CAP_PROP_READ_TIMEOUT_MSEC, 1000)
-            opened = capture.open(self.source)
+            opened = _open_capture(capture, self.source, self.backend, self.cv2)
             if not opened or not capture.isOpened():
-                self.error = f"could not open source {_source_identity(self.source)!r}"
+                self.error = (
+                    f"could not open source {_source_identity(self.source)!r} "
+                    f"with backend {self.backend!r}"
+                )
                 self._ready.set()
                 return
+            self.actual_backend = _actual_backend(capture)
             capture.set(self.cv2.CAP_PROP_BUFFERSIZE, 1)
             capture.set(self.cv2.CAP_PROP_FRAME_WIDTH, self.width)
             capture.set(self.cv2.CAP_PROP_FRAME_HEIGHT, self.height)
@@ -620,8 +673,8 @@ class YoloClaimProvider:
             from ultralytics import YOLO
         except ImportError as exc:
             raise LiveDemoError(
-                "semantic mode requires a Jetson-compatible PyTorch/Ultralytics "
-                "installation; do not install generic desktop torch on Jetson"
+                "semantic mode requires the frozen P2-compatible PyTorch/Ultralytics "
+                "installation"
             ) from exc
         self.model = YOLO(str(weights))
         self.confidence = confidence
@@ -878,19 +931,41 @@ def _annotated_pair(
 
 def _probe_release(
     source: int | str,
+    backend: str,
     cv2_module: Any,
     attempts: int = 60,
 ) -> dict[str, Any]:
-    capture = cv2_module.VideoCapture(source)
+    capture = cv2_module.VideoCapture()
     try:
-        if not capture.isOpened():
-            return {"opened": False, "read": False}
+        if hasattr(cv2_module, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+            capture.set(cv2_module.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)
+        if hasattr(cv2_module, "CAP_PROP_READ_TIMEOUT_MSEC"):
+            capture.set(cv2_module.CAP_PROP_READ_TIMEOUT_MSEC, 1000)
+        opened = _open_capture(capture, source, backend, cv2_module)
+        if not opened or not capture.isOpened():
+            return {
+                "opened": False,
+                "read": False,
+                "requested_backend": backend,
+                "actual_backend": None,
+            }
+        actual_backend = _actual_backend(capture)
         for _ in range(attempts):
             ok, frame = capture.read()
             if ok and frame is not None:
-                return {"opened": True, "read": True}
+                return {
+                    "opened": True,
+                    "read": True,
+                    "requested_backend": backend,
+                    "actual_backend": actual_backend,
+                }
             time.sleep(0.05)
-        return {"opened": True, "read": False}
+        return {
+            "opened": True,
+            "read": False,
+            "requested_backend": backend,
+            "actual_backend": actual_backend,
+        }
     finally:
         capture.release()
 
@@ -901,6 +976,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--camera-b", required=True, help="index, /dev/video path, or URL")
     parser.add_argument("--camera-a-name", default="usb_webcam")
     parser.add_argument("--camera-b-name", default="android_droidcam")
+    parser.add_argument(
+        "--camera-a-backend",
+        choices=tuple(CAPTURE_BACKENDS),
+        default="auto",
+        help="OpenCV backend; use dshow for the frozen Windows USB index",
+    )
+    parser.add_argument(
+        "--camera-b-backend",
+        choices=tuple(CAPTURE_BACKENDS),
+        default="auto",
+        help="OpenCV backend; use ffmpeg for a validated local HTTP/MJPEG feed",
+    )
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=360)
     parser.add_argument("--fps", type=float, default=30.0)
@@ -1041,8 +1128,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "started_at_utc": _utc_now(),
         "command": list(sys.argv if argv is None else ["covis_live", *argv]),
         "unarmed": True,
-        "camera_a": {"name": args.camera_a_name, "source": args.camera_a},
-        "camera_b": {"name": args.camera_b_name, "source": args.camera_b},
+        "camera_a": {
+            "name": args.camera_a_name,
+            "source": args.camera_a,
+            "requested_backend": args.camera_a_backend,
+        },
+        "camera_b": {
+            "name": args.camera_b_name,
+            "source": args.camera_b,
+            "requested_backend": args.camera_b_backend,
+        },
         "capture": {"width": args.width, "height": args.height, "fps": args.fps},
         "thresholds": {
             "max_receive_skew_ms": args.max_receive_skew_ms,
@@ -1063,6 +1158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     worker_a = CaptureWorker(
         name=args.camera_a_name,
         source=source_a,
+        backend=args.camera_a_backend,
         cv2_module=cv2,
         width=args.width,
         height=args.height,
@@ -1071,6 +1167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     worker_b = CaptureWorker(
         name=args.camera_b_name,
         source=source_b,
+        backend=args.camera_b_backend,
         cv2_module=cv2,
         width=args.width,
         height=args.height,
@@ -1097,7 +1194,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         worker_b.wait_ready(args.open_timeout)
         print(
             f"READY {args.camera_a_name}={args.camera_a} "
-            f"{args.camera_b_name}={args.camera_b} semantic={claim_provider is not None}"
+            f"backend={worker_a.actual_backend or args.camera_a_backend} "
+            f"{args.camera_b_name}={args.camera_b} "
+            f"backend={worker_b.actual_backend or args.camera_b_backend} "
+            f"semantic={claim_provider is not None}"
         )
         if not args.headless:
             print("keys: c=clean a=attack r=recovery s=save q=quit")
@@ -1208,8 +1308,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             cv2.destroyAllWindows()
         if not args.no_release_probe:
             release_probe = {
-                "camera_a": _probe_release(source_a, cv2),
-                "camera_b": _probe_release(source_b, cv2),
+                "camera_a": _probe_release(
+                    source_a, args.camera_a_backend, cv2
+                ),
+                "camera_b": _probe_release(
+                    source_b, args.camera_b_backend, cv2
+                ),
             }
 
     release_ok = all(released.values()) and (
@@ -1228,6 +1332,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "cycles_completed": tracker.completed,
         "cycles_required": required_cycles,
         "worker_release": released,
+        "capture_backend": {
+            "camera_a": {
+                "requested": args.camera_a_backend,
+                "actual": worker_a.actual_backend,
+            },
+            "camera_b": {
+                "requested": args.camera_b_backend,
+                "actual": worker_b.actual_backend,
+            },
+        },
         "release_probe": release_probe,
         "release_verified": release_ok,
         "errors": errors,
