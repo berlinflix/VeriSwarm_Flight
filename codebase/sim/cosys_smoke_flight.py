@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -55,7 +56,35 @@ class Vector3:
 
 
 @dataclass(frozen=True)
+class RuntimeIdentity:
+    qualification_configuration: str
+    environment_family: str
+    world_id: str
+    unreal_engine_version: str
+    cosys_airsim_version: str
+    client_import: str
+    client_version: str
+    client_artifact_sha256: str
+    settings_path: str
+    settings_sha256: str
+
+
+@dataclass(frozen=True)
+class Geofence:
+    minimum: Vector3
+    maximum: Vector3
+
+    def contains(self, point: Vector3) -> bool:
+        return (
+            self.minimum.x <= point.x <= self.maximum.x
+            and self.minimum.y <= point.y <= self.maximum.y
+            and self.minimum.z <= point.z <= self.maximum.z
+        )
+
+
+@dataclass(frozen=True)
 class SmokeConfig:
+    runtime: RuntimeIdentity
     host: str
     port: int
     rpc_timeout_seconds: float
@@ -72,6 +101,7 @@ class SmokeConfig:
     dwell_seconds: float
     timeouts: Mapping[str, float]
     evidence_output_path: str
+    geofence: Geofence
 
 
 REQUIRED_TIMEOUTS = (
@@ -107,6 +137,15 @@ def _text(value: Any, context: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigurationError(f"{context} must be a non-empty string")
     return value.strip()
+
+
+def _sha256(value: Any, context: str) -> str:
+    digest = _text(value, context)
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ConfigurationError(
+            f"{context} must be a 64-character lowercase SHA-256"
+        )
+    return digest
 
 
 def _finite_number(value: Any, context: str, *, positive: bool = False) -> float:
@@ -145,12 +184,18 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
             f"config.schema must be {CONFIG_SCHEMA!r}, got {schema!r}"
         )
 
+    runtime_raw = _mapping(
+        _required(root, "runtime", "config"), "config.runtime"
+    )
     endpoint = _mapping(_required(root, "endpoint", "config"), "config.endpoint")
     vehicle = _mapping(_required(root, "vehicle", "config"), "config.vehicle")
     route = _mapping(_required(root, "route", "config"), "config.route")
     limits = _mapping(_required(root, "limits", "config"), "config.limits")
     evidence = _mapping(
         _required(root, "evidence", "config"), "config.evidence"
+    )
+    geofence_raw = _mapping(
+        _required(root, "geofence", "config"), "config.geofence"
     )
     timeouts_raw = _mapping(
         _required(root, "timeouts_seconds", "config"),
@@ -176,7 +221,111 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
     if _distance(start, target) <= 0.0:
         raise ConfigurationError("config.route.a and config.route.b must be distinct")
 
+    takeoff_z_ned_m = _finite_number(
+        _required(route, "takeoff_z_ned_m", "config.route"),
+        "config.route.takeoff_z_ned_m",
+    )
+    geofence = Geofence(
+        minimum=_vector(
+            _required(geofence_raw, "min", "config.geofence"),
+            "config.geofence.min",
+        ),
+        maximum=_vector(
+            _required(geofence_raw, "max", "config.geofence"),
+            "config.geofence.max",
+        ),
+    )
+    if not (
+        geofence.minimum.x < geofence.maximum.x
+        and geofence.minimum.y < geofence.maximum.y
+        and geofence.minimum.z < geofence.maximum.z
+    ):
+        raise ConfigurationError(
+            "config.geofence.min must be strictly less than max on every axis"
+        )
+    takeoff_point = Vector3(start.x, start.y, takeoff_z_ned_m)
+    for label, point in (("route.a", start), ("route.takeoff", takeoff_point), ("route.b", target)):
+        if not geofence.contains(point):
+            raise ConfigurationError(
+                f"config.{label} lies outside the configured geofence"
+            )
+
+    decision = _text(
+        _required(
+            runtime_raw, "qualification_configuration", "config.runtime"
+        ),
+        "config.runtime.qualification_configuration",
+    )
+    if decision == "Q-A":
+        raise ConfigurationError(
+            "Q-A is the legacy AirSim 1.8 exception and requires a separate, "
+            "explicitly approved legacy client mode"
+        )
+    if decision not in {"Q-B", "Q-C"}:
+        raise ConfigurationError(
+            "config.runtime.qualification_configuration must be Q-B or Q-C for "
+            "the accepted cosysairsim client"
+        )
+    environment_family = _text(
+        _required(runtime_raw, "environment_family", "config.runtime"),
+        "config.runtime.environment_family",
+    )
+    expected_family = "Blocks" if decision == "Q-B" else "CityEnviron"
+    if environment_family != expected_family:
+        raise ConfigurationError(
+            f"{decision} requires environment_family={expected_family!r}"
+        )
+    unreal_version = _text(
+        _required(runtime_raw, "unreal_engine_version", "config.runtime"),
+        "config.runtime.unreal_engine_version",
+    )
+    if unreal_version != "5.8.1":
+        raise ConfigurationError("accepted Q-B/Q-C runtime requires Unreal Engine 5.8.1")
+    cosys_version = _text(
+        _required(runtime_raw, "cosys_airsim_version", "config.runtime"),
+        "config.runtime.cosys_airsim_version",
+    )
+    if cosys_version != "3.4.1":
+        raise ConfigurationError("accepted Q-B/Q-C runtime requires CoSys-AirSim 3.4.1")
+    client_import = _text(
+        _required(runtime_raw, "client_import", "config.runtime"),
+        "config.runtime.client_import",
+    )
+    if client_import != "cosysairsim":
+        raise ConfigurationError(
+            "accepted Q-B/Q-C runtime requires client_import='cosysairsim'"
+        )
+
     return SmokeConfig(
+        runtime=RuntimeIdentity(
+            qualification_configuration=decision,
+            environment_family=environment_family,
+            world_id=_text(
+                _required(runtime_raw, "world_id", "config.runtime"),
+                "config.runtime.world_id",
+            ),
+            unreal_engine_version=unreal_version,
+            cosys_airsim_version=cosys_version,
+            client_import=client_import,
+            client_version=_text(
+                _required(runtime_raw, "client_version", "config.runtime"),
+                "config.runtime.client_version",
+            ),
+            client_artifact_sha256=_sha256(
+                _required(
+                    runtime_raw, "client_artifact_sha256", "config.runtime"
+                ),
+                "config.runtime.client_artifact_sha256",
+            ),
+            settings_path=_text(
+                _required(runtime_raw, "settings_path", "config.runtime"),
+                "config.runtime.settings_path",
+            ),
+            settings_sha256=_sha256(
+                _required(runtime_raw, "settings_sha256", "config.runtime"),
+                "config.runtime.settings_sha256",
+            ),
+        ),
         host=_text(_required(endpoint, "host", "config.endpoint"), "config.endpoint.host"),
         port=_positive_int(
             _required(endpoint, "port", "config.endpoint"), "config.endpoint.port"
@@ -195,10 +344,7 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
         frame=frame,
         start=start,
         target=target,
-        takeoff_z_ned_m=_finite_number(
-            _required(route, "takeoff_z_ned_m", "config.route"),
-            "config.route.takeoff_z_ned_m",
-        ),
+        takeoff_z_ned_m=takeoff_z_ned_m,
         start_tolerance_m=_finite_number(
             _required(limits, "start_tolerance_m", "config.limits"),
             "config.limits.start_tolerance_m",
@@ -229,6 +375,7 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
             _required(evidence, "output_path", "config.evidence"),
             "config.evidence.output_path",
         ),
+        geofence=geofence,
     )
 
 
@@ -317,6 +464,22 @@ class EvidenceRecorder:
             "schema": OUTPUT_SCHEMA,
             "created_ns": self.started_ns,
             "config_sha256": config_sha256,
+            "runtime": {
+                "qualification_configuration": (
+                    config.runtime.qualification_configuration
+                ),
+                "environment_family": config.runtime.environment_family,
+                "world_id": config.runtime.world_id,
+                "unreal_engine_version": config.runtime.unreal_engine_version,
+                "cosys_airsim_version": config.runtime.cosys_airsim_version,
+                "client_import": config.runtime.client_import,
+                "client_version": config.runtime.client_version,
+                "client_artifact_sha256": (
+                    config.runtime.client_artifact_sha256
+                ),
+                "settings_path": config.runtime.settings_path,
+                "settings_sha256": config.runtime.settings_sha256,
+            },
             "endpoint": {"host": config.host, "port": config.port},
             "vehicle": {"name": config.vehicle_name, "type": config.vehicle_type},
             "frame": config.frame,
@@ -329,6 +492,10 @@ class EvidenceRecorder:
                 "dwell_seconds": config.dwell_seconds,
                 "takeoff_z_ned_m": config.takeoff_z_ned_m,
             },
+            "geofence": {
+                "min": config.geofence.minimum.as_list(),
+                "max": config.geofence.maximum.as_list(),
+            },
             "timeouts_seconds": dict(config.timeouts),
             "transitions": [],
             "initial_state": None,
@@ -340,6 +507,7 @@ class EvidenceRecorder:
             "disarm_confirmed": False,
             "api_control_released": False,
             "abort_attempted": False,
+            "cleanup_complete": False,
             "errors": [],
             "pass": False,
             "process_result": "RUNNING",
@@ -369,6 +537,26 @@ class EvidenceRecorder:
         self.result["process_result"] = "PASS" if passed else "FAIL"
 
 
+def _assert_inside_geofence(
+    state: Mapping[str, Any], config: SmokeConfig, context: str
+) -> None:
+    position = Vector3(*state["position"])
+    if not config.geofence.contains(position):
+        raise FlightInvariantError(
+            f"{context} position {position.as_list()} is outside the configured geofence"
+        )
+
+
+def _assert_api_control(client: Any, config: SmokeConfig, context: str) -> None:
+    enabled = _call_with_timeout(
+        f"{context}_api_control_check",
+        config.timeouts["api_control"],
+        lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+    )
+    if not enabled:
+        raise FlightInvariantError(f"API control lost during {context}")
+
+
 def _record_collision(client: Any, config: SmokeConfig, recorder: EvidenceRecorder) -> None:
     collision = _call_with_timeout(
         "collision_check",
@@ -393,7 +581,9 @@ def _get_state(client: Any, config: SmokeConfig, timeout_name: str) -> dict[str,
         config.timeouts[timeout_name],
         lambda: client.getMultirotorState(vehicle_name=config.vehicle_name),
     )
-    return _state_snapshot(state)
+    snapshot = _state_snapshot(state)
+    _assert_inside_geofence(snapshot, config, timeout_name)
+    return snapshot
 
 
 def _wait_for_pose_dwell(
@@ -406,6 +596,7 @@ def _wait_for_pose_dwell(
     stable_since: float | None = None
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
+        _assert_api_control(client, config, timeout_name)
         last = _get_state(client, config, timeout_name)
         position = Vector3(*last["position"])
         error = _distance(position, target)
@@ -437,6 +628,7 @@ def _wait_for_velocity_dwell(
     stable_since: float | None = None
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
+        _assert_api_control(client, config, timeout_name)
         last = _get_state(client, config, timeout_name)
         if last["speed_mps"] <= config.hover_velocity_tolerance_mps:
             if stable_since is None:
@@ -608,6 +800,7 @@ def run_smoke(
             ),
         )
         _join_future("takeoff", config.timeouts["takeoff"], future)
+        _assert_api_control(client, config, "takeoff")
         recorder.transition("TAKEOFF", "PASS")
 
         takeoff_target = Vector3(
@@ -628,6 +821,7 @@ def run_smoke(
         _join_future(
             "takeoff_altitude_move", config.timeouts["takeoff"], future
         )
+        _assert_api_control(client, config, "takeoff_altitude")
         _wait_for_pose_dwell(client, config, takeoff_target, "takeoff")
         recorder.transition(
             "VERIFY_TAKEOFF_ALTITUDE",
@@ -641,6 +835,7 @@ def run_smoke(
             lambda: client.hoverAsync(vehicle_name=config.vehicle_name),
         )
         _join_future("hover", config.timeouts["hover"], future)
+        _assert_api_control(client, config, "hover")
         _wait_for_velocity_dwell(client, config, "hover")
         recorder.transition("HOVER", "PASS")
 
@@ -657,6 +852,7 @@ def run_smoke(
             ),
         )
         _join_future("move", config.timeouts["move"], future)
+        _assert_api_control(client, config, "move")
         recorder.transition("MOVE_A_TO_B", "PASS")
 
         arrived = _wait_for_pose_dwell(client, config, config.target, "arrival")
@@ -669,6 +865,16 @@ def run_smoke(
         _record_collision(client, config, recorder)
 
         future = _call_with_timeout(
+            "final_hover_start",
+            config.timeouts["hover"],
+            lambda: client.hoverAsync(vehicle_name=config.vehicle_name),
+        )
+        _join_future("final_hover", config.timeouts["hover"], future)
+        _assert_api_control(client, config, "final_hover")
+        _wait_for_velocity_dwell(client, config, "hover")
+        recorder.transition("FINAL_HOVER", "PASS")
+
+        future = _call_with_timeout(
             "land_start",
             config.timeouts["land"],
             lambda: client.landAsync(
@@ -677,6 +883,7 @@ def run_smoke(
             ),
         )
         _join_future("land", config.timeouts["land"], future)
+        _assert_api_control(client, config, "land")
         landed = _get_state(client, config, "land")
         if landed["landed_state"] != landed_state_value:
             raise FlightInvariantError(
@@ -722,7 +929,8 @@ def run_smoke(
         recorder.error(f"unexpected error: {type(exc).__name__}: {exc}")
         recorder.transition("FAIL", "FAIL", recorder.result["errors"][-1])
     finally:
-        if client is not None and (armed or api_control):
+        cleanup_required = client is not None and (armed or api_control)
+        if cleanup_required:
             _safe_cleanup(
                 client,
                 config,
@@ -730,6 +938,14 @@ def run_smoke(
                 armed=armed,
                 api_control=api_control,
             )
+        recorder.result["cleanup_complete"] = (
+            not cleanup_required
+            or (
+                recorder.result["landing_confirmed"]
+                and recorder.result["disarm_confirmed"]
+                and recorder.result["api_control_released"]
+            )
+        )
 
     passed = completed and all(
         (
@@ -737,6 +953,7 @@ def run_smoke(
             recorder.result["landing_confirmed"],
             recorder.result["disarm_confirmed"],
             recorder.result["api_control_released"],
+            recorder.result["cleanup_complete"],
         )
     )
     recorder.finish(passed)

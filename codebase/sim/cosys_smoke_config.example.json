@@ -1,5 +1,17 @@
 {
   "schema": "veriswarm.cosys_route.v1",
+  "runtime": {
+    "qualification_configuration": null,
+    "environment_family": null,
+    "world_id": null,
+    "unreal_engine_version": null,
+    "cosys_airsim_version": null,
+    "client_import": "cosysairsim",
+    "client_version": null,
+    "client_artifact_sha256": null,
+    "settings_path": null,
+    "settings_sha256": null
+  },
   "endpoint": {
     "host": null,
     "port": null,
@@ -29,6 +41,18 @@
     "position_tolerance_m": null,
     "hover_velocity_tolerance_mps": null,
     "dwell_seconds": null
+  },
+  "geofence": {
+    "min": {
+      "x": null,
+      "y": null,
+      "z": null
+    },
+    "max": {
+      "x": null,
+      "y": null,
+      "z": null
+    }
   },
   "timeouts_seconds": {
     "connect": null,
