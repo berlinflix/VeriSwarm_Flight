@@ -9,6 +9,10 @@ Run from ``codebase`` after receiving Pratik's immutable route file::
 
     python -m sim.cosys_smoke_flight --config route.json --out airsim_smoke.json
 
+Run the authorized localhost no-motion gate with a new create-once ID::
+
+    python -m sim.cosys_smoke_flight --preflight-only --config route.json --out preflight.json
+
 The output path is create-once.  A failed run is retained and must not be overwritten by
 a later success.
 """
@@ -16,9 +20,12 @@ a later success.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import functools
 import hashlib
 import json
 import math
+import multiprocessing
 import queue
 import re
 import threading
@@ -28,9 +35,13 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 
-OUTPUT_SCHEMA = "veriswarm.airsim_smoke.v1"
+OUTPUT_SCHEMA = "veriswarm.airsim_smoke.v2"
+PREFLIGHT_OUTPUT_SCHEMA = "veriswarm.cosys_preflight.v1"
 CONFIG_SCHEMA = "veriswarm.cosys_route.v1"
 NED_FRAME = "NED_METRES"
+APPROVED_DEVIATION_ID = "QB-LANDED-STATE-001"
+APPROVED_DEVIATION_BY = "Suyash"
+APPROVED_DEVIATION_REFERENCE = "Suyash-QB-LANDED-STATE-001-2026-08-19"
 
 
 class ConfigurationError(ValueError):
@@ -43,6 +54,405 @@ class FlightInvariantError(RuntimeError):
 
 class StageTimeout(FlightInvariantError):
     """Raised when a bounded simulator operation exceeds its declared timeout."""
+
+
+def _close_vendor_client(client: Any) -> None:
+    """Close a vendor client on the execution context that owns it."""
+
+    close = getattr(client, "close", None)
+    if callable(close):
+        close()
+        return
+    transport = getattr(client, "client", None)
+    close = getattr(transport, "close", None)
+    if callable(close):
+        close()
+
+
+def _construct_live_cosys_client(host: str, port: int, timeout: float) -> Any:
+    import cosysairsim  # type: ignore[import-not-found]
+
+    return cosysairsim.MultirotorClient(
+        ip=host,
+        port=port,
+        timeout_value=timeout,
+    )
+
+
+def _rpc_process_entry(connection: Any, client_factory: Callable[[], Any]) -> None:
+    """Own one client, its event loop, RPCs and futures in one child context."""
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    client: Any | None = None
+    futures: dict[int, Any] = {}
+    next_future_id = 1
+    try:
+        try:
+            client = client_factory()
+            connection.send(("READY", True, None))
+        except BaseException as exc:
+            connection.send(("READY", False, f"{type(exc).__name__}: {exc}"))
+            return
+
+        while True:
+            request = connection.recv()
+            kind, request_id, payload = request
+            if kind == "CLOSE":
+                connection.send((request_id, True, None))
+                return
+            try:
+                if kind == "CALL":
+                    method_name, args, kwargs, expect_future = payload
+                    value = getattr(client, method_name)(*args, **kwargs)
+                    if expect_future:
+                        future_id = next_future_id
+                        next_future_id += 1
+                        futures[future_id] = value
+                        value = future_id
+                elif kind == "JOIN":
+                    future_id = int(payload)
+                    future = futures.pop(future_id)
+                    if not hasattr(future, "join"):
+                        raise RuntimeError("RPC command returned no joinable future")
+                    value = future.join()
+                else:
+                    raise RuntimeError(f"unsupported RPC request kind: {kind}")
+                connection.send((request_id, True, value))
+            except BaseException as exc:
+                connection.send(
+                    (request_id, False, f"{type(exc).__name__}: {exc}")
+                )
+    except (EOFError, BrokenPipeError):
+        return
+    finally:
+        if client is not None:
+            try:
+                _close_vendor_client(client)
+            except BaseException:
+                pass
+        try:
+            connection.close()
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+
+class _RpcProcessWorker:
+    """Killable, single-owner RPC process with create-once future handles."""
+
+    def __init__(
+        self,
+        label: str,
+        client_factory: Callable[[], Any],
+        startup_timeout_seconds: float,
+        on_timeout: Callable[[str, float], None] | None = None,
+    ) -> None:
+        self.label = label
+        self._on_timeout = on_timeout
+        self._state_lock = threading.Lock()
+        self._call_lock = threading.Lock()
+        self._request_id = 0
+        self._usable = True
+        self._closed = False
+        context = multiprocessing.get_context("spawn")
+        parent_connection, child_connection = context.Pipe()
+        self._connection = parent_connection
+        self._process = context.Process(
+            target=_rpc_process_entry,
+            args=(child_connection, client_factory),
+            name=f"cosys-rpc-{label}",
+        )
+        self._process.start()
+        child_connection.close()
+        if not self._connection.poll(startup_timeout_seconds):
+            self._poison(
+                f"{label} client creation exceeded {startup_timeout_seconds:.3f}s",
+                startup_timeout_seconds,
+            )
+            raise StageTimeout(
+                f"{label} client creation exceeded {startup_timeout_seconds:.3f}s"
+            )
+        try:
+            kind, succeeded, detail = self._connection.recv()
+        except (EOFError, OSError) as exc:
+            self._poison(f"{label} client process exited during creation", 0.0)
+            raise FlightInvariantError(
+                f"{label} client process exited during creation"
+            ) from exc
+        if kind != "READY" or not succeeded:
+            self.close()
+            raise FlightInvariantError(f"{label} client creation failed: {detail}")
+
+    @property
+    def usable(self) -> bool:
+        with self._state_lock:
+            return self._usable and not self._closed
+
+    def _terminate_process(self) -> None:
+        process = self._process
+        if process.is_alive():
+            process.terminate()
+        process.join(timeout=1.0)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=1.0)
+
+    def _poison(self, reason: str, timeout_seconds: float) -> None:
+        notify = False
+        with self._state_lock:
+            if self._usable:
+                self._usable = False
+                notify = True
+        self._terminate_process()
+        if notify and self._on_timeout is not None:
+            self._on_timeout(reason, timeout_seconds)
+
+    def abort_timeout(self, label: str, timeout_seconds: float) -> None:
+        self._poison(
+            f"{label} exceeded {timeout_seconds:.3f}s",
+            timeout_seconds,
+        )
+
+    def _request(
+        self,
+        kind: str,
+        payload: Any,
+        timeout_seconds: float,
+        label: str,
+    ) -> Any:
+        with self._call_lock:
+            if not self.usable:
+                raise FlightInvariantError(
+                    f"{self.label} RPC context is unusable"
+                )
+            self._request_id += 1
+            request_id = self._request_id
+            try:
+                self._connection.send((kind, request_id, payload))
+                if not self._connection.poll(timeout_seconds):
+                    self._poison(
+                        f"{label} exceeded {timeout_seconds:.3f}s",
+                        timeout_seconds,
+                    )
+                    raise StageTimeout(
+                        f"{label} exceeded {timeout_seconds:.3f}s; "
+                        f"{self.label} RPC context terminated and is unusable"
+                    )
+                response_id, succeeded, value = self._connection.recv()
+            except StageTimeout:
+                raise
+            except (EOFError, BrokenPipeError, OSError) as exc:
+                self._poison(f"{label} lost its RPC process", timeout_seconds)
+                raise FlightInvariantError(
+                    f"{label} lost its RPC process; context is unusable"
+                ) from exc
+            if response_id != request_id:
+                self._poison(f"{label} received an out-of-order reply", timeout_seconds)
+                raise FlightInvariantError(
+                    f"{label} received an out-of-order RPC reply"
+                )
+            if not succeeded:
+                raise FlightInvariantError(f"{label} failed: {value}")
+            return value
+
+    def call(
+        self,
+        label: str,
+        timeout_seconds: float,
+        method_name: str,
+        args: tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+        *,
+        expect_future: bool = False,
+    ) -> Any:
+        return self._request(
+            "CALL",
+            (method_name, args, dict(kwargs), expect_future),
+            timeout_seconds,
+            label,
+        )
+
+    def join_future(
+        self, label: str, timeout_seconds: float, future_id: int
+    ) -> Any:
+        return self._request("JOIN", future_id, timeout_seconds, label)
+
+    def close(self) -> bool:
+        with self._state_lock:
+            if self._closed:
+                return True
+            self._closed = True
+            was_usable = self._usable
+            self._usable = False
+        graceful = False
+        if was_usable and self._process.is_alive():
+            try:
+                self._request_id += 1
+                request_id = self._request_id
+                self._connection.send(("CLOSE", request_id, None))
+                if self._connection.poll(1.0):
+                    response_id, succeeded, _value = self._connection.recv()
+                    if response_id == request_id and succeeded:
+                        self._process.join(timeout=1.0)
+                        graceful = not self._process.is_alive()
+            except (EOFError, BrokenPipeError, OSError):
+                pass
+        self._terminate_process()
+        try:
+            self._connection.close()
+        except OSError:
+            pass
+        return graceful or not was_usable
+
+
+class _ProcessRpcFuture:
+    """A future token that can only be joined by its creating RPC process."""
+
+    def __init__(self, worker: _RpcProcessWorker, future_id: int) -> None:
+        self._worker = worker
+        self._future_id = future_id
+
+    def join_with_timeout(self, label: str, timeout_seconds: float) -> Any:
+        return self._worker.join_future(
+            label, timeout_seconds, self._future_id
+        )
+
+    def abort_timeout(self, label: str, timeout_seconds: float) -> None:
+        self._worker.abort_timeout(label, timeout_seconds)
+
+
+class _ProcessAffineCosysClient:
+    """Use persistent, killable owner contexts for CoSys command and telemetry RPCs."""
+
+    _ASYNC_METHODS = {
+        "hoverAsync",
+        "landAsync",
+        "moveToPositionAsync",
+        "takeoffAsync",
+    }
+    _COMMAND_METHODS = _ASYNC_METHODS | {
+        "armDisarm",
+        "enableApiControl",
+        "reset",
+    }
+    _OBSERVATION_METHODS = {
+        "getMultirotorState",
+        "isApiControlEnabled",
+        "listVehicles",
+        "ping",
+        "simGetCollisionInfo",
+    }
+
+    def __init__(
+        self,
+        client_factory: Callable[[], Any],
+        startup_timeout_seconds: float,
+        default_timeout_seconds: float,
+    ) -> None:
+        self._client_factory = client_factory
+        self._startup_timeout_seconds = startup_timeout_seconds
+        self._default_timeout_seconds = default_timeout_seconds
+        self._timeouts: list[dict[str, Any]] = []
+        self._failsafe_mode = False
+        self._closed = False
+        self._command = self._new_worker("command")
+        try:
+            self._observation = self._new_worker("observation")
+        except BaseException:
+            self._command.close()
+            raise
+
+    def _record_timeout(self, reason: str, timeout_seconds: float) -> None:
+        self._timeouts.append(
+            {"reason": reason, "timeout_seconds": timeout_seconds}
+        )
+
+    def _new_worker(self, label: str) -> _RpcProcessWorker:
+        return _RpcProcessWorker(
+            label,
+            self._client_factory,
+            self._startup_timeout_seconds,
+            self._record_timeout,
+        )
+
+    def _worker_for(self, method_name: str) -> _RpcProcessWorker:
+        if method_name in self._COMMAND_METHODS:
+            return self._command
+        if method_name in self._OBSERVATION_METHODS:
+            return self._observation
+        raise AttributeError(f"unsupported CoSys client operation: {method_name}")
+
+    def _call_rpc_with_timeout(
+        self,
+        label: str,
+        timeout_seconds: float,
+        method_name: str,
+        args: tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        if self._closed:
+            raise FlightInvariantError("CoSys RPC client is closed")
+        worker = self._worker_for(method_name)
+        value = worker.call(
+            label,
+            timeout_seconds,
+            method_name,
+            args,
+            kwargs,
+            expect_future=method_name in self._ASYNC_METHODS,
+        )
+        if method_name in self._ASYNC_METHODS:
+            return _ProcessRpcFuture(worker, int(value))
+        return value
+
+    def __getattr__(self, method_name: str) -> Callable[..., Any]:
+        if (
+            method_name not in self._COMMAND_METHODS
+            and method_name not in self._OBSERVATION_METHODS
+        ):
+            raise AttributeError(method_name)
+
+        def invoke(*args: Any, **kwargs: Any) -> Any:
+            return self._call_rpc_with_timeout(
+                method_name,
+                self._default_timeout_seconds,
+                method_name,
+                args,
+                kwargs,
+            )
+
+        return invoke
+
+    def begin_failsafe_cleanup(self) -> None:
+        """Discard every pre-timeout context and create fresh cleanup contexts."""
+
+        if self._closed or self._failsafe_mode:
+            return
+        self._failsafe_mode = True
+        self._command.close()
+        self._observation.close()
+        self._command = self._new_worker("failsafe-command")
+        try:
+            self._observation = self._new_worker("failsafe-observation")
+        except BaseException:
+            self._command.close()
+            raise
+
+    def diagnostics(self) -> Mapping[str, Any]:
+        return {
+            "execution_model": "spawned_process_per_client_context",
+            "failsafe_context_created": self._failsafe_mode,
+            "timeouts": list(self._timeouts),
+        }
+
+    def close(self) -> bool:
+        if self._closed:
+            return True
+        self._closed = True
+        observation_closed = self._observation.close()
+        command_closed = self._command.close()
+        return observation_closed and command_closed
 
 
 @dataclass(frozen=True)
@@ -413,9 +823,9 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
         _required(deviation_raw, "id", "config.touchdown.landed_state_deviation"),
         "config.touchdown.landed_state_deviation.id",
     )
-    if deviation_id != "QB-LANDED-STATE-001":
+    if deviation_id != APPROVED_DEVIATION_ID:
         raise ConfigurationError(
-            "the only recognized landed-state deviation is QB-LANDED-STATE-001"
+            f"the only recognized landed-state deviation is {APPROVED_DEVIATION_ID}"
         )
     deviation_approved = _required(
         deviation_raw, "approved", "config.touchdown.landed_state_deviation"
@@ -445,9 +855,14 @@ def validate_config(raw: Mapping[str, Any]) -> SmokeConfig:
             approval_reference_raw,
             "config.touchdown.landed_state_deviation.approval_reference",
         )
-        if approved_by.casefold() != "suyash":
+        if approved_by != APPROVED_DEVIATION_BY:
             raise ConfigurationError(
                 "QB-LANDED-STATE-001 must be explicitly approved by Suyash"
+            )
+        if approval_reference != APPROVED_DEVIATION_REFERENCE:
+            raise ConfigurationError(
+                "QB-LANDED-STATE-001 approval_reference does not match the "
+                "frozen Suyash authorization"
             )
     elif approved_by_raw is not None or approval_reference_raw is not None:
         raise ConfigurationError(
@@ -688,7 +1103,33 @@ def _call_with_timeout(
     return value
 
 
+def _rpc_call(
+    client: Any,
+    label: str,
+    timeout_seconds: float,
+    method_name: str,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Invoke an RPC with a hard timeout in the live owner's killable context."""
+
+    process_call = getattr(client, "_call_rpc_with_timeout", None)
+    if callable(process_call):
+        return process_call(
+            label, timeout_seconds, method_name, args, kwargs
+        )
+    return _call_with_timeout(
+        label,
+        timeout_seconds,
+        lambda: getattr(client, method_name)(*args, **kwargs),
+    )
+
+
 def _join_future(label: str, timeout_seconds: float, future: Any) -> None:
+    join_with_timeout = getattr(future, "join_with_timeout", None)
+    if callable(join_with_timeout):
+        join_with_timeout(label, timeout_seconds)
+        return
     if not hasattr(future, "join"):
         raise FlightInvariantError(f"{label} returned no joinable future")
     _call_with_timeout(label, timeout_seconds, future.join)
@@ -702,19 +1143,27 @@ def _join_future_guarded(
 ) -> None:
     """Join an async simulator command while polling its phase safety contract."""
 
+    join_with_timeout = getattr(future, "join_with_timeout", None)
+    abort_timeout = getattr(future, "abort_timeout", None)
     if not hasattr(future, "join"):
-        raise FlightInvariantError(f"{label} returned no joinable future")
+        if not callable(join_with_timeout):
+            raise FlightInvariantError(f"{label} returned no joinable future")
     results: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
 
     def invoke() -> None:
         try:
-            future.join()
+            if callable(join_with_timeout):
+                join_with_timeout(label, timeout_seconds)
+            else:
+                future.join()
             results.put((True, None))
         except BaseException as exc:
             results.put((False, exc))
 
     worker = threading.Thread(
-        target=invoke, name=f"cosys-{label}-join", daemon=True
+        target=invoke,
+        name=f"cosys-{label}-join",
+        daemon=not callable(join_with_timeout),
     )
     worker.start()
     deadline = time.monotonic() + timeout_seconds
@@ -726,8 +1175,13 @@ def _join_future_guarded(
             continue
         safety_check()
         if not succeeded:
+            if isinstance(value, FlightInvariantError):
+                raise value
             raise FlightInvariantError(f"{label} failed: {value}") from value
         return
+    if callable(abort_timeout):
+        abort_timeout(label, timeout_seconds)
+        worker.join(timeout=1.0)
     raise StageTimeout(f"{label} exceeded {timeout_seconds:.3f}s")
 
 
@@ -836,6 +1290,11 @@ class EvidenceRecorder:
             "reset_state": None,
             "abort_attempted": False,
             "cleanup_complete": False,
+            "rpc_execution": {
+                "execution_model": "direct_or_test_double",
+                "failsafe_context_created": False,
+                "timeouts": [],
+            },
             "errors": [],
             "pass": False,
             "process_result": "RUNNING",
@@ -861,8 +1320,30 @@ class EvidenceRecorder:
         self.result["duration_seconds"] = round(
             time.monotonic() - self._monotonic_started, 6
         )
+        deviation = self.result["touchdown_policy"]["landed_state_deviation"]
+        if passed and deviation["applied"]:
+            valid_approval = (
+                deviation["id"] == APPROVED_DEVIATION_ID
+                and deviation["approved"] is True
+                and deviation["approved_by"] == APPROVED_DEVIATION_BY
+                and deviation["approval_reference"]
+                == APPROVED_DEVIATION_REFERENCE
+            )
+            if not valid_approval:
+                passed = False
+                self.error(
+                    "applied landed-state deviation does not match the frozen "
+                    "QB-LANDED-STATE-001 approval"
+                )
         self.result["pass"] = passed
-        self.result["process_result"] = "PASS" if passed else "FAIL"
+        if not passed:
+            self.result["process_result"] = "FAIL"
+        elif deviation["applied"]:
+            self.result["process_result"] = (
+                "PASS_WITH_APPROVED_SIMULATOR_DEVIATION"
+            )
+        else:
+            self.result["process_result"] = "PASS"
 
 
 def _assert_inside_geofence(
@@ -876,10 +1357,12 @@ def _assert_inside_geofence(
 
 
 def _assert_api_control(client: Any, config: SmokeConfig, context: str) -> None:
-    enabled = _call_with_timeout(
+    enabled = _rpc_call(
+        client,
         f"{context}_api_control_check",
         config.timeouts["api_control"],
-        lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+        "isApiControlEnabled",
+        vehicle_name=config.vehicle_name,
     )
     if not enabled:
         raise FlightInvariantError(f"API control lost during {context}")
@@ -900,12 +1383,12 @@ class CollisionMonitor:
         self.baseline_ground_timestamp: float | None = None
 
     def _read(self, timeout_name: str) -> dict[str, Any]:
-        collision = _call_with_timeout(
+        collision = _rpc_call(
+            self.client,
             "collision_check",
             self.config.timeouts[timeout_name],
-            lambda: self.client.simGetCollisionInfo(
-                vehicle_name=self.config.vehicle_name
-            ),
+            "simGetCollisionInfo",
+            vehicle_name=self.config.vehicle_name,
         )
         has_collided = bool(getattr(collision, "has_collided", False))
         try:
@@ -1220,10 +1703,12 @@ class CollisionMonitor:
 
 
 def _get_state(client: Any, config: SmokeConfig, timeout_name: str) -> dict[str, Any]:
-    state = _call_with_timeout(
+    state = _rpc_call(
+        client,
         "get_multirotor_state",
         config.timeouts[timeout_name],
-        lambda: client.getMultirotorState(vehicle_name=config.vehicle_name),
+        "getMultirotorState",
+        vehicle_name=config.vehicle_name,
     )
     snapshot = _state_snapshot(state)
     _assert_inside_geofence(snapshot, config, timeout_name)
@@ -1299,24 +1784,28 @@ def _reset_and_verify(
     collision_monitor: CollisionMonitor,
 ) -> dict[str, Any]:
     timeout = config.timeouts["reset"]
-    if _call_with_timeout(
+    if _rpc_call(
+        client,
         "pre_reset_api_control_check",
         config.timeouts["api_control"],
-        lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+        "isApiControlEnabled",
+        vehicle_name=config.vehicle_name,
     ):
         raise FlightInvariantError("refusing reset while API control remains enabled")
 
     recorder.result["reset_attempted"] = True
-    _call_with_timeout("reset", timeout, client.reset)
+    _rpc_call(client, "reset", timeout, "reset")
     deadline = time.monotonic() + timeout
     stable_since: float | None = None
     last_state: dict[str, Any] | None = None
     last_collision: dict[str, Any] | None = None
     while time.monotonic() < deadline:
-        if _call_with_timeout(
+        if _rpc_call(
+            client,
             "reset_api_control_check",
             config.timeouts["api_control"],
-            lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+            "isApiControlEnabled",
+            vehicle_name=config.vehicle_name,
         ):
             raise FlightInvariantError("API control became enabled during reset verification")
         last_state = _get_state(client, config, "reset")
@@ -1391,10 +1880,12 @@ def _safe_cleanup(
 
     if api_control:
         try:
-            future = _call_with_timeout(
+            future = _rpc_call(
+                client,
                 "abort_hover_start",
                 timeout,
-                lambda: client.hoverAsync(vehicle_name=config.vehicle_name),
+                "hoverAsync",
+                vehicle_name=config.vehicle_name,
             )
             _join_future("abort_hover", timeout, future)
             recorder.transition("ABORT_HOVER", "PASS")
@@ -1403,12 +1894,13 @@ def _safe_cleanup(
             recorder.transition("ABORT_HOVER", "FAIL", str(exc))
 
         try:
-            future = _call_with_timeout(
+            future = _rpc_call(
+                client,
                 "abort_land_start",
                 timeout,
-                lambda: client.landAsync(
-                    timeout_sec=timeout, vehicle_name=config.vehicle_name
-                ),
+                "landAsync",
+                timeout_sec=timeout,
+                vehicle_name=config.vehicle_name,
             )
             if collision_monitor is None:
                 raise FlightInvariantError(
@@ -1434,10 +1926,13 @@ def _safe_cleanup(
 
     if armed:
         try:
-            result = _call_with_timeout(
+            result = _rpc_call(
+                client,
                 "abort_disarm",
                 timeout,
-                lambda: client.armDisarm(False, vehicle_name=config.vehicle_name),
+                "armDisarm",
+                False,
+                vehicle_name=config.vehicle_name,
             )
             if result is not True:
                 raise FlightInvariantError("abort_disarm did not return true")
@@ -1449,17 +1944,20 @@ def _safe_cleanup(
 
     if api_control:
         try:
-            _call_with_timeout(
+            _rpc_call(
+                client,
                 "abort_release_api_control",
                 timeout,
-                lambda: client.enableApiControl(
-                    False, vehicle_name=config.vehicle_name
-                ),
+                "enableApiControl",
+                False,
+                vehicle_name=config.vehicle_name,
             )
-            still_enabled = _call_with_timeout(
+            still_enabled = _rpc_call(
+                client,
                 "abort_verify_api_release",
                 timeout,
-                lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+                "isApiControlEnabled",
+                vehicle_name=config.vehicle_name,
             )
             if still_enabled:
                 raise FlightInvariantError("API control remained enabled after cleanup")
@@ -1491,12 +1989,17 @@ def run_smoke(
             config.timeouts["connect"],
             lambda: client_factory(config),
         )
-        if not _call_with_timeout("ping", config.timeouts["connect"], client.ping):
+        if not _rpc_call(
+            client, "ping", config.timeouts["connect"], "ping"
+        ):
             raise FlightInvariantError("ping returned false")
         recorder.transition("CONNECT", "PASS")
 
-        vehicles = _call_with_timeout(
-            "list_vehicles", config.timeouts["vehicle_check"], client.listVehicles
+        vehicles = _rpc_call(
+            client,
+            "list_vehicles",
+            config.timeouts["vehicle_check"],
+            "listVehicles",
         )
         if not isinstance(vehicles, Sequence) or isinstance(vehicles, (str, bytes)):
             raise FlightInvariantError("listVehicles returned an invalid roster")
@@ -1520,24 +2023,32 @@ def run_smoke(
         collision_monitor.baseline(initial)
         recorder.transition("VERIFY_START", "PASS", f"error_m={start_error:.6f}")
 
-        _call_with_timeout(
+        _rpc_call(
+            client,
             "enable_api_control",
             config.timeouts["api_control"],
-            lambda: client.enableApiControl(True, vehicle_name=config.vehicle_name),
+            "enableApiControl",
+            True,
+            vehicle_name=config.vehicle_name,
         )
         api_control = True
-        if not _call_with_timeout(
+        if not _rpc_call(
+            client,
             "verify_api_control",
             config.timeouts["api_control"],
-            lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+            "isApiControlEnabled",
+            vehicle_name=config.vehicle_name,
         ):
             raise FlightInvariantError("API control did not become enabled")
         recorder.transition("API_CONTROL", "PASS")
 
-        arm_result = _call_with_timeout(
+        arm_result = _rpc_call(
+            client,
             "arm",
             config.timeouts["arm"],
-            lambda: client.armDisarm(True, vehicle_name=config.vehicle_name),
+            "armDisarm",
+            True,
+            vehicle_name=config.vehicle_name,
         )
         if arm_result is False:
             raise FlightInvariantError("arm returned false")
@@ -1545,13 +2056,13 @@ def run_smoke(
         collision_monitor.check_inflight("arm")
         recorder.transition("ARM", "PASS")
 
-        future = _call_with_timeout(
+        future = _rpc_call(
+            client,
             "takeoff_start",
             config.timeouts["takeoff"],
-            lambda: client.takeoffAsync(
-                timeout_sec=config.timeouts["takeoff"],
-                vehicle_name=config.vehicle_name,
-            ),
+            "takeoffAsync",
+            timeout_sec=config.timeouts["takeoff"],
+            vehicle_name=config.vehicle_name,
         )
         _join_future_guarded(
             "takeoff",
@@ -1566,17 +2077,17 @@ def run_smoke(
         takeoff_target = Vector3(
             config.start.x, config.start.y, config.takeoff_z_ned_m
         )
-        future = _call_with_timeout(
+        future = _rpc_call(
+            client,
             "takeoff_altitude_start",
             config.timeouts["takeoff"],
-            lambda: client.moveToPositionAsync(
-                takeoff_target.x,
-                takeoff_target.y,
-                takeoff_target.z,
-                config.speed_mps,
-                timeout_sec=config.timeouts["takeoff"],
-                vehicle_name=config.vehicle_name,
-            ),
+            "moveToPositionAsync",
+            takeoff_target.x,
+            takeoff_target.y,
+            takeoff_target.z,
+            config.speed_mps,
+            timeout_sec=config.timeouts["takeoff"],
+            vehicle_name=config.vehicle_name,
         )
         _join_future_guarded(
             "takeoff_altitude_move",
@@ -1599,10 +2110,12 @@ def run_smoke(
             f"z_ned_m={config.takeoff_z_ned_m:.6f}",
         )
 
-        future = _call_with_timeout(
+        future = _rpc_call(
+            client,
             "hover_start",
             config.timeouts["hover"],
-            lambda: client.hoverAsync(vehicle_name=config.vehicle_name),
+            "hoverAsync",
+            vehicle_name=config.vehicle_name,
         )
         _join_future_guarded(
             "hover",
@@ -1620,17 +2133,17 @@ def run_smoke(
         collision_monitor.check_inflight("hover")
         recorder.transition("HOVER", "PASS")
 
-        future = _call_with_timeout(
+        future = _rpc_call(
+            client,
             "move_start",
             config.timeouts["move"],
-            lambda: client.moveToPositionAsync(
-                config.target.x,
-                config.target.y,
-                config.target.z,
-                config.speed_mps,
-                timeout_sec=config.timeouts["move"],
-                vehicle_name=config.vehicle_name,
-            ),
+            "moveToPositionAsync",
+            config.target.x,
+            config.target.y,
+            config.target.z,
+            config.speed_mps,
+            timeout_sec=config.timeouts["move"],
+            vehicle_name=config.vehicle_name,
         )
         _join_future_guarded(
             "move",
@@ -1657,10 +2170,12 @@ def run_smoke(
         )
         collision_monitor.check_inflight("arrival")
 
-        future = _call_with_timeout(
+        future = _rpc_call(
+            client,
             "final_hover_start",
             config.timeouts["hover"],
-            lambda: client.hoverAsync(vehicle_name=config.vehicle_name),
+            "hoverAsync",
+            vehicle_name=config.vehicle_name,
         )
         _join_future_guarded(
             "final_hover",
@@ -1678,13 +2193,13 @@ def run_smoke(
         collision_monitor.check_inflight("final_hover")
         recorder.transition("FINAL_HOVER", "PASS")
 
-        future = _call_with_timeout(
+        future = _rpc_call(
+            client,
             "land_start",
             config.timeouts["land"],
-            lambda: client.landAsync(
-                timeout_sec=config.timeouts["land"],
-                vehicle_name=config.vehicle_name,
-            ),
+            "landAsync",
+            timeout_sec=config.timeouts["land"],
+            vehicle_name=config.vehicle_name,
         )
         _join_future_guarded(
             "land",
@@ -1702,10 +2217,13 @@ def run_smoke(
             f"landed_state={landed['landed_state']},speed_mps={landed['speed_mps']:.6f}",
         )
 
-        disarm_result = _call_with_timeout(
+        disarm_result = _rpc_call(
+            client,
             "disarm",
             config.timeouts["cleanup"],
-            lambda: client.armDisarm(False, vehicle_name=config.vehicle_name),
+            "armDisarm",
+            False,
+            vehicle_name=config.vehicle_name,
         )
         if disarm_result is not True:
             raise FlightInvariantError("disarm did not return true")
@@ -1713,15 +2231,20 @@ def run_smoke(
         recorder.result["disarm_confirmed"] = True
         recorder.transition("DISARM", "PASS")
 
-        _call_with_timeout(
+        _rpc_call(
+            client,
             "release_api_control",
             config.timeouts["cleanup"],
-            lambda: client.enableApiControl(False, vehicle_name=config.vehicle_name),
+            "enableApiControl",
+            False,
+            vehicle_name=config.vehicle_name,
         )
-        if _call_with_timeout(
+        if _rpc_call(
+            client,
             "verify_api_release",
             config.timeouts["cleanup"],
-            lambda: client.isApiControlEnabled(vehicle_name=config.vehicle_name),
+            "isApiControlEnabled",
+            vehicle_name=config.vehicle_name,
         ):
             raise FlightInvariantError("API control remained enabled after release")
         api_control = False
@@ -1739,6 +2262,21 @@ def run_smoke(
         )
         completed = True
     except (ConfigurationError, FlightInvariantError) as exc:
+        if isinstance(exc, StageTimeout) and client is not None:
+            begin_failsafe = getattr(client, "begin_failsafe_cleanup", None)
+            if callable(begin_failsafe):
+                try:
+                    begin_failsafe()
+                    recorder.transition(
+                        "RPC_TIMEOUT_FAILSAFE_CONTEXT", "PASS"
+                    )
+                except FlightInvariantError as cleanup_context_exc:
+                    recorder.error(str(cleanup_context_exc))
+                    recorder.transition(
+                        "RPC_TIMEOUT_FAILSAFE_CONTEXT",
+                        "FAIL",
+                        str(cleanup_context_exc),
+                    )
         recorder.error(str(exc))
         recorder.transition("FAIL", "FAIL", str(exc))
     except Exception as exc:  # vendor exceptions still produce evidence and cleanup
@@ -1784,6 +2322,10 @@ def run_smoke(
                 and recorder.result["api_control_released"]
             )
         )
+        if client is not None:
+            diagnostics = getattr(client, "diagnostics", None)
+            if callable(diagnostics):
+                recorder.result["rpc_execution"] = dict(diagnostics())
 
     passed = completed and all(
         (
@@ -1807,12 +2349,108 @@ def _live_client_factory(config: SmokeConfig) -> tuple[Any, int]:
             "cosysairsim is not installed in this environment; install only the "
             "checksum-approved client artifact from Pratik's handoff"
         ) from exc
-    client = cosysairsim.MultirotorClient(
-        ip=config.host,
-        port=config.port,
-        timeout_value=config.rpc_timeout_seconds,
+    factory = functools.partial(
+        _construct_live_cosys_client,
+        config.host,
+        config.port,
+        config.rpc_timeout_seconds,
+    )
+    client = _ProcessAffineCosysClient(
+        factory,
+        config.timeouts["connect"],
+        config.rpc_timeout_seconds,
     )
     return client, int(cosysairsim.LandedState.Landed)
+
+
+def run_read_only_preflight(
+    config: SmokeConfig,
+    config_sha256: str,
+    client: Any,
+) -> dict[str, Any]:
+    """Capture the authorized Q-B no-motion RPC gate without enabling control."""
+
+    started_ns = time.time_ns()
+    result: dict[str, Any] = {
+        "schema": PREFLIGHT_OUTPUT_SCHEMA,
+        "created_ns": started_ns,
+        "config_sha256": config_sha256,
+        "endpoint": {"host": config.host, "port": config.port},
+        "vehicle": config.vehicle_name,
+        "operations": [
+            "client_construction",
+            "ping",
+            "listVehicles",
+            "getMultirotorState",
+            "client_shutdown",
+        ],
+        "ping": None,
+        "vehicles": None,
+        "state": None,
+        "client_shutdown": False,
+        "errors": [],
+        "pass": False,
+        "process_result": "FAIL",
+    }
+    try:
+        if config.runtime.qualification_configuration != "Q-B":
+            raise FlightInvariantError("read-only preflight requires Q-B runtime")
+        if config.host != "127.0.0.1" or config.port != 41451:
+            raise FlightInvariantError(
+                "read-only preflight requires endpoint 127.0.0.1:41451"
+            )
+        if config.vehicle_name != "Drone1":
+            raise FlightInvariantError(
+                "read-only preflight requires exact raw vehicle name Drone1"
+            )
+        ping = _rpc_call(
+            client, "preflight_ping", config.timeouts["connect"], "ping"
+        )
+        result["ping"] = ping
+        if ping is not True:
+            raise FlightInvariantError("preflight ping returned false")
+        vehicles = _rpc_call(
+            client,
+            "preflight_list_vehicles",
+            config.timeouts["vehicle_check"],
+            "listVehicles",
+        )
+        result["vehicles"] = list(vehicles) if isinstance(vehicles, Sequence) else vehicles
+        if not isinstance(vehicles, Sequence) or isinstance(vehicles, (str, bytes)):
+            raise FlightInvariantError("preflight listVehicles returned invalid roster")
+        if config.vehicle_name not in vehicles:
+            raise FlightInvariantError("preflight roster does not contain Drone1")
+        state = _rpc_call(
+            client,
+            "preflight_get_multirotor_state",
+            config.timeouts["vehicle_check"],
+            "getMultirotorState",
+            vehicle_name=config.vehicle_name,
+        )
+        result["state"] = _state_snapshot(state)
+        result["pass"] = True
+        result["process_result"] = "PASS"
+    except (ConfigurationError, FlightInvariantError) as exc:
+        result["errors"].append(str(exc))
+    except Exception as exc:
+        result["errors"].append(
+            f"unexpected error: {type(exc).__name__}: {exc}"
+        )
+    result["finished_ns"] = time.time_ns()
+    return result
+
+
+def _close_runtime_client(client: Any) -> tuple[bool, str | None]:
+    close = getattr(client, "close", None)
+    if not callable(close):
+        return False, "client exposes no close operation"
+    try:
+        closed = close()
+    except BaseException as exc:
+        return False, f"client shutdown failed: {type(exc).__name__}: {exc}"
+    if closed is False:
+        return False, "client shutdown required forced termination"
+    return True, None
 
 
 def _write_create_once(path: Path, result: Mapping[str, Any]) -> None:
@@ -1829,6 +2467,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help=(
+            "Run the create-once no-motion Q-B gate: construct, ping, listVehicles, "
+            "getMultirotorState(Drone1), then clean shutdown"
+        ),
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         help=(
@@ -1839,17 +2485,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     output_path: Path | None = args.out
+    selected_schema = (
+        PREFLIGHT_OUTPUT_SCHEMA if args.preflight_only else OUTPUT_SCHEMA
+    )
 
     try:
         config, config_sha256 = load_config(args.config)
     except (OSError, ConfigurationError) as exc:
         result = {
-            "schema": OUTPUT_SCHEMA,
+            "schema": selected_schema,
             "created_ns": time.time_ns(),
             "config_path": str(args.config),
             "errors": [str(exc)],
             "pass": False,
-            "process_result": "CONFIG_REFUSED",
+            "process_result": "FAIL",
+            "failure_class": "CONFIG_REFUSED",
         }
         if output_path is None:
             print(json.dumps(result, indent=2, sort_keys=True))
@@ -1875,25 +2525,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"ERROR: refusing to overwrite evidence file: {output_path}")
         return 2
 
+    client: Any | None = None
     try:
         client, landed_state_value = _live_client_factory(config)
-        result = run_smoke(
-            config,
-            config_sha256,
-            client_factory=lambda _config: client,
-            landed_state_value=landed_state_value,
-        )
+        if args.preflight_only:
+            result = run_read_only_preflight(config, config_sha256, client)
+            shutdown_ok, shutdown_error = _close_runtime_client(client)
+            client = None
+            result["client_shutdown"] = shutdown_ok
+            if not shutdown_ok:
+                result["pass"] = False
+                result["process_result"] = "FAIL"
+                result["errors"].append(shutdown_error)
+        else:
+            result = run_smoke(
+                config,
+                config_sha256,
+                client_factory=lambda _config: client,
+                landed_state_value=landed_state_value,
+            )
         result["run_id"] = output_path.stem
         result["evidence_output_path"] = str(output_path)
         _write_create_once(output_path, result)
     except (OSError, ConfigurationError, FlightInvariantError) as exc:
         result = {
-            "schema": OUTPUT_SCHEMA,
+            "schema": selected_schema,
             "created_ns": time.time_ns(),
             "config_sha256": config_sha256,
             "errors": [str(exc)],
             "pass": False,
-            "process_result": "STARTUP_REFUSED",
+            "process_result": "FAIL",
+            "failure_class": "STARTUP_REFUSED",
         }
         try:
             _write_create_once(output_path, result)
@@ -1902,6 +2564,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         print(json.dumps(result, indent=2, sort_keys=True))
         return 2
+    finally:
+        if client is not None:
+            _close_runtime_client(client)
 
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["pass"] else 1

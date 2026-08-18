@@ -1,5 +1,7 @@
 import json
 import math
+import os
+import threading
 import time
 from types import SimpleNamespace
 
@@ -7,6 +9,7 @@ import pytest
 import sim.cosys_smoke_flight as smoke_module
 
 from sim.cosys_smoke_flight import (
+    APPROVED_DEVIATION_REFERENCE,
     CONFIG_SCHEMA,
     ConfigurationError,
     _flight_contract_sha256,
@@ -15,6 +18,67 @@ from sim.cosys_smoke_flight import (
     run_smoke,
     validate_config,
 )
+
+
+class ProcessLoopSensitiveFuture:
+    def __init__(self, owner_pid, owner_thread, owner_loop):
+        self.owner_pid = owner_pid
+        self.owner_thread = owner_thread
+        self.owner_loop = owner_loop
+
+    def join(self):
+        assert os.getpid() == self.owner_pid
+        assert threading.get_ident() == self.owner_thread
+        assert id(smoke_module.asyncio.get_event_loop()) == self.owner_loop
+
+
+class ProcessLoopSensitiveClient:
+    """Pickle-safe fake for the spawned, loop-sensitive live RPC executor."""
+
+    def __init__(self):
+        self.owner_pid = os.getpid()
+        self.owner_thread = threading.get_ident()
+        self.owner_loop = id(smoke_module.asyncio.get_event_loop())
+
+    def ping(self):
+        return {
+            "created": [self.owner_pid, self.owner_thread, self.owner_loop],
+            "called": [
+                os.getpid(),
+                threading.get_ident(),
+                id(smoke_module.asyncio.get_event_loop()),
+            ],
+        }
+
+    def hoverAsync(self, vehicle_name=""):
+        return ProcessLoopSensitiveFuture(
+            self.owner_pid, self.owner_thread, self.owner_loop
+        )
+
+    def delayed_write(self, path, delay):
+        time.sleep(delay)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("orphan completed")
+
+    def close(self):
+        assert os.getpid() == self.owner_pid
+        assert threading.get_ident() == self.owner_thread
+        assert id(smoke_module.asyncio.get_event_loop()) == self.owner_loop
+
+
+class DirectLoopSensitiveClient:
+    def __init__(self):
+        self.owner_thread = threading.get_ident()
+        self.owner_loop = smoke_module.asyncio.get_event_loop()
+
+    def ping(self):
+        current_loop = smoke_module.asyncio.get_event_loop()
+        if (
+            threading.get_ident() != self.owner_thread
+            or current_loop is not self.owner_loop
+        ):
+            raise RuntimeError("RPC client used outside its owning context")
+        return True
 
 
 def route_config():
@@ -99,6 +163,68 @@ class FakeFuture:
             time.sleep(self.delay)
         if self.callback:
             self.callback()
+
+
+def test_disposable_thread_reproduces_loop_sensitive_ping_failure():
+    loop = smoke_module.asyncio.new_event_loop()
+    smoke_module.asyncio.set_event_loop(loop)
+    client = DirectLoopSensitiveClient()
+    smoke_module.asyncio.set_event_loop(None)
+    try:
+        with pytest.raises(
+            smoke_module.FlightInvariantError,
+            match="no current event loop|outside its owning context",
+        ):
+            smoke_module._call_with_timeout("ping", 0.2, client.ping)
+    finally:
+        loop.close()
+
+
+def test_process_rpc_client_creation_ping_and_future_share_owner_context():
+    client = smoke_module._ProcessAffineCosysClient(
+        ProcessLoopSensitiveClient,
+        startup_timeout_seconds=2.0,
+        default_timeout_seconds=1.0,
+    )
+    try:
+        identity = smoke_module._rpc_call(client, "ping", 1.0, "ping")
+        assert identity["created"] == identity["called"]
+
+        future = smoke_module._rpc_call(
+            client,
+            "hover_start",
+            1.0,
+            "hoverAsync",
+            vehicle_name="Drone1",
+        )
+        smoke_module._join_future("hover", 1.0, future)
+    finally:
+        client.close()
+
+
+def test_process_rpc_timeout_terminates_orphan_before_late_completion(tmp_path):
+    output = tmp_path / "late-command.txt"
+    worker = smoke_module._RpcProcessWorker(
+        "timeout-test", ProcessLoopSensitiveClient, 2.0
+    )
+    try:
+        with pytest.raises(smoke_module.StageTimeout, match="terminated and is unusable"):
+            worker.call(
+                "delayed_write",
+                0.05,
+                "delayed_write",
+                (str(output), 0.5),
+                {},
+            )
+        assert worker.usable is False
+        time.sleep(0.6)
+        assert not output.exists()
+        with pytest.raises(
+            smoke_module.FlightInvariantError, match="unusable"
+        ):
+            worker.call("ping", 0.1, "ping", (), {})
+    finally:
+        worker.close()
 
 
 class FakeClient:
@@ -333,6 +459,50 @@ class FakeClient:
         )
 
 
+class TimeoutAwareClient:
+    def __init__(self):
+        self.failsafe_started = False
+
+    def _call_rpc_with_timeout(
+        self, label, timeout_seconds, method_name, args, kwargs
+    ):
+        if method_name == "ping":
+            raise smoke_module.StageTimeout("ping context timed out")
+        raise AssertionError(f"unexpected RPC after timeout: {method_name}")
+
+    def begin_failsafe_cleanup(self):
+        self.failsafe_started = True
+
+    def diagnostics(self):
+        return {
+            "execution_model": "test_timeout_context",
+            "failsafe_context_created": self.failsafe_started,
+            "timeouts": [{"reason": "ping context timed out"}],
+        }
+
+
+def test_rpc_timeout_marks_failure_and_enters_failsafe_context():
+    config = validate_config(route_config())
+    client = TimeoutAwareClient()
+
+    result = run_smoke(
+        config,
+        "3" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is False
+    assert result["process_result"] == "FAIL"
+    assert client.failsafe_started is True
+    assert result["rpc_execution"]["failsafe_context_created"] is True
+    assert any(
+        transition["state"] == "RPC_TIMEOUT_FAILSAFE_CONTEXT"
+        and transition["outcome"] == "PASS"
+        for transition in result["transitions"]
+    )
+
+
 def test_missing_route_value_is_refused_before_client_creation():
     raw = route_config()
     del raw["route"]["b"]
@@ -370,6 +540,17 @@ def test_unapproved_deviation_cannot_claim_suyash_approval_fields():
     raw["touchdown"]["landed_state_deviation"]["approved_by"] = "Suyash"
 
     with pytest.raises(ConfigurationError, match="approval fields null"):
+        validate_config(raw)
+
+
+def test_approved_deviation_requires_exact_frozen_reference():
+    raw = route_config()
+    deviation = raw["touchdown"]["landed_state_deviation"]
+    deviation["approved"] = True
+    deviation["approved_by"] = "Suyash"
+    deviation["approval_reference"] = "some-other-approval"
+
+    with pytest.raises(ConfigurationError, match="frozen Suyash authorization"):
         validate_config(raw)
 
 
@@ -673,7 +854,7 @@ def test_approved_stale_landed_state_deviation_is_recorded_when_applied():
     deviation = raw["touchdown"]["landed_state_deviation"]
     deviation["approved"] = True
     deviation["approved_by"] = "Suyash"
-    deviation["approval_reference"] = "written-QB-LANDED-STATE-001"
+    deviation["approval_reference"] = APPROVED_DEVIATION_REFERENCE
     config = validate_config(raw)
     client = FakeClient(stale_landed_after_touchdown=True)
 
@@ -685,10 +866,47 @@ def test_approved_stale_landed_state_deviation_is_recorded_when_applied():
     )
 
     assert result["pass"] is True
+    assert (
+        result["process_result"]
+        == "PASS_WITH_APPROVED_SIMULATOR_DEVIATION"
+    )
     recorded = result["touchdown_policy"]["landed_state_deviation"]
     assert recorded["approved"] is True
     assert recorded["applied"] is True
-    assert recorded["approval_reference"] == "written-QB-LANDED-STATE-001"
+    assert recorded["approval_reference"] == APPROVED_DEVIATION_REFERENCE
+
+
+def test_approved_but_unapplied_deviation_still_reports_normal_pass():
+    raw = route_config()
+    deviation = raw["touchdown"]["landed_state_deviation"]
+    deviation["approved"] = True
+    deviation["approved_by"] = "Suyash"
+    deviation["approval_reference"] = APPROVED_DEVIATION_REFERENCE
+    config = validate_config(raw)
+
+    result = run_smoke(
+        config,
+        "7" * 64,
+        client_factory=lambda _config: FakeClient(),
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is True
+    assert result["process_result"] == "PASS"
+
+
+def test_malformed_applied_deviation_cannot_be_labeled_pass():
+    config = validate_config(route_config())
+    recorder = smoke_module.EvidenceRecorder(config, "4" * 64)
+    recorder.result["touchdown_policy"]["landed_state_deviation"][
+        "applied"
+    ] = True
+
+    recorder.finish(True)
+
+    assert recorder.result["pass"] is False
+    assert recorder.result["process_result"] == "FAIL"
+    assert any("does not match" in error for error in recorder.result["errors"])
 
 
 def test_disarm_must_return_true_and_failed_capture_still_releases_api():
@@ -852,6 +1070,98 @@ def test_cleanup_failure_is_retained_and_cannot_pass():
     assert any("cleanup land unavailable" in error for error in result["errors"])
     assert any("cleanup disarm unavailable" in error for error in result["errors"])
     assert any("cleanup API release unavailable" in error for error in result["errors"])
+
+
+class PreflightClient(FakeClient):
+    def __init__(self):
+        super().__init__(roster=["Drone1"])
+
+    def getMultirotorState(self, vehicle_name=""):
+        self.calls.append(("getMultirotorState", vehicle_name))
+        return super().getMultirotorState(vehicle_name=vehicle_name)
+
+    def close(self):
+        self.calls.append("close")
+
+
+class PreflightShutdownFailClient(PreflightClient):
+    def close(self):
+        self.calls.append("close")
+        return False
+
+
+def test_preflight_cli_is_create_once_read_only_and_closes_client(
+    tmp_path, monkeypatch
+):
+    raw = route_config()
+    raw["runtime"]["qualification_configuration"] = "Q-B"
+    raw["runtime"]["environment_family"] = "Blocks"
+    raw["endpoint"]["host"] = "127.0.0.1"
+    raw["vehicle"]["name"] = "Drone1"
+    config_path = tmp_path / "qb.json"
+    output_path = tmp_path / "QB-PREFLIGHT-02.json"
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    client = PreflightClient()
+    monkeypatch.setattr(
+        smoke_module,
+        "_live_client_factory",
+        lambda _config: (client, 0),
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--out",
+            str(output_path),
+            "--preflight-only",
+        ]
+    )
+
+    assert exit_code == 0
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert result["pass"] is True
+    assert result["process_result"] == "PASS"
+    assert result["client_shutdown"] is True
+    assert client.calls == [
+        "ping",
+        "listVehicles",
+        ("getMultirotorState", "Drone1"),
+        "close",
+    ]
+
+
+def test_preflight_fails_when_client_shutdown_is_not_clean(tmp_path, monkeypatch):
+    raw = route_config()
+    raw["runtime"]["qualification_configuration"] = "Q-B"
+    raw["runtime"]["environment_family"] = "Blocks"
+    raw["endpoint"]["host"] = "127.0.0.1"
+    raw["vehicle"]["name"] = "Drone1"
+    config_path = tmp_path / "qb.json"
+    output_path = tmp_path / "QB-PREFLIGHT-SHUTDOWN-FAIL.json"
+    config_path.write_text(json.dumps(raw), encoding="utf-8")
+    client = PreflightShutdownFailClient()
+    monkeypatch.setattr(
+        smoke_module,
+        "_live_client_factory",
+        lambda _config: (client, 0),
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--out",
+            str(output_path),
+            "--preflight-only",
+        ]
+    )
+
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code != 0
+    assert result["pass"] is False
+    assert result["process_result"] == "FAIL"
+    assert result["client_shutdown"] is False
 
 
 def test_main_returns_nonzero_and_preserves_json_for_failed_capture(
