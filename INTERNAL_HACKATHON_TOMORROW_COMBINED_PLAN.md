@@ -4,6 +4,10 @@
 **Purpose:** qualify for the internal hackathon with a small, real, repeatable slice of VeriSwarm.  
 **Status:** temporary qualification overlay only. This file does **not** replace `SIH_2026_Build_Plan.md`, `urgent_new_changes.md`, or any individual full execution plan.
 
+**Active setup freeze:** `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` controls tomorrow's
+physical topology, camera ownership, branch handoff and run order. It uses exactly five
+cables. Ayush designs the camera software but is not a wired runtime endpoint.
+
 ## 1. The one claim we will prove tomorrow
 
 VeriSwarm can turn real sensor evidence into a locally hardware-signed receipt, distribute and verify that evidence over an Ethernet-connected team, reject a controlled attack, and separately demonstrate that the target CoSys/AirSim vehicle can complete a deterministic A-to-B flight.
@@ -14,7 +18,7 @@ Tomorrow is a qualification slice, not the completed protected-autonomy product.
 
 The demo has three sequential beats:
 
-1. **Physical perception attack:** two webcams connected to the Jetson observe the same scene. A clean observation agrees. Abhijan then introduces a controlled printed adversarial/occlusion artifact to one view. The software shows the measured evidence and an agreement, dispute, or abstention outcome.
+1. **Physical perception attack:** one USB webcam and one Android DroidCam feed connect to Samik P2 and observe the same scene. A clean observation agrees. Abhijan then introduces a controlled printed adversarial/occlusion artifact to one view. The software shows real YOLO boxes, measured evidence and an agreement, dispute, or abstention outcome.
 2. **OP-TEE receipt and LAN verification:** stop the webcam process and prove both cameras are released. Alpha then runs on the Jetson, signs its canonical receipt locally through OP-TEE, and Ethernet peers verify it. Clean detector-derived replay evidence is accepted; the deterministic unapproved-model-hash case is rejected and produces HOLD at the decision layer. Freshness, expiry and duplicate-delivery behavior remain offline evidence checks.
 3. **CoSys A-to-B flight:** Pratik's CoSys/AirSim vehicle takes off, flies a short deterministic route from A to B, hovers, lands, and records zero collisions. This is explicitly a transport smoke test for tomorrow; it is not represented as already controlled by the signed protocol decision.
 
@@ -24,13 +28,17 @@ Use a three-node protocol quorum to reduce demo fragility while keeping every co
 
 | Machine | Address | Tomorrow's role |
 |---|---:|---|
-| Jetson | `192.168.50.10` | Webcams first; then Alpha originator and local OP-TEE signer |
+| Jetson | `192.168.50.10` | Alpha originator and local OP-TEE signer after the camera beat |
 | Pratik P1 | `192.168.50.11` | CoSys/AirSim world and vehicle; RPC `41451` |
-| Samik P2 | `192.168.50.12` | Bravo verification peer |
+| Samik P2 | `192.168.50.12` | USB/DroidCam application first; then Bravo peer on `51001` |
 | Suyash L1 | `192.168.50.13` | Charlie verification peer and qualification orchestrator |
-| Abhijan L2/Mac | `192.168.50.14` | Projector, attack operator, evidence viewer |
+| Abhijan L2/Mac | `192.168.50.14` | Independent attack-control terminal, projector and evidence viewer |
 
-All five machines connect through the unmanaged Gigabit switch using Ethernet. Wi-Fi must either be disabled during the run or visibly documented as unused. The full five-aircraft topology remains the SIH target; tomorrow's three protocol identities are a qualification subset.
+All five machines connect through the unmanaged Gigabit switch using exactly five Ethernet
+cables. There is no `.15` endpoint. Wi-Fi may be used during setup and the local DroidCam
+stage, then unrelated Wi-Fi is disabled after camera release and clock sync for the accepted
+protocol run. The full five-aircraft topology remains the SIH target; tomorrow's three
+protocol identities are a qualification subset.
 
 ## 3. What must exist before the first rehearsal
 
@@ -38,7 +46,7 @@ The following entries are **MUST BUILD** items and must not be spoken about as a
 
 | Deliverable | Owner | Acceptance check |
 |---|---|---|
-| Minimal `codebase/tools/covis_live.py` | Suyash | Two cameras open concurrently; clean and attacked evidence is shown and saved; both devices release on exit |
+| Minimal `codebase/tools/covis_live.py` | Ayush designs; Samik reviews/integrates/operates; Suyash accepts | USB and DroidCam open concurrently on P2; real boxes and clean/attacked evidence are saved; both sources release before Bravo starts |
 | Minimal LAN qualification runner and measured peer launcher: `codebase/tools/qualification_protocol_demo.py` plus `codebase/tools/qualification_peer.py` | Suyash, with Samik integration support | Alpha runs on Jetson and signs locally; Bravo and Charlie are reached over Ethernet; clean replayed detector evidence yields exactly two semantic ACKs; model swap rejects to HOLD; JSON summary is retained |
 | `codebase/sim/cosys_smoke_flight.py` | Samik | Connect, API control, arm, takeoff, move A-to-B, hover, land, disarm, release control; every wait has a timeout and failure triggers land/abort |
 | Deterministic A/B scene handoff | Pratik | Fixed coordinates, vehicle name, reset steps, RPC address, expected duration, collision check, and one backup recording |
@@ -62,21 +70,25 @@ The plain `python -m node.server` CLI has no measured snapshot provider and ther
 
 ### 16-hour parallel execution model
 
-All four owners may use Codex continuously, but parallel speed is useful only after the interfaces are frozen. Work in four independent lanes:
+All five owners may use Codex continuously, but parallel speed is useful only after the interfaces are frozen. Work in five independent lanes:
 
 | Lane | Primary owner | Frozen output contract |
 |---|---|---|
-| Physical evidence + Alpha trust | Suyash | `covis_live` evidence schema, OP-TEE preflight output, Alpha qualification result |
-| LAN peer + vehicle client | Samik | Bravo readiness contract, qualification peer result, `airsim_smoke.json` |
+| Camera implementation | Ayush | One frozen commit, focused tests, Windows source documentation and no generated/private artifacts |
+| Camera runtime + LAN peer + vehicle client | Samik | P2 camera evidence/release proof, Bravo readiness, qualification result and `airsim_smoke.json` |
+| Alpha trust and final acceptance | Suyash | OP-TEE preflight, Alpha qualification result and GO/NO-GO |
 | Attack + presentation evidence | Abhijan | attack manifest/card, expected-outcome oracle, read-only projected summary |
 | Simulator server + deterministic scene | Pratik | RPC endpoint, vehicle/A/B handoff, reset and abort contract |
 
 Rules for Codex-assisted work:
 
 - At T-16 h, freeze file ownership, CLI arguments, JSON fields, IPs, ports, vehicle name and A/B coordinates. Put interface changes in the team channel immediately.
-- Give each Codex task one bounded deliverable plus its acceptance tests. Do not ask four agents to redesign the architecture independently.
+- Give each Codex task one bounded deliverable plus its acceptance tests. Do not ask five
+  people to redesign the architecture independently.
 - Every owner reviews generated code, reads the diff and runs the acceptance check on the actual target machine. “Codex says it works” is not evidence.
-- Avoid overlapping edits. Suyash is the only integrator for shared protocol/manifests; Samik owns the smoke-flight script; Abhijan owns attack assets/oracles; Pratik owns the scene/configuration.
+- Avoid overlapping edits. Suyash is the only integrator for shared protocol/manifests;
+  Ayush owns the camera branch; Samik reviews/integrates it and owns the smoke-flight
+  script; Abhijan owns attack assets/oracles; Pratik owns the scene/configuration.
 - Commit small passing units with owner and evidence path in the message. Suyash integrates only reviewed commits; do not exchange source with USB copies or chat snippets after integration starts.
 - Pin dependencies and model files. No package upgrades, new model families or large downloads after T-6 h.
 - When Codex discovers an architectural issue, report it to Suyash before changing an interface. When it discovers a local implementation bug within the frozen contract, fix and test it directly.
@@ -86,13 +98,15 @@ Rules for Codex-assisted work:
 
 Run this before every rehearsal and again before the panel enters:
 
-- Connect all five computers to the same switch with labelled cables.
+- Connect the five frozen machines to the same switch with labelled cables. Ayush is not a
+  sixth runtime endpoint.
 - Confirm the static addresses in the table and record the active interface for each machine.
 - Confirm bidirectional ping between every participant and Jetson/P1.
 - Confirm TCP reachability for Alpha/Bravo/Charlie protocol ports and AirSim RPC `41451`.
 - Record clock offsets. Use one time source where possible; otherwise record the measured offset in the evidence bundle.
 - Confirm the firewall allows only the required demo ports on the wired profile.
-- Confirm the two webcams enumerate on Jetson and no other process owns them.
+- Confirm the USB webcam and DroidCam source open on Samik P2 and no other process owns the
+  USB camera before the camera run; prove both release before Bravo starts.
 - Confirm `/dev/tee0`, the pinned Alpha public key, the expected TA, and the OP-TEE client library on Jetson.
 - Confirm CoSys/AirSim reports the expected vehicle name and a reset returns it to A.
 - Confirm projector readability from the back of the room.
@@ -132,7 +146,7 @@ Also say: “This is the qualification slice. We will show a physical perception
 
 ### 0:30–1:25 — Clean physical evidence
 
-- Show both live webcam views on the Jetson/projector.
+- Show the live USB and Android views from Samik P2 on the projector.
 - Point to synchronized timestamps, camera health, model hash, detected classes/occupancy and the clean agreement state.
 - Avoid a dense dashboard. Keep the result and its evidence on one screen.
 
@@ -143,7 +157,7 @@ Also say: “This is the qualification slice. We will show a physical perception
 - Remove it and show recovery to the clean state.
 - State: “The attack changes sensor evidence; it does not write its own verdict.”
 
-### 2:10–2:35 — Safe Jetson handover
+### 2:10–2:35 — P2 camera release and Jetson trust preflight
 
 - Stop `covis_live` gracefully.
 - Show that both camera handles are released.
@@ -210,6 +224,7 @@ Technical honesty is part of the security demonstration. The panel should see wo
 | Area | Owner | GO condition |
 |---|---|---|
 | Overall scope, Alpha, OP-TEE, evidence | Suyash | Two cold runs and fresh verified hardware preflight |
+| Camera software design | Ayush | One reviewed frozen commit and Windows source documentation |
 | Qualification runner, peer network, smoke-flight script | Samik | Deterministic commands, bounded timeouts and recorded outputs |
 | Attack artifacts, expected outcomes, projected evidence | Abhijan | Clean control and attack both reproducible; operator cannot forge verdict |
 | CoSys world, A/B route and recovery | Pratik | Reset-to-reset flight succeeds twice with zero collisions |

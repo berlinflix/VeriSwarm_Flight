@@ -5,12 +5,20 @@
 that real faults reach real interfaces and that protected behavior remains inside declared
 safety/mission invariants.
 
+## Immediate internal-qualifier overlay — 19 August 2026
+
+Read `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. Abhijan keeps his own wired Mac at
+`192.168.50.14` as the independent attack-control terminal, evidence view and projector
+host. Samik runs the camera application on P2; Ayush only designs the software. Abhijan
+applies/removes the artifact and validates the audience-facing evidence without sharing his
+terminal or modifying `covis_live` to manufacture an expected verdict.
+
 This document contains Abhijan's work only. Other names identify dependencies, not work
 Abhijan should silently perform for them.
 
 ## 1. Non-negotiable boundaries
 
-- Work only in simulation/SITL and the non-actuating two-webcam rig.
+- Work only in simulation/SITL and the non-actuating USB/DroidCam rig.
 - Inject faults at real interfaces; never set the final verdict, expected vote or released
   command directly.
 - Never modify `SafetySupervisor` to make an attack pass or fail.
@@ -307,14 +315,15 @@ command → task recovery` without trusting a UI label.
 
 Abhijan owns:
 
-- the two matched webcams, mounts, labels and USB layout;
+- the USB-webcam/Android-DroidCam target geometry, mounts, labels and placement marks;
 - the actual printed patch/object and reproducible print specification;
 - lighting, range and viewpoint matrix;
 - choreography and safe judge interaction;
 - verifying `covis_live` releases devices at handover;
 - backup clean/attack recordings and evidence hashes.
 
-Suyash owns the `covis_live` implementation and protocol correctness. Abhijan reports bugs
+Ayush designs/implements `covis_live`; Samik owns integration, live operation and recovery;
+Suyash owns final acceptance and protocol correctness. Abhijan reports bugs
 with raw frames/configuration; he does not fork the algorithm to make the demonstration
 look better.
 
@@ -370,7 +379,7 @@ oracle result and checksum index. Preserve every failure under its own run ID.
 1. Freeze attack-manifest and oracle schemas with Suyash's reason catalogue.
 2. Implement/test the independent oracle.
 3. Implement runner dry-run, bounded delivery and cleanup verification.
-4. Complete the physical two-webcam rig and exact printed patch tests.
+4. Complete the physical USB/DroidCam rig and exact printed patch tests with Samik P2.
 5. Publish initial v4 downgrade/claim-strip/command-substitution, replay, model-swap, GNSS,
    sensor-freeze and partition manifests.
 6. Validate each injector against Samik's reviewed boundary after clean flight passes.
@@ -381,7 +390,8 @@ oracle result and checksum index. Preserve every failure under its own run ID.
 
 Abhijan is done only when every declared attack is machine-readable, bounded, delivered at
 a real interface, independently scored and provably cleaned up; the physical rig produces
-retained real-camera evidence and releases the Jetson cleanly; model/protocol/navigation/
+retained real-camera evidence and releases Samik P2's camera sources cleanly;
+model/protocol/navigation/
 mapping/C2/resource faults cannot directly dictate verdicts; protected runs have no unsafe
 release or invariant violation; task recovery is evidenced; failures are preserved; and a
 teammate can reproduce each campaign from the manifest without Abhijan's verbal guidance.

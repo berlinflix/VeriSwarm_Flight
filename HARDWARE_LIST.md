@@ -3,6 +3,11 @@
 Prices are approximate India retail (Amazon.in / Robu.in), August 2026.
 Companion to `SIH_2026_Build_Plan.md`.
 
+**Internal-qualifier freeze (2026-08-19):** tomorrow uses one USB webcam plus one Android
+DroidCam phone on Samik P2, exactly five active Cat6 cables, and Abhijan's own wired attack
+terminal. Ayush designs the camera software but has no runtime cable/IP. See
+`FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md`.
+
 ---
 
 ## Already owned — do not buy
@@ -22,9 +27,9 @@ Companion to `SIH_2026_Build_Plan.md`.
 | # | Item | ₹ | Why |
 |---|---|---|---|
 | 1 | **TP-Link TL-SG1008D** 8-port gigabit unmanaged switch | 1,899 | Your own LAN. Confirmed purchase |
-| 2 | **USB webcam ×2** — same model, 1080p | 5,000 | Alpha + one physical peer. **Matched models** so a detection difference can't be blamed on camera quality instead of viewpoint |
-| 3 | **Camera mounts ×2** (mini tripod or gooseneck clamp) | 2,000 | Fixed, repeatable angular offset between the two cameras. Needs a 1/4"-20 thread — check your webcam has one |
-| 4 | **Cat6 cables** — 3× 1 m, 3× 3 m | 900 | Four machines plus spares |
+| 2 | **USB webcam ×1** plus existing Android phone/DroidCam | 2,500 | Two heterogeneous live views; record camera-health and timing limitations honestly |
+| 3 | **USB camera mount + Android tripod** | 2,000 | Fixed, repeatable angular offset between views; do not hand-hold either source |
+| 4 | **Cat6 cables ×5 active** | 750 | Jetson, Pratik, Samik, Suyash and Abhijan; add one spare later if available |
 | 5 | **TP-Link UE300C ×1** (spare) | 1,100 | See "the one spare that's justified" below |
 | 6 | **USB-C → USB-A dongle ×2** | 500 | Webcam into a USB-C-only Mac |
 | 7 | **6-socket surge power strip** | 1,000 | Everything from one venue socket |
@@ -80,8 +85,9 @@ An unmanaged switch does not hand out IP addresses. Assign **static IPs** — wh
 ```
 192.168.50.10   Alpha    (Jetson)
 192.168.50.11   Sim PC
-192.168.50.12   Bravo    (Mac)
-192.168.50.13   Charlie  (Mac) + console
+192.168.50.12   Samik P2: cameras first, then Bravo on 51001
+192.168.50.13   Suyash L1: Charlie on 51003
+192.168.50.14   Abhijan Mac: attack terminal/projector
 ```
 Subnet `255.255.255.0`, router field blank. On macOS: System Settings → Network → adapter → Details → TCP/IP → Configure IPv4: **Manually**. Write these on the cable labels and into `RUNBOOK.md`.
 

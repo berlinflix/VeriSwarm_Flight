@@ -8,6 +8,10 @@
 
 This is a qualification handoff, not the full SIH authority or flight-control handoff. It supplements, and does not replace, the existing execution plans.
 
+For the physical/runtime layout, `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` is
+authoritative: Samik P2 runs USB/DroidCam first, releases both sources, then starts Bravo at
+`192.168.50.12:51001`; Abhijan retains `.14`; Ayush is camera-code design only.
+
 ## 1. Decisions Suyash makes now
 
 - The qualification protocol roster is exactly `alpha`, `bravo`, `charlie`.
@@ -86,7 +90,7 @@ The values above illustrate a valid measured empty-scene claim; they are not aut
 - An unmeasured claim is never treated as an empty scene or semantic agreement.
 - Clean panel acceptance requires both Bravo and Charlie to return reason `ok`, `acks = 2`, `semantic_acks = 2`, outcome `ACCEPTED`.
 
-For speed and reproducibility, the LAN qualification may replay three frozen detector-derived frame artifacts—one each for Alpha, Bravo and Charlie. It must be labelled “detector-derived replay over the live LAN,” not live three-camera co-observation. The separate Jetson webcam beat is the live physical sensor demonstration.
+For speed and reproducibility, the LAN qualification may replay three frozen detector-derived frame artifacts—one each for Alpha, Bravo and Charlie. It must be labelled “detector-derived replay over the live LAN,” not live three-camera co-observation. The separate Samik-P2 USB/DroidCam beat is the live physical sensor demonstration.
 
 ## 3. Critical implementation correction
 
@@ -325,7 +329,8 @@ Minimum fields in every qualification result:
 
 ### H1 — required before the full rehearsal
 
-- [ ] Stop `covis_live` gracefully and prove both webcam devices can be reopened before starting Alpha.
+- [ ] On Samik P2, stop `covis_live` gracefully and prove both camera sources are released
+      before starting Bravo; run the fresh Jetson OP-TEE preflight separately before Alpha.
 - [ ] Run a fresh Jetson OP-TEE preflight with mission ID `internal-qualifier-2026-08-19`, epoch `1`, and a new evidence path.
 - [ ] Confirm preflight `actual_pubkey == expected_pubkey` and `signature_verified == true`.
 - [ ] Complete the network/clock/firewall sheet for all five wired machines.

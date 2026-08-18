@@ -5,31 +5,36 @@ Written 2026-08-18. Pair with `HARDWARE_LIST.md` (what to buy). `RUNBOOK.md`
 is a required M1 deliverable and does not exist yet; do not mistake this topology
 for a completed launch procedure.
 
+**Internal-qualifier override (2026-08-19):** read
+`FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. Tomorrow uses exactly five cables:
+Jetson `.10`, Pratik `.11`, Samik `.12`, Suyash `.13` and Abhijan's Mac `.14`. Ayush
+designs the camera software but is not a wired runtime endpoint. The camera pair is one
+USB webcam plus one Android DroidCam feed connected to Samik P2.
+
 The demo has **two independent halves** and that is deliberate. If the simulator
 will not start, the physical half still tells a complete story on its own; if the
 webcams fail, the simulated half does. Neither depends on the other. They run
-**sequentially**, not concurrently, because both use the Jetson: the physical
-webcam demonstration runs first, then the webcam process stops and the Jetson
-becomes node `alpha` with local OP-TEE signing for the simulated swarm.
+**sequentially** for a clean stage narrative and because Samik P2 runs the camera
+application first and Bravo second. The Jetson remains the Alpha/OP-TEE host.
 
 | | What it shows | Runs on |
 |---|---|---|
 | **A. Simulated swarm** | 5 drones, adversarial patch, consensus, isolation | CoSys AirSim + 5 node processes |
-| **B. Physical co-visibility rig** | the overlap algorithm on two real cameras | Jetson + 2 USB webcams |
+| **B. Physical co-visibility rig** | co-visibility-gated semantic comparison on two live views | Samik P2 + USB webcam + Android DroidCam |
 
-Half B is new — its planned implementation guide is `codebase/docs/COVIS_LIVE.md`;
-until that file and `codebase/tools/covis_live.py` exist and pass their gate, use
-§6 as design requirements rather than runnable instructions.
+Half B's implementation and guide are staged on `origin/codex/covis-live-ui` at
+`f0582b6d6b471b023ba6c312fd198978e5ebdd6b`. Ayush develops the final camera branch;
+Samik reviews its frozen commit and runs the real Windows camera gate.
 
 ### Implementation status gate
 
 The OP-TEE backend, Alpha manifest-key binding, `tools/optee_preflight.py`,
-`node.server`, and the protocol-only `node.run_phaseb` regression exist. The
-following commands shown in this topology are **planned, not implemented** as of
-2026-08-18: `tools.covis_live`, `tools.event_collector`, `console/app.py`, and
-`tools.run_campaign`. The accepted integrated demonstration is blocked until each
-file exists, has tests, and is cold-started from the final `RUNBOOK.md`. A diagram
-or command name is not evidence that a subsystem exists.
+`node.server`, and the protocol-only `node.run_phaseb` regression exist.
+`tools.covis_live` exists on the staged camera branch but still requires Samik's Windows
+review and hardware gate. `tools.event_collector`, `console/app.py`, and
+`tools.run_campaign` remain planned. The accepted integrated demonstration is blocked until
+every invoked entry point exists, has tests and is cold-started from the final `RUNBOOK.md`.
+A diagram or command name is not evidence that a subsystem exists.
 
 ---
 
@@ -37,11 +42,11 @@ or command name is not evidence that a subsystem exists.
 
 | # | Machine | Owner | Role at the demo |
 |---|---|---|---|
-| **J** | Jetson Orin Nano | Suyash | Stage B: drives both webcams. After a checked handover, Stage A: node **alpha** — YOLO + local OP-TEE signing. These workloads never run concurrently. |
+| **J** | Jetson Orin Nano | Suyash | Node **alpha** and local OP-TEE signing after the camera beat; never a generic remote signer. |
 | **P1** | Windows PC, strongest GPU | Pratik | Runs **CoSys AirSim**. Nothing else. |
-| **P2** | Windows PC | Samik | Nodes **bravo**, **charlie**. Backup AirSim install. |
-| **L1** | Laptop | Suyash | Nodes **delta**, **echo**. Orchestration, RUNBOOK commands. |
-| **L2** | Mac | Abhijan | **Console** + attack panel + event collector. Drives the projector. |
+| **P2** | Windows PC | Samik | USB/DroidCam application first; then qualification node **bravo**; backup AirSim install. |
+| **L1** | Laptop | Suyash | Qualification node **charlie**; orchestration and RUNBOOK commands. |
+| **L2** | Mac | Abhijan | Independent attack-control terminal, event/evidence view and projector. |
 
 **Why AirSim is alone on P1.** Unreal will take whatever GPU and RAM it can get.
 Sharing that machine with node processes running YOLO means the two compete, frame
@@ -64,13 +69,14 @@ deserves a true answer. The switch makes it true.
 |---|---|---|
 | `192.168.50.10` | **J** Jetson | gRPC 51000 (alpha), frames 8080, events 9010 |
 | `192.168.50.11` | **P1** AirSim | AirSim RPC **41451** |
-| `192.168.50.12` | **P2** | gRPC 51001–51002, frames 8081–8082, events 9011 |
-| `192.168.50.13` | **L1** | gRPC 51003–51004, frames 8083–8084, events 9013 |
-| `192.168.50.14` | **L2** console | **event collector 9000**, console UI 8501 |
+| `192.168.50.12` | **P2** | qualification Bravo gRPC **51001**, after camera release |
+| `192.168.50.13` | **L1** | qualification Charlie gRPC **51003** |
+| `192.168.50.14` | **L2** attack terminal | event collector 9000 and console UI 8501 when implemented |
 | `192.168.50.20` | spare | — |
 
-Subnet `255.255.255.0`. **No gateway, no DNS** — nothing here reaches the
-internet, and it must not need to.
+Subnet `255.255.255.0`. Ethernet has **no gateway and no DNS**. Wi-Fi may remain available
+during setup and the local phone-camera stage, but every demo service uses its explicit
+wired endpoint and unrelated Wi-Fi is disabled for the accepted protocol run.
 
 ### Cabling
 
@@ -78,32 +84,32 @@ internet, and it must not need to.
                     ┌──────────────────────────┐
                     │  8-PORT GIGABIT SWITCH   │
                     │  (unmanaged, no DHCP)    │
-                    └─┬───┬───┬───┬───┬────────┘
-        Cat6 ─────────┘   │   │   │   └───────── Cat6
-          │               │   │   │                │
-    ┌─────▼────┐   ┌──────▼┐ ┌▼───────┐  ┌─────────▼──┐
-    │ J Jetson │   │ P1    │ │ P2     │  │ L1 laptop  │
-    │  .10     │   │ .11   │ │ .12    │  │  .13       │
-    └──┬────┬──┘   │AirSim │ │bravo   │  │ delta      │
-       │    │      │only   │ │charlie │  │ echo       │
-   USB │    │ USB  └───────┘ └────────┘  └────────────┘
-   ┌───▼─┐ ┌▼────┐                        ┌────────────┐
-   │ CAM │ │ CAM │                        │ L2 Mac .14 │
-   │  A  │ │  B  │                        │ console +  │
-   └─────┘ └─────┘                        │ collector  │
-                                          └──────┬─────┘
-                                                 │ HDMI
-                                          ┌──────▼─────┐
-                                          │ PROJECTOR  │
-                                          └────────────┘
+                    └─┬────┬────┬────┬─────────┘
+                      │    │    │    │
+        ┌─────────────┘    │    │    └──────────────┐
+        │                  │    │                   │
+  ┌─────▼────┐      ┌──────▼┐ ┌─▼─────────┐  ┌──────▼──────┐
+  │ J Jetson │      │ P1    │ │ P2 Samik │  │ L1 Suyash  │
+  │ .10 Alpha│      │ .11   │ │ .12       │  │ .13 Charlie│
+  │ OP-TEE   │      │AirSim │ │camera,then│  └─────────────┘
+  └──────────┘      └───────┘ │Bravo      │
+                              └─┬────────┬─┘  ┌─────────────┐
+                            USB │        │Wi-Fi│ L2 Abhijan │
+                         ┌──────▼┐  ┌────▼────▼┐│ .14 attack │
+                         │USB CAM│  │ANDROID   ││ terminal   │
+                         │ A     │  │DroidCam B│└──────┬─────┘
+                         └───────┘  └──────────┘       │ HDMI
+                                                ┌──────▼─────┐
+                                                │ PROJECTOR  │
+                                                └────────────┘
 ```
 
-**5 Cat6 cables minimum, buy 7.** One spare per two in use is the right ratio for
-a venue where a crimp can fail and you cannot buy another.
+**Exactly 5 Cat6 cables are used.** A sixth spare is desirable later but is not required to
+start the frozen internal-qualifier topology.
 
-**Do not use Wi-Fi.** A hackathon hall's 2.4/5 GHz is congested to the point where
-your measured consensus latency would contradict Table 4.9 live on screen. Wired
-is not a preference here, it is what keeps the numbers honest.
+**Do not use Wi-Fi for protocol or simulator RPC.** The local Android feed may use a
+prevalidated phone/P2 hotspot during the camera stage. Disable unrelated Wi-Fi after
+camera release so measured protocol latency follows the wired route.
 
 **The Mac needs USB-C→Ethernet.** If Abhijan's dock has an Ethernet port, use it,
 but load-test it for a full hour beforehand — cheap docks drop the NIC under
@@ -113,17 +119,18 @@ sustained load, and it fails at exactly the wrong moment.
 
 ## 3. Where YOLO runs
 
-**One copy of YOLOv8n per drone, inside that drone's own node process.** There is
-no central inference server; that is the whole premise. Five nodes, five
-independent detectors.
+For the internal qualifier, the physical camera YOLO executes on Samik P2 before Bravo.
+The later SIH fleet retains one approved detector per drone; the camera demonstrator is not
+represented as one of those flight nodes.
 
 | Node | Machine | Detector runs on | Signs with |
 |---|---|---|---|
 | alpha | **J** Jetson | Jetson GPU | **OP-TEE secure element** |
-| bravo | **P2** | P2 CPU/GPU | software key |
-| charlie | **P2** | P2 CPU/GPU | software key |
-| delta | **L1** | L1 CPU/GPU | software key |
-| echo | **L1** | L1 CPU/GPU | software key |
+| bravo | **P2** | P2 CPU/GPU after camera release | software key |
+| charlie | **L1** | L1 CPU/GPU | software key |
+
+Delta and Echo remain later SIH identities; they are not falsely presented as running in
+tomorrow's three-node qualification quorum.
 
 AirSim on **P1** renders the world and serves each node its own camera view over
 RPC 41451. P1 runs no detector.
@@ -160,23 +167,22 @@ placement and stage order but does not claim that every planned entry point exis
 
 ### Stage B — physical co-visibility first
 
-**1. J — Jetson webcam process only**
+**1. P2 — Samik camera process only**
 
 ```text
 python -m tools.covis_live
 ```
 
-Run the live two-camera overlap, patch, and lens-cover beats. No swarm node or
-OP-TEE receipt service runs during this stage. The OP-TEE key remains protected
-even while unused.
+Run the live two-camera overlap, patch and recovery beats. No Bravo process runs on P2
+during this stage. Alpha/OP-TEE remains separate on the Jetson; physical-camera output is
+not represented as an OP-TEE receipt.
 
-**2. Checked Jetson handover**
+**2. Checked P2 camera-to-Bravo handover**
 
-Stop `covis_live` cleanly, verify that it exited and released both camera devices,
-flush and hash its evidence, then record a `WEBCAM_STAGE_COMPLETE` event. Do not
-reuse its process state or call the swarm ready until the OP-TEE public-key
-challenge succeeds. P1 may load the world in the background to avoid stage delay,
-but it must not start the accepted mission yet.
+Stop `covis_live` cleanly, verify that it exited and released both camera sources, flush
+and hash its evidence, then record a `WEBCAM_STAGE_COMPLETE` event. Start Bravo on P2 only
+after the release probe passes. Independently run the fresh Jetson OP-TEE challenge before
+Alpha. P1 may load the world in the background, but it must not start the accepted mission.
 
 ### Stage A — simulated swarm with OP-TEE-backed Alpha
 
@@ -277,8 +283,8 @@ need the ground station to stay safe."
 
 ## 6. Half B — the physical co-visibility rig
 
-**New deliverable.** Two USB webcams on the table, both looking at the same
-object from different angles, wired into the Jetson.
+**New deliverable.** One USB webcam and one Android DroidCam phone observe the same object
+from different angles and feed Samik P2.
 
 ```
         object on the table
@@ -286,13 +292,15 @@ object from different angles, wired into the Jetson.
              /     \        ~25-35 cm apart
             /       \       both ~40-60 cm from the object
       ┌────┘         └────┐
-   ┌──┴──┐             ┌──┴──┐
-   │CAM A│             │CAM B│
-   └──┬──┘             └──┬──┘
-      └────USB-A──┬───USB-A┘
-              ┌───▼────┐
-              │ JETSON │  runs tools/covis_live.py
-              └────────┘
+   ┌──┴─────┐          ┌──┴─────────┐
+   │USB CAM │          │ANDROID     │
+   │ A      │          │DroidCam B  │
+   └──┬─────┘          └─────┬──────┘
+      │ USB                 Wi-Fi/local URL
+      └──────────────┬────────┘
+                 ┌───▼────┐
+                 │SAMIK P2│  runs tools/covis_live.py, then Bravo
+                 └────────┘
 ```
 
 **Why this earns its place.** Everything else on the table is simulated. This is
@@ -302,10 +310,10 @@ hardware they can touch. And it is the only part of the demo a judge can
 *interfere with directly*: slide a camera, hold up the printed patch, cover a
 lens.
 
-**What it shows on screen:** both camera feeds side by side, ORB matches drawn
-between them, the live inlier count against `m_min = 15`, and the co-visible
-verdict. Then, with YOLO enabled on both feeds, each camera's action vector and
-the L2 between them against θ.
+**What it shows on screen:** both feeds side by side with the exact YOLO boxes used by the
+decision, camera health/skew, ORB/RANSAC inliers, projected `view_IoU`, same-class projected
+`box_IoU` when available, measured claims and `AGREE`/`DISPUTE`/`ABSTAIN`. These are planar
+demo measurements, not calibrated stereo or raw cross-view box IoU.
 
 **The three judge-operable moments:**
 
@@ -313,9 +321,9 @@ the L2 between them against θ.
    and the semantic layer abstains. *"It refuses to cross-check two cameras that
    are not looking at the same thing — that is why our false-positive rate is
    low."*
-2. **Hold the printed patch in front of camera A.** A's detections vanish, its
-   action diverges from B's, L2 crosses θ, **DISPUTE**. *"A physical printed
-   attack, caught by a second viewpoint."*
+2. **Hold the printed patch in front of camera A.** A reproducible class/presence mismatch
+   produces **DISPUTE**, or valid preserved co-visibility evidence produces an explicitly
+   labelled semantic **ABSTAIN**. A camera-health failure does not count as attack evidence.
 3. **Cover camera A entirely.** Detections vanish the same way — but so does the
    scene. Shows that absence of evidence is not evidence of absence, which is
    exactly the distinction the protected controller makes and the baseline does
@@ -324,13 +332,13 @@ the L2 between them against θ.
 Point 3 is worth rehearsing because a sharp judge will ask it, and having the
 answer already on screen is far better than explaining it.
 
-**Cameras:** two identical USB webcams, 640×360 is plenty. Identical models keep
-the intrinsics comparable, which matters for the overlap claim. The Jetson has
-4× USB-A, so both plug straight in — no hub.
+**Cameras:** one USB webcam plus one Android phone on a rigid tripod. Heterogeneous cameras
+mean the demo reports health and host receive-time skew honestly; it does not claim hardware
+synchronization or calibrated stereo. Use 640×360 at 15 FPS as the initial gate.
 
-**Software:** `tools/covis_live.py`. Owner split — **Suyash** writes it (it calls
-protocol code directly), **Abhijan** owns the physical rig, the printed patch, and
-the attack choreography, since he owns attack delivery.
+**Software:** `tools/covis_live.py`. **Ayush** designs and tests it; **Samik** reviews,
+integrates and operates it on P2; **Abhijan** owns the printed attack and independent attack
+terminal; **Suyash** accepts the evidence and stage transition.
 
 ---
 
@@ -342,8 +350,8 @@ the attack choreography, since he owns attack delivery.
   DP→HDMI adapter produces no output — this cost a day already. SSH from L1, or
   NoMachine.
 - **Only L2 touches the projector.** One HDMI cable, one thing to go wrong.
-- Put the **Jetson and the two webcams at the front of the table**, nearest the
-  judges. They are the parts that are real; keep them reachable.
+- Put the **USB camera, Android tripod and target at the front of the table**, with their
+  cables routed safely back to Samik P2.
 - Label every Cat6 cable at both ends with its destination IP. At teardown you
   will thank yourself, and at setup it turns a 20-minute debug into a glance.
 
@@ -356,12 +364,12 @@ has not been tested.
 
 - [ ] All five devices ping each other by static IP
 - [ ] `41451` reachable **from another machine**, not just P1's localhost
-- [ ] `covis_live` is stopped and both webcam devices are released before Alpha starts
+- [ ] `covis_live` is stopped and both camera sources are released before Bravo starts
 - [ ] A fresh random challenge verifies under Alpha's pinned OP-TEE public key
 - [ ] Console shows `backend: optee` for Alpha; no software fallback is configured
 - [ ] At least one retained Alpha receipt verifies under that same pinned public key
-- [ ] All five nodes appear in the console with monotonic `seq`, no gaps
-- [ ] Both webcams enumerate on the Jetson (`ls /dev/video*`)
+- [ ] Alpha, Bravo and Charlie appear in qualification evidence with monotonic sequence
+- [ ] USB webcam and DroidCam open on Samik P2 as two distinct sources
 - [ ] `covis_live` shows inliers ≥ 15 in the rehearsed camera placement
 - [ ] The printed patch actually suppresses detection at the rehearsed distance —
       **test the exact print**, since paper, scale, and lighting all matter

@@ -5,6 +5,12 @@
 
 **Plan revision:** 2026-08-18
 
+**Internal-qualifier execution overlay (2026-08-19):**
+`FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` controls the immediate five-cable topology and
+camera handoff. Ayush designs/tests `covis_live`; Samik reviews, integrates and runs it on
+P2 before Bravo; Abhijan keeps his independent `.14` attack terminal; the Jetson remains
+Alpha/OP-TEE. This does not reduce the later five-aircraft SIH target.
+
 **Selected simulator:** the official `Cosys-Lab/Cosys-AirSim` project, pinned to one
 release/commit and one compatible Unreal version on both simulator PCs.
 
@@ -595,6 +601,7 @@ swarm autonomous. The split is precise:
 | **M2 Abhijan** | Attack delivery, adversarial navigation/perception/C2 campaigns, invariant oracle, resource/network faults | Machine-readable scenarios, real delivery mechanisms, baseline-vs-attack evidence, failure report |
 | **M3 Pratik** | The single Cosys scenario, all sensor definitions, calibration, GNSS-fault zones, ground sensors, people/vehicles/obstacles, weather and evaluation truth | Pinned scenario/settings/assets, atomic sensor adapter, calibration, truth logs and replay/model-selection datasets |
 | **M4 Samik** | Model acquisition/benchmarking, Cosys vehicles/SITL, autonomy engine, VIO, mapping/planning, task allocation, tracking, command adapter, recovery and campaign runner | Verified candidate cache, model report, `AutonomyRunner`, planner/allocator tests, PX4/Cosys config, failsafe proof and run bundles |
+| **Ayush, qualifier support** | Design and focused tests for the unarmed USB/DroidCam `covis_live` application | One frozen camera commit, Windows source documentation and Samik-review handoff |
 
 No one writes directly into another owner’s truth domain. Abhijan cannot set expected
 verdicts; Pratik cannot feed simulator truth to autonomy; Samik cannot bypass the
@@ -607,6 +614,7 @@ do not override the shared interfaces or gates in this document:
 - [`ABHIJAN_EXECUTION_PLAN.md`](ABHIJAN_EXECUTION_PLAN.md)
 - [`PRATIK_EXECUTION_PLAN.md`](PRATIK_EXECUTION_PLAN.md)
 - [`SAMIK_EXECUTION_PLAN.md`](SAMIK_EXECUTION_PLAN.md)
+- [`AYUSH_WEBCAM_EXECUTION_PLAN.md`](AYUSH_WEBCAM_EXECUTION_PLAN.md)
 
 ### Planned implementation paths
 
@@ -614,10 +622,11 @@ These paths make ownership reviewable; new files should be created under `codeba
 
 | Owner | Planned paths |
 |---|---|
-| Suyash | `docs/AUTONOMY_CONTRACT.md`, `docs/COVIS_LIVE.md`, `tools/covis_live.py`, `tools/optee_preflight.py`, `tools/event_collector.py`, `console/app.py`, `autonomy/contracts.py`, `autonomy/decision_record.py`, `models/registry.json`, `node/mission.py`, `perception/safety_supervisor.py`, `docs/MODEL_SELECTION_REPORT.md` approval and final `RUNBOOK.md` |
+| Suyash | `docs/AUTONOMY_CONTRACT.md`, `tools/optee_preflight.py`, `tools/event_collector.py`, `console/app.py`, `autonomy/contracts.py`, `autonomy/decision_record.py`, `models/registry.json`, `node/mission.py`, `perception/safety_supervisor.py`, `docs/MODEL_SELECTION_REPORT.md` approval and final `RUNBOOK.md`; final camera evidence acceptance |
 | Abhijan | `attacks/scenarios/*.json`, `attacks/runner.py`, `attacks/oracle.py`, adversarial tests, the printed/webcam attack rig and attack artifacts outside `models/approved/` |
 | Pratik | `sim/cosys/contested_border/` scenario bundle, explicit `settings.json`, calibration/sensor/world manifests, truth exporter and local ignored `data/model_selection/` captures |
 | Samik | `tools/fetch_models.py`, `eval/model_selection.py`, `autonomy/mission_manager.py`, `autonomy/state_estimator.py`, `autonomy/mapper.py`, `autonomy/planner.py`, `autonomy/waypoint_follower.py`, `autonomy/task_allocator.py`, `autonomy/tracker.py`, `autonomy/local_safety.py`, `sim/cosys_adapter.py` and `tools/run_campaign.py` |
+| Ayush | `docs/COVIS_LIVE.md`, `tools/covis_live.py` and focused camera/co-visibility tests; Samik owns Windows integration and runtime acceptance |
 
 ## M1 — Suyash deliverables
 
@@ -872,7 +881,7 @@ drone failure, and every separation/geofence/command invariant holds.
   confirmation state,
   peer receipts/votes and supervisor integration.
 - Physical 3-D adversarial scene, one provenance attack, the versioned semantic-claim fix
-  for the measured blind band, and the independent two-webcam co-visibility rig.
+  for the measured blind band, and the independent USB/DroidCam co-visibility rig.
 
 **Gate G4:** baseline targets are detected/tracked to the declared held-out threshold;
 object-size sweeps no longer confuse “absent” with “moderate threat”; an unverifiable or
@@ -959,16 +968,18 @@ Each immutable run bundle contains:
    navigation fault. Show the delivered fault, reason, peer evidence and HOLD.
 6. **Swarm recovery:** Samik kills/isolates the affected node; its unfinished cells are
    reassigned and the healthy fleet reaches the declared completion state.
-7. **Physical co-visibility evidence:** on the separate Jetson/two-webcam rig, move the
-   printed object/patch and show the real shared-scene evidence change. This rig never
+7. **Physical co-visibility evidence:** on Samik P2 with one USB webcam and one Android
+   DroidCam source, move the printed object/patch and show the real shared-scene evidence
+   change. This rig never
    commands a vehicle and remains useful if the simulator is unavailable.
 8. **Evidence reveal:** show the immutable run bundle and state the boundaries: simulation,
    supported object classes, VIO performance, no weapon engagement, and hardware work not
    yet completed.
 
-Demo roles are fixed: **Samik operates autonomy/vehicles**, **Pratik operates the world and
-sensor/truth view**, **Abhijan triggers and explains attacks**, and **Suyash explains
-VeriSwarm/safety, owns abort, and answers claims/evidence questions**.
+Demo roles are fixed: **Ayush designs the camera software**, **Samik operates the camera
+runtime and autonomy/vehicles**, **Pratik operates the world and sensor/truth view**,
+**Abhijan keeps the independent attack terminal and triggers/explains attacks**, and
+**Suyash explains VeriSwarm/safety, owns abort, and answers claims/evidence questions**.
 
 The isolated unprotected collision is the only permitted intentional collision. It is not
 a protected campaign and must remain structurally unable to reach the accepted command
@@ -978,23 +989,26 @@ adapter. Every protected collision remains a gate failure.
 
 This is non-flying hardware evidence, not a substitute for either Cosys scenario:
 
-- two calibrated USB webcams view the same supported object from different angles;
-- the Jetson runs the existing `protocol/covis_features.py` through
-  `tools/covis_live.py`; the algorithm is called, not copied or forked;
+- one rigid USB webcam and one Android DroidCam phone view the same supported object from
+  different angles; this is heterogeneous, host-timestamped co-visibility, not calibrated
+  stereo;
+- Samik P2 runs the existing `protocol/covis_features.py` through `tools/covis_live.py`;
+  the algorithm is called, not copied or forked;
+- Ayush owns camera-code design/tests; Samik owns review, Windows integration, operation,
+  evidence and release;
 - Abhijan owns the actual printed patch/object, lighting/distance/viewpoint attack matrix
   and choreography; Suyash owns protocol integration and result validation;
 - raw frames, calibration, timestamps, input hashes, overlap/match/inlier results and video
   are retained;
 - the rig has no path to flight control and can be demonstrated independently of Cosys.
 
-### Sequential Jetson handover and OP-TEE receipt signing
+### Sequential P2 camera handover and Jetson OP-TEE receipt signing
 
-The Jetson is time-multiplexed; it is not expected to run the two-webcam workload and the
-simulated Alpha node concurrently:
+The stages remain sequential, but the camera workload and Alpha now run on different hosts:
 
-1. **Webcam stage:** run only `tools/covis_live.py`, retain the real-camera evidence, then
-   stop it cleanly and verify both camera devices are released.
-2. **Handover gate:** hash/close the webcam artifact, record `WEBCAM_STAGE_COMPLETE`, verify
+1. **Camera stage on Samik P2:** run `tools/covis_live.py`, retain the real-camera evidence,
+   then stop it cleanly and verify both sources are released before Bravo starts on P2.
+2. **Handover gate:** hash/close the camera artifact, record `WEBCAM_STAGE_COMPLETE`, verify
    the pinned OP-TEE public key with a fresh random sign/verify challenge, and measure the
    end-to-end signing deadline with `tools/optee_preflight.py` before enabling Alpha. The
    evidence path is create-once; a mismatch, timeout, invalid signature or attempt to

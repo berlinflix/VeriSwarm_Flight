@@ -2,6 +2,11 @@
 
 **Scope:** temporary qualification plan. Keep `SUYASH_EXECUTION_PLAN.md` unchanged as the full Internal Hackathon + SIH execution plan.
 
+**Five-cable update:** read `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. Suyash uses
+`.13:51003`; Samik P2 runs the cameras and then Bravo on `.12:51001`; Abhijan keeps his own
+`.14` attack terminal. Ayush only designs the camera application. Suyash accepts the exact
+commit, Samik's review and the real P2 evidence.
+
 ## Your outcome tomorrow
 
 Own the demo boundary and prove that Alpha's real measured receipt is signed locally by the Jetson's OP-TEE key, verified by Ethernet peers, and rejected for a controlled protocol attack. You are also the final GO/NO-GO owner.
@@ -12,11 +17,18 @@ Your blocking handoff is now specified in `SUYASH_TO_SAMIK_QUALIFICATION_HANDOFF
 
 ### Your Codex lane
 
-Run separate bounded Codex tasks for `covis_live`, the qualification protocol runner, and final diff/test review. You remain the sole integrator for shared protocol and manifest files. Before accepting any generated change, inspect its diff, run its focused tests, run the real Jetson preflight where applicable, and record the evidence path. Reject interface redesigns after the T-16 h contract freeze unless they fix a demonstrated blocker.
+Keep qualification-protocol integration and final acceptance in Suyash's lane. Ayush works
+on the dedicated camera branch and sends one frozen commit to Samik; Samik reviews it in a
+clean worktree, reproduces tests and runs it on P2. Suyash remains the sole integrator for shared
+protocol and manifest files. Before accepting the camera commit, inspect its diff and
+Samik's reproduced tests, then require the real Jetson hardware evidence. Reject interface
+redesigns after freeze unless they fix a demonstrated blocker.
 
-### Y-T1 — Build the minimal physical webcam demonstrator
+### Y-T1 — Accept the minimal physical camera demonstrator
 
-Implement `codebase/tools/covis_live.py` using the existing co-visibility feature code and pinned detector path. Keep it unarmed: it must have no flight or actuator connection.
+Review Ayush's `codebase/tools/covis_live.py` commit and Samik's independent Windows
+test/live/release evidence. Keep it unarmed: it must have no flight, signer or actuator
+connection.
 
 It must:
 

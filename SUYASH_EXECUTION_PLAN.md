@@ -5,6 +5,15 @@
 autonomy, attacks and Cosys; ensure unverifiable/stale/unsafe decisions cannot reach motion;
 and produce reproducible evidence and a final runbook.
 
+## Immediate internal-qualifier overlay — 19 August 2026
+
+Read `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. Suyash owns cable/IP acceptance,
+Charlie at `192.168.50.13:51003`, the fresh Jetson OP-TEE preflight and final GO/NO-GO.
+Ayush designs `covis_live`; Samik reviews, integrates and operates it on P2 before starting
+Bravo. Suyash reviews their single frozen commit and accepts the real P2 camera evidence.
+There are five cables: the fifth endpoint is Abhijan's `.14` attack-control Mac; Ayush has
+no runtime IP and no `.15` endpoint exists.
+
 This document contains Suyash's work only. Other names identify required inputs or review
 participants, not tasks Suyash should silently absorb.
 
@@ -20,7 +29,8 @@ participants, not tasks Suyash should silently absorb.
 - In this simulation, one OP-TEE-backed node is deliberate and sufficient: Alpha. Bravo–
   Echo use distinct development keys. Never pretend the single Alpha key represents five
   hardware identities.
-- Alpha's originator process runs locally on the Jetson after the webcam stage. Do not add
+- Alpha's originator process runs locally on the Jetson after the separate P2 camera stage.
+  Do not add
   a generic unauthenticated remote signing service.
 - Describe OP-TEE precisely: it protects Alpha's Ed25519 key and signs canonical bytes; it
   does not attest YOLO, pose, VIO or model loading.
@@ -49,7 +59,7 @@ record the actual count whenever the baseline changes.
 | `codebase/models/registry.json` | Model source/hash/license/status/reviewer registry |
 | `codebase/docs/MODEL_SELECTION_REPORT.md` | Independent model approval decision |
 | `codebase/tools/optee_preflight.py` | Jetson handover and pinned-key evidence |
-| `codebase/tools/covis_live.py` | Live two-webcam use of the existing co-visibility protocol |
+| Camera-code acceptance for `codebase/tools/covis_live.py` | Review Ayush's implementation, Samik's test reproduction and the real P2 evidence |
 | `codebase/docs/COVIS_LIVE.md` | Physical rig setup/calibration/run instructions |
 | `codebase/tools/event_collector.py` | Bounded authenticated/best-effort event collection |
 | `codebase/console/app.py` | Operator visualization; never an authority source |
@@ -178,8 +188,9 @@ node and run bundle.
 1. Build/install the reviewed TA and Client Application on the Jetson; record source,
    toolchain, binary hashes, L4T/JetPack/OP-TEE versions and `/dev/tee0` permissions.
 2. Enrol Alpha's OP-TEE public key through a controlled process and pin it independently.
-3. Keep the webcam and swarm stages sequential:
-   `covis_live → close/hash evidence → release cameras → OP-TEE preflight → Alpha start`.
+3. Keep the P2 camera and protocol stages sequential:
+   `P2 covis_live → close/hash evidence → release cameras → Jetson OP-TEE preflight →
+   Alpha/Bravo/Charlie start`.
 4. Run `tools/optee_preflight.py` using a fresh challenge, actual mission/epoch, pinned key,
    TA/CA paths and a create-once evidence path.
 5. Require signer construction to compare the live key with Alpha's manifest identity.
@@ -194,30 +205,34 @@ node and run bundle.
 **Simulation decision:** one hardware-protected Alpha is accepted because only one Jetson
 exists. Bravo–Echo remain separate software identities. This is not the real-fleet design.
 
-**Gate Y5:** the actual Jetson completes a cold webcam→OP-TEE handover; fresh canonical
-Alpha receipts verify under the pinned key; no fallback occurs; signer loss safely removes
-Alpha from usable evidence and does not leave motion active.
+**Gate Y5:** after the independent P2 camera stage closes, the actual Jetson completes a
+fresh OP-TEE preflight; canonical Alpha receipts verify under the pinned key; no fallback
+occurs; signer loss safely removes Alpha from usable evidence and does not leave motion
+active.
 
 ### Y6 — implement the physical co-visibility demonstration
 
-Build `tools/covis_live.py` by calling the existing `protocol/covis_features.py`; do not
+Review Ayush's `tools/covis_live.py` implementation, which calls the existing
+`protocol/covis_features.py`; do not
 copy/fork its algorithm. Requirements:
 
-- explicit camera indices, resolution, calibration and thresholds;
+- explicit Windows camera source, DroidCam URL, resolution, health/skew and thresholds;
 - bounded camera-open/read/retry behavior and clean release on exit/error;
 - synchronized capture/skew measurement;
-- side-by-side raw views, matches/inliers, overlap/parallax and verdict;
+- side-by-side annotated views, matches/inliers, projected view/box IoU and verdict;
 - optional validated detector output and semantic comparison;
 - hash-chained, timestamped evidence and video;
 - no command/flight imports or network path to the command sink;
 - clear states for co-visible, not co-visible, insufficient evidence and camera failure.
 
-Write `docs/COVIS_LIVE.md` covering physical dimensions, calibration, start/stop, patch,
-lighting, evidence and Jetson handover. Abhijan owns rig/attack choreography; Suyash owns
-protocol correctness and software.
+Require Ayush to write `docs/COVIS_LIVE.md` covering physical dimensions, Windows sources,
+start/stop, patch, lighting, evidence and the P2 camera-to-Bravo handover. Ayush owns code/
+docs, Samik owns integration/operation/recovery, Abhijan owns attack choreography and Suyash
+owns final evidence/protocol acceptance.
 
-**Gate Y6:** clean view, moved camera, printed patch, partial/full cover, dropped camera and
-Ctrl-C cases produce correct evidence and always release both camera devices.
+**Gate Y6:** on Samik P2, clean view, moved camera, printed patch, partial/full cover,
+dropped camera and normal/error/interrupt exits produce correct evidence and always release
+both sources before Bravo starts.
 
 ### Y7 — implement event collector and console
 
@@ -242,7 +257,8 @@ Ctrl-C cases produce correct evidence and always release both camera devices.
 - explicit SIMULATION/UNARMED and claim-boundary labels.
 
 The console must not contain buttons that directly set verdicts or actuator commands.
-Abhijan operates it; Suyash owns implementation and schema correctness.
+Samik operates it; Ayush owns design/implementation; Abhijan applies the attack; Suyash
+owns evidence acceptance and shared protocol/schema correctness.
 
 **Gate Y7:** console/collector loss, malformed flood, sequence gaps and restart cannot affect
 local safety; the display never converts missing evidence into a green/pass state.
@@ -278,7 +294,7 @@ Assemble `RUNBOOK.md` from tested contributor sections. It must contain:
 - equipment/cable/static-IP table and verified ports;
 - exact versions, install paths, environment variables and hashes;
 - cold boot and preflight order;
-- webcam stage, device-release check and OP-TEE handover;
+- P2 camera stage, source-release check and separate Jetson OP-TEE preflight;
 - Pratik's Cosys launch/reset/settings procedure;
 - Samik's adapter/campaign start, readiness and shutdown procedure;
 - Abhijan's attack dry-run/delivery/cleanup procedure;

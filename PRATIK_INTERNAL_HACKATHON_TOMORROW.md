@@ -2,6 +2,10 @@
 
 **Scope:** temporary qualification plan. Keep `PRATIK_EXECUTION_PLAN.md` unchanged as the full Internal Hackathon + SIH execution plan.
 
+**Five-cable update:** read `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. P1 keeps
+cable 2 and `192.168.50.11:41451`. Do not change or relabel the frozen local Q-B run merely
+because the switch is now connected; the later wired proof is a distinct run.
+
 ## Your outcome tomorrow
 
 Provide a visually clear, deterministic CoSys/AirSim scene in which one drone starts at A, completes a short safe flight to B, lands, and can be reset immediately. Own the simulator world and vehicle, not the security verdict or autonomy code.

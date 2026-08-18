@@ -5,6 +5,14 @@
 sensor interface that another teammate can reproduce without editor state, hidden paths or
 verbal assumptions.
 
+## Immediate internal-qualifier overlay — 19 August 2026
+
+Read `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. Pratik remains the second of exactly
+five wired machines at `192.168.50.11`; the accepted LAN RPC endpoint is `.11:41451`.
+Ayush and Abhijan sharing one display Mac does not change Pratik's scene, route or evidence
+ownership. Keep the frozen local `127.0.0.1:41451` Q-B evidence separate: a wired run uses a
+new run ID/configuration and never overwrites the local qualification artifacts.
+
 This document contains Pratik's work only. Other names identify required handoffs/reviews,
 not tasks Pratik should absorb.
 

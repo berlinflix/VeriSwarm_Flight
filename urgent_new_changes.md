@@ -42,6 +42,32 @@ Set `Status: FOLDED` once the build plan has been updated to match.
 
 ## Open overrides
 
+### 2026-08-19 — Five cables; cameras run on Samik P2; Ayush designs only
+**Status:** FOLDED into `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` and the individual
+internal-qualifier plans on 2026-08-19.
+
+**Changed:** tomorrow has exactly five wired machines: Jetson `.10`, Pratik `.11`, Samik
+`.12`, Suyash `.13` and Abhijan `.14`. Ayush has no runtime cable/IP and designs/tests the
+camera software only. One USB webcam and one Android DroidCam source connect to Samik P2;
+Samik reviews/integrates/operates `covis_live`, proves both sources released, then starts
+Bravo on the frozen qualification port `51001`. Abhijan keeps his own `.14` attack-control
+terminal. The Jetson remains Alpha/OP-TEE and does not run the camera application in this
+qualifier topology.
+
+**Makes stale:** the earlier Jetson/two-USB-webcam runtime placement, any `.15` Ayush
+endpoint, any shared Ayush/Abhijan Mac, any transfer of Bravo to Ayush's Mac, any use of
+Bravo port `51002`, and any claim that physical-camera output is automatically OP-TEE-
+signed evidence.
+
+**Who must act:** Ayush delivers one frozen camera commit from the staged camera baseline;
+Samik reviews and runs it on P2 before Bravo; Abhijan preserves his independent attack
+terminal; Suyash accepts network/camera/OP-TEE evidence; Pratik keeps `.11:41451` and the
+frozen CoSys route unchanged.
+
+**Why:** five available cables require five endpoints, Abhijan cannot surrender the attack
+terminal, and keeping the camera workload and Bravo sequentially on Samik P2 preserves the
+already prepared Bravo identity while leaving the Jetson dedicated to Alpha/OP-TEE.
+
 ### 2026-08-18 — Protocol v4 supersedes v3: attested, class-aware observations
 **Status:** OPEN
 **Changed:** `PROTOCOL_VERSION` is **4**. Every `Receipt` carries a

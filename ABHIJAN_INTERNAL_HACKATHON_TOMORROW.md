@@ -2,6 +2,11 @@
 
 **Scope:** temporary qualification plan. Keep `ABHIJAN_EXECUTION_PLAN.md` unchanged as the full Internal Hackathon + SIH execution plan.
 
+**Five-cable update:** read `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. Keep
+Abhijan's own Mac wired at `192.168.50.14` as the attack-control/evidence/projector host.
+Samik operates the camera application on P2; Ayush only designs it. Abhijan retains his
+independent terminal and receives no Bravo private material.
+
 ## Your outcome tomorrow
 
 Deliver one controlled physical perception attack and one deterministic protocol attack that are reproducible, measurable and clearly separated from the verifier's verdict. Own the audience-facing attack choreography and evidence view.
@@ -40,7 +45,7 @@ Your injector may choose the test input but must not write the expected verdict 
 
 ### A-T3 — Build the projection view and evidence index
 
-On L2/Mac at `192.168.50.14`, prepare a simple full-screen view that can show:
+On Abhijan's Mac at `192.168.50.14`, prepare a simple full-screen view that can show:
 
 - Camera A and Camera B clean/attacked frames.
 - Measured claim difference and explicit reason code.

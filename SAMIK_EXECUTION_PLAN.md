@@ -5,6 +5,16 @@
 inside Pratik's frozen Cosys scenario, while ensuring that only supervisor-released,
 fresh and bounded commands can reach Cosys/PX4.
 
+## Immediate internal-qualifier overlay — 19 August 2026
+
+Read `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. Samik keeps his Windows P2 as the
+third wired machine at `192.168.50.12`; it runs the USB/DroidCam application first, releases
+both sources, then runs Bravo on the frozen bundle's port `51001`. Do not move Bravo or its
+scoped identity. Ayush implements `covis_live` on `ayush/covis-live-final`; Samik reviews
+the exact commit, integrates/tests it on Windows, operates the live camera run, owns
+evidence/release/recovery and then performs the clean transition to Bravo. Abhijan keeps
+his independent `.14` attack terminal.
+
 This document contains Samik's work only. References to another owner identify an input or
 review dependency; they do not transfer that person's task to Samik.
 
@@ -447,7 +457,7 @@ teleport, truth leak, overwritten failure or undocumented setting.
 ## 8. Definition of done for Samik
 
 Samik is done only when the frozen mission starts cleanly on both simulator PCs; Alpha's
-originator runs on the post-webcam Jetson with verified OP-TEE signing; five vehicles
+originator runs on the Jetson after the separate P2 camera beat with verified OP-TEE signing; five vehicles
 complete or safely terminate their assigned work; geometric obstacles cause safe replan;
 the waypoint follower advances through versioned paths and reaches goals without blindly
 adding perception vectors or bypassing safety;

@@ -2,6 +2,11 @@
 
 **Scope:** temporary qualification plan. Keep `SAMIK_EXECUTION_PLAN.md` unchanged as the full Internal Hackathon + SIH execution plan.
 
+**Five-cable update:** read `FIVE_CABLE_EXECUTION_FREEZE_2026-08-19.md` first. Samik P2
+first runs the USB/DroidCam application, proves both sources released, then starts Bravo at
+`192.168.50.12:51001`. Ayush designs and hands over one frozen camera commit; Samik reviews,
+integrates, operates and recovers it. Abhijan keeps his own `.14` attack terminal.
+
 ## Your outcome tomorrow
 
 Make the network and vehicle paths boringly repeatable: Bravo must verify Alpha over Ethernet, and Pratik's CoSys vehicle must execute a bounded A-to-B smoke flight and land safely. You are Suyash's recovery operator.
@@ -36,8 +41,11 @@ Acceptance: two consecutive reset-to-reset runs with no source/config edits, fin
 
 ### S-T2 — Own Bravo and LAN readiness
 
-- Configure Samik P2 at `192.168.50.12` on Ethernet.
-- Start Bravo with the node-scoped qualification manifest, its own software simulation identity and Suyash's reviewed `tools.qualification_peer` launcher.
+- Configure Samik P2 at `192.168.50.12/24` on Ethernet with blank gateway/DNS and use the
+  manifest's Bravo port `51001`.
+- After the camera process exits and releases both sources, start Bravo with the node-scoped
+  qualification manifest, its own software simulation identity and Suyash's reviewed
+  `tools.qualification_peer` launcher.
 - Do not use the plain `node.server` CLI for the semantic clean gate; it has no measured snapshot provider and would produce `ok_no_observation` rather than a semantic acknowledgement.
 - Confirm Suyash/Jetson can reach Bravo's exact port and that Bravo can verify Alpha's pinned public key.
 - Do not copy Alpha's private material, OP-TEE client state or a whole seed-bearing manifest to P2.
@@ -62,7 +70,7 @@ Produce a one-page ordered list of exact commands for:
 
 - network preflight;
 - Bravo/Charlie startup and readiness;
-- Jetson webcam start/stop;
+- Samik-P2 camera start/stop and source-release proof;
 - OP-TEE preflight;
 - qualification clean/attack cases;
 - AirSim connect/reset/smoke flight;
@@ -74,7 +82,8 @@ Mark the machine and working directory for every command. No command may rely on
 
 - Arrive with P2 power, Ethernet adapter/cable and the frozen environment.
 - Verify wired address, firewall and time offset.
-- Start Bravo and leave its READY/log view visible.
+- Keep Bravo stopped during the camera beat; after release proof, start it and leave its
+  READY/log view visible.
 - From P2, verify Jetson Alpha, Suyash Charlie and Pratik AirSim endpoints.
 - Run the smoke flight once before the panel, reset, and preserve the output.
 - Check that the abort/land command is immediately accessible.
