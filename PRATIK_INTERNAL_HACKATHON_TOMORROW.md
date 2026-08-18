@@ -6,6 +6,17 @@
 
 Provide a visually clear, deterministic CoSys/AirSim scene in which one drone starts at A, completes a short safe flight to B, lands, and can be reset immediately. Own the simulator world and vehicle, not the security verdict or autonomy code.
 
+## Current accepted progress
+
+Keep and reuse the work already completed:
+
+- CoSys-AirSim `5.8-v3.4.1` packaged Blocks starts under Unreal `5.8.1`.
+- Python `3.11` connects locally and captures camera frames.
+- Alpha, Bravo and Charlie have been spawned and per-vehicle frames exported.
+- `capture_cosys_frames.py` and the existing frame dataset remain useful for Abhijan's attack evaluation and the optional three-view replay.
+
+This is meaningful progress, but it is not yet the Pratik→Samik acceptance bundle. The handoff stays blocked until exact wired RPC evidence, `listVehicles()` output, a frozen vehicle/A/B route, reset manifest, two unchanged cold runs and recovery artifacts exist.
+
 ## Priority order tonight
 
 ### Your Codex lane
@@ -15,6 +26,8 @@ Use Codex to audit CoSys/AirSim settings, RPC reachability checks, reset instruc
 ### P-T1 — Freeze the smallest reliable scene
 
 Use one vehicle and one short route. Do not add swarm choreography, moving attackers, weather changes or complex terrain tonight.
+
+Do not delete the other two configured vehicles. Freeze one exact name returned by raw `listVehicles()` as the base smoke vehicle; leave the three-vehicle setup available for the early-finish extension.
 
 Record a handoff containing:
 
@@ -95,3 +108,17 @@ One live retry is allowed after a clean reset. If it fails again, use the labell
 ## Do not claim
 
 Do not call the A-to-B smoke flight autonomous replanning, GPS-denied navigation, swarm behavior or protocol-gated flight. It proves the simulator transport path that the retained SIH execution plan will integrate with VeriSwarm.
+
+## If the base demo is finished early
+
+Produce a **separate** three-vehicle handoff after the accepted one-drone bundle is immutable:
+
+- raw names for Alpha/Bravo/Charlie from `listVehicles()`;
+- three start poses and three offset B poses in CoSys NED;
+- altitude band, geofence and minimum pairwise separation;
+- simultaneous/sequenced takeoff rule and an all-vehicle abort/land rule;
+- per-vehicle collision/reset expectations;
+- camera view that visibly shows all three vehicles;
+- two unchanged three-drone cold-run outputs and backup video.
+
+Do not change the accepted one-drone settings or evidence. The extension is called three-drone coordinated transport, not autonomous swarm behavior.

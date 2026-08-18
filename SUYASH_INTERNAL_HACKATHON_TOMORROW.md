@@ -6,6 +6,8 @@
 
 Own the demo boundary and prove that Alpha's real measured receipt is signed locally by the Jetson's OP-TEE key, verified by Ethernet peers, and rejected for a controlled protocol attack. You are also the final GO/NO-GO owner.
 
+Your blocking handoff is now specified in `SUYASH_TO_SAMIK_QUALIFICATION_HANDOFF.md`. Complete its H0 checklist before asking Samik to validate Bravo; complete H1 before the full rehearsal.
+
 ## Priority order tonight
 
 ### Your Codex lane
@@ -30,7 +32,7 @@ Acceptance: three consecutive clean→attack→recovery cycles without restartin
 
 ### Y-T2 — Build the LAN qualification protocol runner
 
-Implement a narrow `codebase/tools/qualification_protocol_demo.py`; do not expand it into the final campaign runner tonight.
+Implement a narrow `codebase/tools/qualification_protocol_demo.py` plus `codebase/tools/qualification_peer.py`; do not expand them into the final campaign runner tonight. The peer launcher is mandatory because the existing `node.server` CLI supplies no measured snapshot and would yield zero semantic acknowledgements.
 
 Required behavior:
 
@@ -38,9 +40,9 @@ Required behavior:
 - It contacts Bravo on Samik's machine and Charlie on Suyash L1 over Ethernet.
 - It originates protocol-v4 receipts containing explicit measured claims; action-only fallback is not accepted as semantic proof.
 - It runs exactly two panel cases: clean expected ACCEPT and one deterministic attack expected HOLD.
-- Preferred attack is an unapproved/tampered model hash. Replay or exact-receipt mutation may be the second offline evidence case.
+- Live attack is the unapproved/tampered model hash. Offline checks distinguish stale receipt, command expiry and idempotent exact retransmission.
 - It prints one compact table with expected decision, actual decision, semantic acknowledgements and reason codes.
-- It writes canonical JSON with receipt/command digests and peer results.
+- It writes canonical JSON with the canonical receipt digest, vote target hashes, exact receipt-output/request binding and peer results. Protocol v4 has no authoritative standalone command digest.
 - It returns non-zero if an expected outcome, key binding, semantic quorum or evidence write fails.
 
 Never create a Jetson signing API. Never sign Bravo or Charlie with Alpha's key. Never load a software Alpha fallback under the OP-TEE label.
@@ -52,6 +54,8 @@ Never create a Jetson signing API. Never sign Bravo or Charlie with Alpha's key.
 - Keep each peer identity/key distinct.
 - Record the exact manifest hash, repository commit and uncommitted-diff hash in the run evidence.
 - Run `tools/optee_preflight.py` on the physical Jetson using a new output path.
+- Generate public plus Alpha/Bravo/Charlie node-scoped manifests. Samik receives only Bravo's seed; Alpha has no seed; no node receives another peer's seed.
+- Freeze the clean detector-derived replay fixtures and expected v4 claims before Samik starts protocol validation.
 
 ### Y-T4 — Build the evidence bundle and operator screen
 
@@ -114,3 +118,7 @@ If a subsystem fails live, allow one bounded restart and then use the clearly la
 ## Do not claim
 
 Do not say military-ready, protected end-to-end flight, full swarm autonomy, trusted inference or five protected hardware identities. Tomorrow proves a real and valuable slice; the retained full plan completes the integrated system.
+
+## If the base demo is finished early
+
+Preserve the accepted one-drone path, then coordinate the separate three-drone transport extension in the combined plan. Your job is to keep protocol identities and displayed vehicle names aligned, validate the separate output bundle and refuse the extension unless it passes twice before freeze. Do not connect protocol decisions to the multi-drone actuator path without the missing reviewed adapter.

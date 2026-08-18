@@ -6,6 +6,8 @@
 
 Make the network and vehicle paths boringly repeatable: Bravo must verify Alpha over Ethernet, and Pratik's CoSys vehicle must execute a bounded A-to-B smoke flight and land safely. You are Suyash's recovery operator.
 
+You may begin the smoke client before Pratik finishes the immutable handoff, but it must be configuration-driven and fail closed on every missing field. Do not hard-code a guessed vehicle, A/B coordinate, altitude convention or timeout. Protocol work begins only from Suyash's scoped bundle in `SUYASH_TO_SAMIK_QUALIFICATION_HANDOFF.md`.
+
 ## Priority order tonight
 
 ### Your Codex lane
@@ -35,7 +37,8 @@ Acceptance: two consecutive reset-to-reset runs with no source/config edits, fin
 ### S-T2 — Own Bravo and LAN readiness
 
 - Configure Samik P2 at `192.168.50.12` on Ethernet.
-- Start Bravo with the node-scoped qualification manifest and its own software simulation identity.
+- Start Bravo with the node-scoped qualification manifest, its own software simulation identity and Suyash's reviewed `tools.qualification_peer` launcher.
+- Do not use the plain `node.server` CLI for the semantic clean gate; it has no measured snapshot provider and would produce `ok_no_observation` rather than a semantic acknowledgement.
 - Confirm Suyash/Jetson can reach Bravo's exact port and that Bravo can verify Alpha's pinned public key.
 - Do not copy Alpha's private material, OP-TEE client state or a whole seed-bearing manifest to P2.
 - Record startup command, process ID, listening port, log path and clean shutdown command.
@@ -47,9 +50,9 @@ Support Suyash on `qualification_protocol_demo.py` by validating:
 
 - clean protocol-v4 measured claim obtains the expected semantic acknowledgement;
 - unapproved/tampered model hash is rejected with the expected reason;
-- stale/replayed receipt is never counted as a fresh acknowledgement;
+- a stale newly checked receipt rejects, an expired command holds, and an exact duplicate remains idempotent rather than creating fresh evidence;
 - peer timeout or disconnect produces HOLD, not a permissive fallback;
-- the displayed command digest exactly matches the signed receipt binding.
+- every vote/consensus target equals the canonical receipt digest, and the requested tuple exactly equals signed `receipt.output`; do not expect a standalone protocol-v4 command-digest field.
 
 Do not connect this runner to AirSim for tomorrow unless the reviewed adapter already exists and passes fault tests. The panel flight remains a clearly labelled transport smoke test.
 
@@ -103,3 +106,7 @@ One live retry is allowed. After that, abort/land and show the labelled cold-reh
 ## Do not claim
 
 The smoke-flight script is not path replanning, GPS-denied navigation, swarm task allocation or protocol-gated control. Those remain in your full execution plan after qualification.
+
+## If the base demo is finished early
+
+Add a separate multi-vehicle mode only after Pratik's one-vehicle handoff and two cold runs pass. Consume a new three-vehicle config instead of modifying the frozen one-drone config. Require per-vehicle state/timeout/collision/landing/disarm results, minimum pairwise separation and one all-vehicle abort path. Two complete three-drone cold runs are required before stage use.

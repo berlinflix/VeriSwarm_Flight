@@ -15,7 +15,7 @@ Tomorrow is a qualification slice, not the completed protected-autonomy product.
 The demo has three sequential beats:
 
 1. **Physical perception attack:** two webcams connected to the Jetson observe the same scene. A clean observation agrees. Abhijan then introduces a controlled printed adversarial/occlusion artifact to one view. The software shows the measured evidence and an agreement, dispute, or abstention outcome.
-2. **OP-TEE receipt and LAN verification:** stop the webcam process and prove both cameras are released. Alpha then runs on the Jetson, signs its canonical receipt locally through OP-TEE, and Ethernet peers verify it. A clean measured claim is accepted; a model swap, replay, or receipt mutation is rejected and produces HOLD at the decision layer.
+2. **OP-TEE receipt and LAN verification:** stop the webcam process and prove both cameras are released. Alpha then runs on the Jetson, signs its canonical receipt locally through OP-TEE, and Ethernet peers verify it. Clean detector-derived replay evidence is accepted; the deterministic unapproved-model-hash case is rejected and produces HOLD at the decision layer. Freshness, expiry and duplicate-delivery behavior remain offline evidence checks.
 3. **CoSys A-to-B flight:** Pratik's CoSys/AirSim vehicle takes off, flies a short deterministic route from A to B, hovers, lands, and records zero collisions. This is explicitly a transport smoke test for tomorrow; it is not represented as already controlled by the signed protocol decision.
 
 ### Tomorrow's qualification topology
@@ -39,12 +39,26 @@ The following entries are **MUST BUILD** items and must not be spoken about as a
 | Deliverable | Owner | Acceptance check |
 |---|---|---|
 | Minimal `codebase/tools/covis_live.py` | Suyash | Two cameras open concurrently; clean and attacked evidence is shown and saved; both devices release on exit |
-| Minimal LAN qualification runner, preferably `codebase/tools/qualification_protocol_demo.py` | Suyash, with Samik integration support | Alpha runs on Jetson and signs locally; Bravo and Charlie are reached over Ethernet; clean measured claim and one rejection case produce a JSON summary |
+| Minimal LAN qualification runner and measured peer launcher: `codebase/tools/qualification_protocol_demo.py` plus `codebase/tools/qualification_peer.py` | Suyash, with Samik integration support | Alpha runs on Jetson and signs locally; Bravo and Charlie are reached over Ethernet; clean replayed detector evidence yields exactly two semantic ACKs; model swap rejects to HOLD; JSON summary is retained |
 | `codebase/sim/cosys_smoke_flight.py` | Samik | Connect, API control, arm, takeoff, move A-to-B, hover, land, disarm, release control; every wait has a timeout and failure triggers land/abort |
 | Deterministic A/B scene handoff | Pratik | Fixed coordinates, vehicle name, reset steps, RPC address, expected duration, collision check, and one backup recording |
 | Physical attack kit and attack card | Abhijan | Printed artifact, fixed placement/distance/lighting, clean control, attack sequence, expected evidence change, and recovery step |
 
 The qualification runner must use protocol-v4 measured `PerceptionClaim` data. An action-only fallback is not evidence of semantic quorum. Alpha's signer must be constructed and invoked on the Jetson; do not create a shared remote signing service and do not route other identities through Alpha's key.
+
+### Current simulator state — preserve it
+
+Pratik has already proved local packaged-Blocks startup, local Python connection, camera capture and three-vehicle spawning for Alpha/Bravo/Charlie. That work is retained:
+
+- The captured per-vehicle frames are immediately useful for Abhijan's offline attack/replay evidence and for choosing detector-derived LAN fixtures.
+- The three configured vehicles become the first early-finish extension after the one-drone gate passes.
+- Nothing in the one-drone qualification requires deleting the other vehicles or rebuilding the world. The frozen smoke script simply selects one exact vehicle.
+
+The Pratik→Samik handoff remains correctly blocked until it contains an immutable bundle, exact A/B NED coordinates, raw wired `ping()`/`listVehicles()` evidence, reset manifest, two unchanged cold runs, fallback video and reset/abort card. Samik may implement a config-driven client now, but may not guess those missing values.
+
+### Protocol launcher correction
+
+The plain `python -m node.server` CLI has no measured snapshot provider and therefore cannot produce semantic ACKs for protocol v4. For tomorrow, Suyash must provide `tools/qualification_peer.py` (or an equivalent reviewed launcher) that supplies a fresh atomic measured claim/pose/action snapshot to `node.server.serve`. A clean `ACCEPTED` with `semantic_acks: 0` fails the demo gate.
 
 ### 16-hour parallel execution model
 
@@ -93,7 +107,7 @@ Create a fresh directory such as `results/internal_qualifier/<run-id>/`; never o
 - `webcam/clean.json` and `webcam/attack.json`: timestamps, camera IDs, model hash, measured claims, agreement state, and reason codes.
 - `webcam/`: representative raw frames or a synchronized short recording for the clean and attacked conditions.
 - `optee_preflight.json`: public-key fingerprint, challenge result, verification result, and signing latency.
-- `protocol_summary.json`: clean and attacked decisions, peer reason codes, receipt digest, command digest, model hash, and replay/sequence result.
+- `protocol_summary.json`: clean and attacked decisions, peer reason codes, canonical receipt digest/target hashes, exact requested-versus-receipt output binding, model hash, and freshness/idempotence result. Protocol v4 has no authoritative standalone command-digest field.
 - `airsim_smoke.json`: A/B coordinates, vehicle name, start/end pose, timestamps, timeout state, collision count, landing and disarm result.
 - `SHA256SUMS`: hashes for the complete evidence set.
 
@@ -103,7 +117,8 @@ The demo passes only if all of these are true:
 - The controlled physical attack changes measured evidence and produces dispute or explicit abstention; a camera failure is never mislabeled as an adversarial attack.
 - The OP-TEE preflight verifies under the pinned Alpha public key using a fresh output path.
 - A clean measured protocol-v4 claim reaches the required semantic quorum over Ethernet.
-- At least one deterministic attack—model hash swap, exact-receipt mutation, or replay—is rejected with a visible reason and HOLD at the protocol decision layer.
+- The deterministic model-hash swap is rejected with a visible reason and HOLD at the protocol decision layer.
+- Offline evidence distinguishes stale rejection, command expiry and idempotent exact retransmission; an exact duplicate is never presented as a fresh vote or authorization.
 - The CoSys vehicle completes A-to-B and lands with collision count zero.
 - A second cold run succeeds from reset without modifying source code or evidence files.
 
@@ -139,7 +154,7 @@ Also say: “This is the qualification slice. We will show a physical perception
 
 - Show Alpha, Bravo and Charlie as READY with their wired addresses.
 - Run the clean measured case; show semantic acknowledgements and ACCEPT.
-- Run one deterministic model-swap or replay case; show the exact peer reason and HOLD.
+- Run the deterministic model-swap case; show the exact peer reason and HOLD.
 - Do not show more than two attack cases live. Additional cases belong in the evidence bundle.
 
 ### 3:35–4:35 — Pratik's drone flight
@@ -200,3 +215,13 @@ Technical honesty is part of the security demonstration. The panel should see wo
 | CoSys world, A/B route and recovery | Pratik | Reset-to-reset flight succeeds twice with zero collisions |
 
 Suyash alone calls final GO. Any owner may call NO-GO for their subsystem. A NO-GO invokes the labelled recorded fallback; it never authorizes an untested workaround.
+
+## 11. Early-finish extension ladder
+
+Do not improvise new features. Add the first extension whose gate can still pass twice before T-2 h:
+
+1. **Three-drone CoSys transport smoke:** Alpha, Bravo and Charlie take off, translate to three offset B positions while maintaining a frozen minimum separation, then land/disarm. This is the preferred visible swarm extension because Pratik already spawns three vehicles.
+2. **Three-view detector replay:** run the real pinned detector on Pratik's three frozen camera captures and show per-vehicle measured claims beside the three Ethernet identities.
+3. **Additional offline failures:** peer timeout, stale receipt and command expiry in the evidence table. Keep them off the live critical path.
+
+The one-drone route and its evidence remain immutable fallback artifacts. The multi-drone mode uses a separate configuration/output path and reaches the stage only after two complete cold runs with zero collisions and confirmed land/disarm for every vehicle. Call it “three-drone coordinated transport,” not autonomous swarm task allocation.

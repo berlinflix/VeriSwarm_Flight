@@ -99,3 +99,7 @@ If the physical attack fails live, do not improvise. Show the labelled unedited 
 ## Do not claim
 
 Do not claim the patch defeats every detector, that an abstention proves an adversarial attack, or that tomorrow's attack is already controlling the CoSys vehicle. The value is the real, independently verifiable evidence chain.
+
+## If the base demo is finished early
+
+Use Pratik's already captured Alpha/Bravo/Charlie frames for a separate three-view detector replay. Hash each frame, run the same pinned model/config, and show the three measured claims without manually editing them. If the views do not satisfy the clean agreement contract, retain them as honest disagreement evidence; do not tune or relabel them to manufacture quorum. This extension may accompany the three-drone transport view but remains separate from actuator control.
