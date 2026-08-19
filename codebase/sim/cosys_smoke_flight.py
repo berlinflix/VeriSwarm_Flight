@@ -1560,6 +1560,7 @@ class CollisionMonitor:
         self.recorder = recorder
         self.landed_state_value = landed_state_value
         self.baseline_ground_timestamp: float | None = None
+        self.touchdown_contact_timestamp: float | None = None
 
     def _read(self, timeout_name: str) -> dict[str, Any]:
         collision = _rpc_call(
@@ -1680,6 +1681,7 @@ class CollisionMonitor:
         phase: str,
         *,
         enforce_landing_zone: bool = True,
+        enforce_touchdown_limits: bool = True,
     ) -> tuple[float, list[str]]:
         if (
             collision["has_collided"]
@@ -1688,35 +1690,39 @@ class CollisionMonitor:
         ):
             self._fail_collision(collision, f"non-ground contact during {phase}")
         violations: list[str] = []
-        if (
-            float(collision["penetration_depth_m"])
-            > self.config.touchdown.max_penetration_depth_m
-        ):
-            violations.append(
-                f"penetration depth "
-                f"{float(collision['penetration_depth_m']):.6f}m exceeds "
-                f"{self.config.touchdown.max_penetration_depth_m:.6f}m"
-            )
-        if state["speed_mps"] > self.config.touchdown.max_landing_linear_speed_mps:
-            violations.append(
-                f"linear speed {state['speed_mps']:.6f}m/s exceeds "
-                f"{self.config.touchdown.max_landing_linear_speed_mps:.6f}m/s"
-            )
-        if (
-            state["angular_speed_rps"]
-            > self.config.touchdown.max_landing_angular_speed_rps
-        ):
-            violations.append(
-                f"angular speed {state['angular_speed_rps']:.6f}rad/s exceeds "
-                f"{self.config.touchdown.max_landing_angular_speed_rps:.6f}rad/s"
-            )
-        roll = abs(float(state["attitude_deg"]["roll"]))
-        pitch = abs(float(state["attitude_deg"]["pitch"]))
-        if max(roll, pitch) > self.config.touchdown.max_landing_roll_pitch_deg:
-            violations.append(
-                f"roll/pitch ({roll:.6f},{pitch:.6f})deg exceeds "
-                f"{self.config.touchdown.max_landing_roll_pitch_deg:.6f}deg"
-            )
+        if enforce_touchdown_limits:
+            if (
+                float(collision["penetration_depth_m"])
+                > self.config.touchdown.max_penetration_depth_m
+            ):
+                violations.append(
+                    f"penetration depth "
+                    f"{float(collision['penetration_depth_m']):.6f}m exceeds "
+                    f"{self.config.touchdown.max_penetration_depth_m:.6f}m"
+                )
+            if (
+                state["speed_mps"]
+                > self.config.touchdown.max_landing_linear_speed_mps
+            ):
+                violations.append(
+                    f"linear speed {state['speed_mps']:.6f}m/s exceeds "
+                    f"{self.config.touchdown.max_landing_linear_speed_mps:.6f}m/s"
+                )
+            if (
+                state["angular_speed_rps"]
+                > self.config.touchdown.max_landing_angular_speed_rps
+            ):
+                violations.append(
+                    f"angular speed {state['angular_speed_rps']:.6f}rad/s exceeds "
+                    f"{self.config.touchdown.max_landing_angular_speed_rps:.6f}rad/s"
+                )
+            roll = abs(float(state["attitude_deg"]["roll"]))
+            pitch = abs(float(state["attitude_deg"]["pitch"]))
+            if max(roll, pitch) > self.config.touchdown.max_landing_roll_pitch_deg:
+                violations.append(
+                    f"roll/pitch ({roll:.6f},{pitch:.6f})deg exceeds "
+                    f"{self.config.touchdown.max_landing_roll_pitch_deg:.6f}deg"
+                )
         position = Vector3(*state["position"])
         horizontal_error = math.hypot(
             position.x - self.config.target.x,
@@ -1732,6 +1738,55 @@ class CollisionMonitor:
             )
         return horizontal_error, violations
 
+    def _is_new_ground_contact(self, collision: Mapping[str, Any]) -> bool:
+        timestamp = float(collision["timestamp"])
+        return bool(
+            collision["has_collided"]
+            and collision["object_name"]
+            == self.config.touchdown.expected_ground_object
+            and (
+                self.baseline_ground_timestamp is None
+                or timestamp > self.baseline_ground_timestamp
+            )
+        )
+
+    def _capture_touchdown_contact(
+        self,
+        state: Mapping[str, Any],
+        collision: Mapping[str, Any],
+        *,
+        enforce_landing_zone: bool,
+    ) -> tuple[float, list[str]]:
+        horizontal_error, violations = self._landing_envelope(
+            state,
+            collision,
+            "touchdown",
+            enforce_landing_zone=enforce_landing_zone,
+            enforce_touchdown_limits=True,
+        )
+        if self.touchdown_contact_timestamp is None:
+            self.touchdown_contact_timestamp = float(collision["timestamp"])
+            contact = dict(collision)
+            contact["phase"] = "touchdown"
+            contact["state_at_contact"] = dict(state)
+            self.recorder.result["ground_contacts"].append(contact)
+            self.recorder.result["touchdown_dwell"][
+                "contact_event_timestamp"
+            ] = self.touchdown_contact_timestamp
+        if violations:
+            self.recorder.result["touchdown_threshold_violations"].append(
+                {
+                    "elapsed_seconds": round(
+                        time.monotonic() - self.recorder._monotonic_started,
+                        6,
+                    ),
+                    "violations": list(violations),
+                    "state": dict(state),
+                    "collision": dict(collision),
+                }
+            )
+        return horizontal_error, violations
+
     def check_landing(
         self, phase: str, *, enforce_landing_zone: bool = True
     ) -> None:
@@ -1742,9 +1797,24 @@ class CollisionMonitor:
             collision,
             phase,
             enforce_landing_zone=enforce_landing_zone,
+            enforce_touchdown_limits=False,
         )
         if violations:
             raise FlightInvariantError(f"{phase} envelope violation: {violations[0]}")
+        if (
+            self.touchdown_contact_timestamp is None
+            and self._is_new_ground_contact(collision)
+        ):
+            state = _get_state(self.client, self.config, "land")
+            _, violations = self._capture_touchdown_contact(
+                state,
+                collision,
+                enforce_landing_zone=enforce_landing_zone,
+            )
+            if violations:
+                raise FlightInvariantError(
+                    f"{phase} touchdown envelope violation: {violations[0]}"
+                )
 
     def wait_for_touchdown(
         self, timeout_name: str, *, enforce_landing_zone: bool = True
@@ -1753,7 +1823,7 @@ class CollisionMonitor:
         last_state: dict[str, Any] | None = None
         last_collision: dict[str, Any] | None = None
         stale_landed_state_seen = False
-        contact_timestamp: float | None = None
+        contact_timestamp = self.touchdown_contact_timestamp
         stable_since: float | None = None
         last_violation_signature: tuple[str, ...] | None = None
         while time.monotonic() < deadline:
@@ -1764,25 +1834,24 @@ class CollisionMonitor:
                 last_collision,
                 "touchdown",
                 enforce_landing_zone=enforce_landing_zone,
+                enforce_touchdown_limits=False,
             )
-            timestamp = float(last_collision["timestamp"])
-            new_ground_contact = (
-                last_collision["has_collided"]
-                and last_collision["object_name"]
-                == self.config.touchdown.expected_ground_object
-                and (
-                    self.baseline_ground_timestamp is None
-                    or timestamp > self.baseline_ground_timestamp
-                )
-            )
+            new_ground_contact = self._is_new_ground_contact(last_collision)
             if new_ground_contact and contact_timestamp is None:
-                contact_timestamp = timestamp
-                contact = dict(last_collision)
-                contact["phase"] = "touchdown"
-                self.recorder.result["ground_contacts"].append(contact)
-                self.recorder.result["touchdown_dwell"][
-                    "contact_event_timestamp"
-                ] = contact_timestamp
+                last_state = _get_state(self.client, self.config, timeout_name)
+                horizontal_error, impact_violations = (
+                    self._capture_touchdown_contact(
+                        last_state,
+                        last_collision,
+                        enforce_landing_zone=enforce_landing_zone,
+                    )
+                )
+                contact_timestamp = self.touchdown_contact_timestamp
+                if impact_violations:
+                    raise FlightInvariantError(
+                        "touchdown impact envelope violation: "
+                        f"{impact_violations[0]}"
+                    )
 
             landed_state_ok = (
                 last_state["landed_state"] == self.landed_state_value

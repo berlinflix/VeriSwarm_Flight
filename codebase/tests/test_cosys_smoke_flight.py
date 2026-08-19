@@ -378,6 +378,8 @@ class FakeClient:
         touchdown_delay_checks=0,
         landing_linear_speed=0.0,
         landing_angular_speed=0.0,
+        contact_linear_speed=0.0,
+        contact_angular_speed=0.0,
         landing_roll_deg=0.0,
         penetration_depth=0.0,
         landing_offset_x=0.0,
@@ -399,6 +401,8 @@ class FakeClient:
         self.touchdown_delay_checks = touchdown_delay_checks
         self.landing_linear_speed = landing_linear_speed
         self.landing_angular_speed = landing_angular_speed
+        self.contact_linear_speed = contact_linear_speed
+        self.contact_angular_speed = contact_angular_speed
         self.landing_roll_deg = landing_roll_deg
         self.penetration_depth = penetration_depth
         self.landing_offset_x = landing_offset_x
@@ -513,8 +517,8 @@ class FakeClient:
         self.collided = True
         self.collision_object = "Ground"
         self.collision_timestamp += 1.0
-        self.velocity = [0.0, 0.0, 0.0]
-        self.angular_velocity = [0.0, 0.0, 0.0]
+        self.velocity = [self.contact_linear_speed, 0.0, 0.0]
+        self.angular_velocity = [self.contact_angular_speed, 0.0, 0.0]
         self.landed_state = 1 if self.stale_landed_after_touchdown else 0
         self.touchdown_pending = None
 
@@ -974,10 +978,32 @@ def test_early_returning_land_future_waits_for_current_ground_and_two_second_dwe
     )
 
 
+def test_descent_speed_above_touchdown_limit_is_checked_at_contact_not_in_air():
+    raw = route_config()
+    raw["touchdown"]["max_landing_linear_speed_mps"] = 0.25
+    config = validate_config(raw)
+    client = FakeClient(
+        landing_linear_speed=0.259,
+        touchdown_delay_checks=2,
+    )
+
+    result = run_smoke(
+        config,
+        "a" * 64,
+        client_factory=lambda _config: client,
+        landed_state_value=0,
+    )
+
+    assert result["pass"] is True
+    contact = result["ground_contacts"][-1]
+    assert contact["phase"] == "touchdown"
+    assert contact["state_at_contact"]["speed_mps"] == 0.0
+
+
 def test_touchdown_dwell_resets_after_stationary_threshold_violation():
     config = validate_config(route_config())
     client = FakeClient(
-        post_contact_linear_speed_sequence=[0.0, 0.0, 0.2, 0.0]
+        post_contact_linear_speed_sequence=[0.0] * 5 + [0.2, 0.0]
     )
 
     result = run_smoke(
@@ -1000,11 +1026,11 @@ def test_touchdown_dwell_resets_after_stationary_threshold_violation():
     ("client_kwargs", "expected_error"),
     [
         (
-            {"landing_linear_speed": 1.1, "touchdown_delay_checks": 2},
+            {"contact_linear_speed": 1.1, "touchdown_delay_checks": 2},
             "linear speed",
         ),
         (
-            {"landing_angular_speed": 0.6, "touchdown_delay_checks": 2},
+            {"contact_angular_speed": 0.6, "touchdown_delay_checks": 2},
             "angular speed",
         ),
         (
