@@ -1296,6 +1296,18 @@ class PreflightShutdownFailClient(PreflightClient):
         return False
 
 
+class FlightShutdownClient(FakeClient):
+    def __init__(self, *, close_result=True):
+        super().__init__()
+        self.close_result = close_result
+        self.close_calls = 0
+        self.shutdown_detail = "injected flight client shutdown failure"
+
+    def close(self):
+        self.close_calls += 1
+        return self.close_result
+
+
 def test_preflight_cli_is_create_once_read_only_and_closes_client(
     tmp_path, monkeypatch
 ):
@@ -1405,6 +1417,53 @@ def test_preflight_fails_when_client_shutdown_is_not_clean(tmp_path, monkeypatch
     assert result["pass"] is False
     assert result["process_result"] == "FAIL"
     assert result["client_shutdown"] is False
+
+
+def test_flight_evidence_records_clean_client_shutdown_before_write(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "route.json"
+    output_path = tmp_path / "flight-shutdown-pass.json"
+    config_path.write_text(json.dumps(route_config()), encoding="utf-8")
+    client = FlightShutdownClient(close_result=True)
+    monkeypatch.setattr(
+        smoke_module,
+        "_live_client_factory",
+        lambda _config: (client, 0),
+    )
+
+    exit_code = main(["--config", str(config_path), "--out", str(output_path)])
+
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert result["pass"] is True
+    assert result["process_result"] == "PASS"
+    assert result["client_shutdown"] is True
+    assert client.close_calls == 1
+
+
+def test_flight_evidence_fails_closed_when_client_shutdown_is_unclean(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "route.json"
+    output_path = tmp_path / "flight-shutdown-fail.json"
+    config_path.write_text(json.dumps(route_config()), encoding="utf-8")
+    client = FlightShutdownClient(close_result=False)
+    monkeypatch.setattr(
+        smoke_module,
+        "_live_client_factory",
+        lambda _config: (client, 0),
+    )
+
+    exit_code = main(["--config", str(config_path), "--out", str(output_path)])
+
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code != 0
+    assert result["pass"] is False
+    assert result["process_result"] == "FAIL"
+    assert result["client_shutdown"] is False
+    assert "injected flight client shutdown failure" in result["errors"]
+    assert client.close_calls == 1
 
 
 def test_main_returns_nonzero_and_preserves_json_for_failed_capture(

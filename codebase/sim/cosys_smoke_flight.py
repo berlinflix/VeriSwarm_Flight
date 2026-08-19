@@ -1473,6 +1473,7 @@ class EvidenceRecorder:
                 "failsafe_context_created": False,
                 "timeouts": [],
             },
+            "client_shutdown": False,
             "errors": [],
             "pass": False,
             "process_result": "RUNNING",
@@ -2768,6 +2769,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 client_factory=lambda _config: client,
                 landed_state_value=landed_state_value,
             )
+            shutdown_ok, shutdown_error = _close_runtime_client(client)
+            client = None
+            result["client_shutdown"] = shutdown_ok
+            if not shutdown_ok:
+                result["pass"] = False
+                result["process_result"] = "FAIL"
+                result["errors"].append(shutdown_error)
         result["run_id"] = output_path.stem
         result["evidence_output_path"] = str(output_path)
         _write_create_once(output_path, result)

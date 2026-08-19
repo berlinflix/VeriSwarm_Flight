@@ -14,6 +14,15 @@
 Both successful values require `pass: true` and produce process exit code `0`.
 `FAIL` requires `pass: false` and produces a nonzero process exit code.
 
+Every flight evidence object records `client_shutdown: true` only after the
+runtime client has completed a clean shutdown **before** the create-once JSON is
+written. If shutdown is unclean, the runner records `client_shutdown: false`,
+adds the exact shutdown reason to `errors`, changes any provisional successful
+result to `FAIL`, and returns a nonzero process exit code. A normal `PASS` or
+`PASS_WITH_APPROVED_SIMULATOR_DEVIATION` is valid only when this final shutdown
+invariant also passed; the client is then cleared so `finally` cannot close it a
+second time.
+
 The deviation result is valid only when the recorded values are exactly:
 
 ```json
