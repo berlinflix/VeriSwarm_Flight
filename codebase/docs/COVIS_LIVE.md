@@ -43,6 +43,25 @@ coordinates from the two different viewpoints are never compared. `box_IoU`
 may be unavailable when either detector is empty, no same-class pair exists or
 the transform is invalid; that is evidence, not a value to replace with zero.
 
+The operator composite has three panels:
+
+1. Camera A with its exact detector class/confidence boxes;
+2. Camera B with its exact detector class/confidence boxes; and
+3. Camera A geometry projected into Camera B's 2-D coordinates.
+
+The third panel dims non-overlapping Camera B pixels, outlines projected Camera
+A in magenta and Camera B in blue, and fills the valid shared-view intersection
+translucent green. Projected Camera A boxes are cyan quadrilaterals; Camera B
+boxes are solid green rectangles; valid same-class box intersections are yellow.
+It displays the decision, `view_IoU`, intersection area, best `box_IoU`, RANSAC
+inliers and host receive-time skew. It must be described as **2-D
+homography-projected overlap**, never calibrated stereo or 3-D IoU.
+
+One validated `SpatialEvidence` calculation supplies both the displayed polygons
+and the JSONL metrics. NaN, infinite, degenerate, non-convex or numerically
+unbounded projections are rejected without drawing repaired geometry. A finite
+projection entirely outside Camera B is retained as explicit zero overlap.
+
 In semantic mode, both live camera panels draw the exact YOLO boxes used to
 construct the decision: mission-taxonomy class name, confidence and a
 class-stable colour. The JSONL event retains the same normalized detections.
@@ -208,14 +227,16 @@ python -m tools.covis_live `
   --camera-b-backend msmf `
   --width 640 --height 360 --fps 15 `
   --release-timeout 20 `
-  --run-id SETUP-COVIS-P2-02 `
+  --record-video --video-codec MJPG --video-fps 15 `
+  --run-id SETUP-OVERLAP-P2-01 `
   --require-cycles 0
 ```
 
 Replace camera index `0` only if the mapping probe found a different USB index.
 The display must reach `COVISIBLE`, and the `READY` line must report the expected
 backends. Adjust only physical framing during this setup run. Press `q`; the
-final line must report `release=True`.
+final line must report `release=True`. Retain a screenshot and the internally
+recorded three-panel video as feature-only review evidence.
 
 ## 6. Freeze and run the semantic demonstration
 
@@ -232,6 +253,7 @@ python -m tools.covis_live `
   --camera-b-backend msmf `
   --width 640 --height 360 --fps 15 `
   --release-timeout 20 `
+  --record-video --video-codec MJPG --video-fps 15 `
   --max-receive-skew-ms 150 `
   --m-min 15 `
   --weights yolov8n.pt `
@@ -257,14 +279,31 @@ Each run creates a new directory under `results/covis_live/<run-id>/` containing
 
 - `run_config.json` with sources, thresholds and model hash;
 - append-only `events.jsonl` with the exact displayed detections;
-- raw A/B frames plus the live-box annotated combined frame on labels/state changes;
-- `summary.json` with decision counts, completed cycles and camera-release proof.
+- raw A/B frames plus the exact three-panel annotated composite on labels/state
+  changes;
+- `video/three_panel.avi`, containing the complete displayed composite; and
+- `summary.json` with decision counts, completed cycles, video metadata and
+  camera-release proof.
+
+Every JSONL `projected_iou` record includes the projected Camera A footprint,
+Camera B frame polygon, shared-view intersection polygon and areas, projected
+Camera A boxes, Camera B boxes, every valid same-class box intersection and the
+displayed IoUs. The display does not recompute these values.
 
 The process refuses to overwrite a run directory. An accepted semantic run exits
 zero only when the required cycles pass and both sources close and reopen.
 `run_config.json` records requested backends. `summary.json` records requested
 and actual OpenCV backends plus a same-backend close/reopen probe for both
 sources.
+
+Accepted cycle runs require `--record-video`. The codec must be a four-character
+OpenCV code and defaults to `MJPG`; recording FPS defaults to capture FPS. The
+writer must open, produce at least one frame, release, create a non-empty file
+and pass a decode probe. `summary.json.video_recording` records path, SHA-256,
+codec, resolution, frames, FPS, duration and bytes. The writer is finalized
+before either camera worker is stopped and before release probes begin. A writer
+open/finalization failure fails the run. External screen recording is backup
+evidence only.
 
 Windows MSMF capture can take roughly ten seconds to return from a blocked read
 after release. The runner therefore signals both workers first and gives them one
@@ -302,6 +341,9 @@ After `COMPLETE ... release=True`:
 - **Slow MSMF shutdown:** retain `--release-timeout 20`. Both workers receive
   their release signal before the shared timer starts waiting. Preserve the run
   and report the `worker_shutdown` evidence if either worker exceeds the bound.
+- **Video writer fails:** preserve the failed run ID and its summary. Verify the
+  frozen codec is supported by P2; do not disable internal recording for an
+  accepted run or substitute external screen capture.
 - **GUI unavailable:** run feature-only diagnostics with `--headless
   --duration-seconds N --require-cycles 0`; the panel semantic cycle requires a
   display and explicit operator labels.

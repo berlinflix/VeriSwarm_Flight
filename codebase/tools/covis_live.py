@@ -55,7 +55,7 @@ from protocol.covis_features import (
     feature_alignment,
 )
 
-SCHEMA = "veriswarm.covis_live.v1"
+SCHEMA = "veriswarm.covis_live.v2"
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 VALID_LABELS = {"unlabelled", "clean", "attack", "recovery"}
 VALID_DECISIONS = {"AGREE", "DISPUTE", "ABSTAIN", "COVISIBLE"}
@@ -106,13 +106,52 @@ class DetectorObservation:
 
 
 @dataclass(frozen=True)
+class ProjectedDetectionGeometry:
+    """One detector box represented in Camera B pixel coordinates."""
+
+    source: str
+    detection_index: int
+    class_id: int
+    confidence: float
+    polygon: tuple[tuple[float, float], ...]
+
+
+@dataclass(frozen=True)
+class BoxIntersectionGeometry:
+    """One same-class A/B box comparison in Camera B coordinates."""
+
+    camera_a_index: int
+    camera_b_index: int
+    class_id: int
+    camera_a_confidence: float
+    camera_b_confidence: float
+    projected_a_polygon: tuple[tuple[float, float], ...]
+    camera_b_polygon: tuple[tuple[float, float], ...]
+    intersection_polygon: tuple[tuple[float, float], ...]
+    intersection_area_px: float
+    union_area_px: float
+    iou: float
+
+
+@dataclass(frozen=True)
 class SpatialEvidence:
-    """IoU measurements after mapping both cameras into Camera B coordinates."""
+    """Shared render/JSON geometry in Camera B's 2-D image plane."""
 
     view_overlap_iou: float | None
     same_class_best_box_iou: float | None
     same_class_candidate_pairs: int
     reason: str
+    projected_view_a_polygon: tuple[tuple[float, float], ...] = ()
+    camera_b_frame_polygon: tuple[tuple[float, float], ...] = ()
+    view_intersection_polygon: tuple[tuple[float, float], ...] = ()
+    projected_view_a_area_px: float | None = None
+    camera_b_frame_area_px: float | None = None
+    view_intersection_area_px: float | None = None
+    view_union_area_px: float | None = None
+    projected_camera_a_boxes: tuple[ProjectedDetectionGeometry, ...] = ()
+    camera_b_boxes: tuple[ProjectedDetectionGeometry, ...] = ()
+    box_intersections: tuple[BoxIntersectionGeometry, ...] = ()
+    best_box_intersection_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -261,29 +300,82 @@ def _camera_health(
     return CameraHealth(reason == "ok", reason, focus, luma, age_ms, width, height)
 
 
-def _polygon_iou(poly_a: Any, poly_b: Any, cv2_module: Any) -> float | None:
-    """Return convex-polygon IoU, or ``None`` for invalid projected geometry."""
+def _validated_polygon(
+    points: Any,
+    cv2_module: Any,
+    *,
+    coordinate_limit: float,
+) -> tuple[tuple[float, float], ...] | None:
+    """Return one finite, ordered, convex polygon without repairing bad input."""
     import numpy as np
 
     try:
-        a = np.asarray(poly_a, dtype=np.float32).reshape(-1, 2)
-        b = np.asarray(poly_b, dtype=np.float32).reshape(-1, 2)
+        polygon = np.asarray(points, dtype=np.float32).reshape(-1, 2)
     except (TypeError, ValueError):
         return None
-    if len(a) < 3 or len(b) < 3 or not np.isfinite(a).all() or not np.isfinite(b).all():
+    if (
+        len(polygon) < 3
+        or not np.isfinite(polygon).all()
+        or float(np.max(np.abs(polygon))) > coordinate_limit
+    ):
         return None
-    a = cv2_module.convexHull(a).reshape(-1, 2)
-    b = cv2_module.convexHull(b).reshape(-1, 2)
+    if not bool(cv2_module.isContourConvex(polygon)):
+        return None
+    area = float(abs(cv2_module.contourArea(polygon)))
+    if not math.isfinite(area) or area <= 1e-6:
+        return None
+    return tuple((float(x), float(y)) for x, y in polygon)
+
+
+def _polygon_metrics(
+    poly_a: tuple[tuple[float, float], ...],
+    poly_b: tuple[tuple[float, float], ...],
+    cv2_module: Any,
+    *,
+    coordinate_limit: float,
+) -> tuple[tuple[tuple[float, float], ...], float, float, float, float, float] | None:
+    """Return intersection polygon, component areas, union and IoU."""
+    import numpy as np
+
+    a = np.asarray(poly_a, dtype=np.float32)
+    b = np.asarray(poly_b, dtype=np.float32)
     area_a = float(abs(cv2_module.contourArea(a)))
     area_b = float(abs(cv2_module.contourArea(b)))
     if not math.isfinite(area_a + area_b) or area_a <= 1e-6 or area_b <= 1e-6:
         return None
-    intersection, _ = cv2_module.intersectConvexConvex(a, b)
-    intersection = max(0.0, float(intersection))
-    union = area_a + area_b - intersection
-    if union <= 1e-6 or not math.isfinite(union):
+    try:
+        intersection_area, intersection_points = cv2_module.intersectConvexConvex(a, b)
+    except Exception:
         return None
-    return max(0.0, min(1.0, intersection / union))
+    intersection_area = max(0.0, float(intersection_area))
+    intersection_polygon: tuple[tuple[float, float], ...] = ()
+    if intersection_area > 1e-6:
+        intersection_polygon_value = _validated_polygon(
+            intersection_points,
+            cv2_module,
+            coordinate_limit=coordinate_limit,
+        )
+        if intersection_polygon_value is None:
+            return None
+        intersection_polygon = intersection_polygon_value
+        measured_area = float(
+            abs(cv2_module.contourArea(np.asarray(intersection_polygon, dtype=np.float32)))
+        )
+        if not math.isfinite(measured_area):
+            return None
+        intersection_area = measured_area
+    union_area = area_a + area_b - intersection_area
+    if union_area <= 1e-6 or not math.isfinite(union_area):
+        return None
+    iou = max(0.0, min(1.0, intersection_area / union_area))
+    return (
+        intersection_polygon,
+        area_a,
+        area_b,
+        intersection_area,
+        union_area,
+        iou,
+    )
 
 
 def _project_points(points: Any, homography: Any, cv2_module: Any) -> Any | None:
@@ -338,37 +430,132 @@ def projected_iou_evidence(
     """
     height_a, width_a = frame_a.shape[:2]
     height_b, width_b = frame_b.shape[:2]
+    coordinate_limit = float(max(width_a, height_a, width_b, height_b) * 1000)
     view_a = [[0, 0], [width_a, 0], [width_a, height_a], [0, height_a]]
     view_b = [[0, 0], [width_b, 0], [width_b, height_b], [0, height_b]]
     projected_view_a = _project_points(view_a, homography_a_to_b, cv2_module)
     if projected_view_a is None:
         return SpatialEvidence(None, None, 0, "invalid_homography")
-    view_iou = _polygon_iou(projected_view_a, view_b, cv2_module)
-    if view_iou is None:
+    projected_view_polygon = _validated_polygon(
+        projected_view_a,
+        cv2_module,
+        coordinate_limit=coordinate_limit,
+    )
+    camera_b_polygon = _validated_polygon(
+        view_b,
+        cv2_module,
+        coordinate_limit=coordinate_limit,
+    )
+    if projected_view_polygon is None or camera_b_polygon is None:
         return SpatialEvidence(None, None, 0, "invalid_projected_view")
+    view_metrics = _polygon_metrics(
+        projected_view_polygon,
+        camera_b_polygon,
+        cv2_module,
+        coordinate_limit=coordinate_limit,
+    )
+    if view_metrics is None:
+        return SpatialEvidence(None, None, 0, "invalid_projected_view")
+    (
+        view_intersection_polygon,
+        projected_view_area,
+        camera_b_area,
+        view_intersection_area,
+        view_union_area,
+        view_iou,
+    ) = view_metrics
 
-    candidate_ious: list[float] = []
-    for detection_a in detections_a:
-        projected_box_a = _project_points(
+    projected_boxes_a: list[ProjectedDetectionGeometry] = []
+    camera_b_boxes: list[ProjectedDetectionGeometry] = []
+    for index, detection_a in enumerate(detections_a):
+        projected = _project_points(
             _detection_polygon(detection_a, width_a, height_a),
             homography_a_to_b,
             cv2_module,
         )
-        if projected_box_a is None:
+        if projected is None:
             continue
-        for detection_b in detections_b:
-            if detection_a.cls != detection_b.cls:
-                continue
-            iou = _polygon_iou(
-                projected_box_a,
-                _detection_polygon(detection_b, width_b, height_b),
-                cv2_module,
+        polygon = _validated_polygon(
+            projected,
+            cv2_module,
+            coordinate_limit=coordinate_limit,
+        )
+        if polygon is None:
+            continue
+        projected_boxes_a.append(
+            ProjectedDetectionGeometry(
+                "camera_a", index, detection_a.cls, detection_a.conf, polygon
             )
-            if iou is not None:
-                candidate_ious.append(iou)
-    best = max(candidate_ious) if candidate_ious else None
-    reason = "ok" if best is not None else "no_same_class_box_pair"
-    return SpatialEvidence(view_iou, best, len(candidate_ious), reason)
+        )
+    for index, detection_b in enumerate(detections_b):
+        polygon = _validated_polygon(
+            _detection_polygon(detection_b, width_b, height_b),
+            cv2_module,
+            coordinate_limit=coordinate_limit,
+        )
+        if polygon is None:
+            continue
+        camera_b_boxes.append(
+            ProjectedDetectionGeometry(
+                "camera_b", index, detection_b.cls, detection_b.conf, polygon
+            )
+        )
+
+    box_intersections: list[BoxIntersectionGeometry] = []
+    for projected_a in projected_boxes_a:
+        for box_b in camera_b_boxes:
+            if projected_a.class_id != box_b.class_id:
+                continue
+            metrics = _polygon_metrics(
+                projected_a.polygon,
+                box_b.polygon,
+                cv2_module,
+                coordinate_limit=coordinate_limit,
+            )
+            if metrics is None:
+                continue
+            intersection_polygon, _, _, intersection_area, union_area, iou = metrics
+            box_intersections.append(
+                BoxIntersectionGeometry(
+                    camera_a_index=projected_a.detection_index,
+                    camera_b_index=box_b.detection_index,
+                    class_id=projected_a.class_id,
+                    camera_a_confidence=projected_a.confidence,
+                    camera_b_confidence=box_b.confidence,
+                    projected_a_polygon=projected_a.polygon,
+                    camera_b_polygon=box_b.polygon,
+                    intersection_polygon=intersection_polygon,
+                    intersection_area_px=intersection_area,
+                    union_area_px=union_area,
+                    iou=iou,
+                )
+            )
+    best_index = (
+        max(range(len(box_intersections)), key=lambda index: box_intersections[index].iou)
+        if box_intersections
+        else None
+    )
+    best_iou = None if best_index is None else box_intersections[best_index].iou
+    reason = "ok" if best_iou is not None else "no_same_class_box_pair"
+    if view_intersection_area <= 1e-6:
+        reason = "no_view_intersection"
+    return SpatialEvidence(
+        view_overlap_iou=view_iou,
+        same_class_best_box_iou=best_iou,
+        same_class_candidate_pairs=len(box_intersections),
+        reason=reason,
+        projected_view_a_polygon=projected_view_polygon,
+        camera_b_frame_polygon=camera_b_polygon,
+        view_intersection_polygon=view_intersection_polygon,
+        projected_view_a_area_px=projected_view_area,
+        camera_b_frame_area_px=camera_b_area,
+        view_intersection_area_px=view_intersection_area,
+        view_union_area_px=view_union_area,
+        projected_camera_a_boxes=tuple(projected_boxes_a),
+        camera_b_boxes=tuple(camera_b_boxes),
+        box_intersections=tuple(box_intersections),
+        best_box_intersection_index=best_index,
+    )
 
 
 def _observation(value: Any) -> DetectorObservation:
@@ -918,6 +1105,151 @@ def _draw_detections(
         )
 
 
+def _integer_polygon(
+    polygon: Sequence[Sequence[float]],
+    width: int,
+    height: int,
+) -> Any:
+    import numpy as np
+
+    points = np.asarray(polygon, dtype=np.float32).reshape(-1, 2)
+    points[:, 0] = np.clip(points[:, 0], 0, max(0, width - 1))
+    points[:, 1] = np.clip(points[:, 1], 0, max(0, height - 1))
+    return np.rint(points).astype(np.int32).reshape(-1, 1, 2)
+
+
+def _draw_geometry_label(
+    frame: Any,
+    polygon: Sequence[Sequence[float]],
+    label: str,
+    colour: tuple[int, int, int],
+    cv2_module: Any,
+) -> None:
+    if not polygon:
+        return
+    height, width = frame.shape[:2]
+    point = _integer_polygon(polygon, width, height).reshape(-1, 2)[0]
+    x = max(4, min(width - 8, int(point[0]) + 4))
+    y = max(18, min(height - 6, int(point[1]) + 18))
+    cv2_module.putText(
+        frame,
+        label,
+        (x, y),
+        cv2_module.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        colour,
+        1,
+        cv2_module.LINE_AA,
+    )
+
+
+def _overlap_panel(
+    frame_b: Any,
+    assessment: Assessment,
+    cv2_module: Any,
+) -> Any:
+    """Render shared 2-D homography geometry from ``assessment.spatial`` only."""
+    import numpy as np
+
+    original = frame_b.copy()
+    height, width = original.shape[:2]
+    panel = cv2_module.convertScaleAbs(original, alpha=0.25, beta=0)
+    spatial = assessment.spatial
+    magenta = (255, 0, 255)
+    blue = (255, 0, 0)
+    green = (0, 255, 0)
+    cyan = (255, 255, 0)
+    yellow = (0, 255, 255)
+
+    if spatial is not None and spatial.view_intersection_polygon:
+        intersection = _integer_polygon(
+            spatial.view_intersection_polygon, width, height
+        )
+        mask = np.zeros((height, width), dtype=np.uint8)
+        cv2_module.fillConvexPoly(mask, intersection, 255)
+        panel[mask > 0] = original[mask > 0]
+        overlay = panel.copy()
+        cv2_module.fillConvexPoly(overlay, intersection, green)
+        panel = cv2_module.addWeighted(overlay, 0.22, panel, 0.78, 0)
+
+    if spatial is not None:
+        for match in spatial.box_intersections:
+            if not match.intersection_polygon:
+                continue
+            intersection = _integer_polygon(
+                match.intersection_polygon, width, height
+            )
+            overlay = panel.copy()
+            cv2_module.fillConvexPoly(overlay, intersection, yellow)
+            panel = cv2_module.addWeighted(overlay, 0.55, panel, 0.45, 0)
+            cv2_module.polylines(
+                panel, [intersection], True, yellow, 1, cv2_module.LINE_AA
+            )
+
+        if spatial.projected_view_a_polygon:
+            cv2_module.polylines(
+                panel,
+                [_integer_polygon(spatial.projected_view_a_polygon, width, height)],
+                True,
+                magenta,
+                3,
+                cv2_module.LINE_AA,
+            )
+        for box in spatial.projected_camera_a_boxes:
+            polygon = _integer_polygon(box.polygon, width, height)
+            cv2_module.polylines(
+                panel, [polygon], True, cyan, 2, cv2_module.LINE_AA
+            )
+            class_name = dict(assessment.class_names).get(
+                box.class_id, f"class_{box.class_id}"
+            )
+            _draw_geometry_label(
+                panel,
+                box.polygon,
+                f"A:{class_name} {box.confidence:.2f}",
+                cyan,
+                cv2_module,
+            )
+        for box in spatial.camera_b_boxes:
+            polygon = _integer_polygon(box.polygon, width, height)
+            cv2_module.polylines(
+                panel, [polygon], True, green, 3, cv2_module.LINE_AA
+            )
+            class_name = dict(assessment.class_names).get(
+                box.class_id, f"class_{box.class_id}"
+            )
+            _draw_geometry_label(
+                panel,
+                box.polygon,
+                f"B:{class_name} {box.confidence:.2f}",
+                green,
+                cv2_module,
+            )
+        for match in spatial.box_intersections:
+            if match.intersection_polygon:
+                cv2_module.polylines(
+                    panel,
+                    [
+                        _integer_polygon(
+                            match.intersection_polygon, width, height
+                        )
+                    ],
+                    True,
+                    yellow,
+                    2,
+                    cv2_module.LINE_AA,
+                )
+
+    frame_boundary = np.asarray(
+        [[[0, 0]], [[width - 1, 0]], [[width - 1, height - 1]], [[0, height - 1]]],
+        dtype=np.int32,
+    )
+    cv2_module.polylines(
+        panel, [frame_boundary], True, blue, 3, cv2_module.LINE_AA
+    )
+    return panel
+
+
 def _annotated_pair(
     packet_a: FramePacket,
     packet_b: FramePacket,
@@ -929,24 +1261,35 @@ def _annotated_pair(
 ) -> Any:
     a = packet_a.frame.copy()
     b = packet_b.frame.copy()
-    height = min(a.shape[0], b.shape[0], 540)
+    overlap = _overlap_panel(packet_b.frame, assessment, cv2_module)
+    height = min(a.shape[0], b.shape[0], overlap.shape[0], 540)
 
     def resized(frame: Any) -> Any:
         width = max(1, int(frame.shape[1] * height / frame.shape[0]))
         return cv2_module.resize(frame, (width, height))
 
-    a, b = resized(a), resized(b)
+    a, b, overlap = resized(a), resized(b), resized(overlap)
     _draw_detections(
         a, assessment.detections_a, assessment.class_names, cv2_module
     )
     _draw_detections(
         b, assessment.detections_b, assessment.class_names, cv2_module
     )
+    header_height = 92
     a = cv2_module.copyMakeBorder(
-        a, 66, 0, 0, 0, cv2_module.BORDER_CONSTANT, value=(0, 0, 0)
+        a, header_height, 0, 0, 0, cv2_module.BORDER_CONSTANT, value=(0, 0, 0)
     )
     b = cv2_module.copyMakeBorder(
-        b, 66, 0, 0, 0, cv2_module.BORDER_CONSTANT, value=(0, 0, 0)
+        b, header_height, 0, 0, 0, cv2_module.BORDER_CONSTANT, value=(0, 0, 0)
+    )
+    overlap = cv2_module.copyMakeBorder(
+        overlap,
+        header_height,
+        0,
+        0,
+        0,
+        cv2_module.BORDER_CONSTANT,
+        value=(0, 0, 0),
     )
     colour = {
         "AGREE": (0, 200, 0),
@@ -985,7 +1328,144 @@ def _annotated_pair(
             frame, details, (8, 50), cv2_module.FONT_HERSHEY_SIMPLEX,
             0.48, colour, 1, cv2_module.LINE_AA,
         )
-    return cv2_module.hconcat([a, b])
+    spatial = assessment.spatial
+    intersection_area = (
+        None if spatial is None else spatial.view_intersection_area_px
+    )
+    view_iou = None if spatial is None else spatial.view_overlap_iou
+    box_iou = None if spatial is None else spatial.same_class_best_box_iou
+    cv2_module.putText(
+        overlap,
+        f"{assessment.decision} | 2-D homography-projected overlap",
+        (8, 26),
+        cv2_module.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        colour,
+        2,
+        cv2_module.LINE_AA,
+    )
+    cv2_module.putText(
+        overlap,
+        f"view_IoU={'n/a' if view_iou is None else f'{view_iou:.3f}'} | "
+        f"intersection={'n/a' if intersection_area is None else f'{intersection_area:.0f} px^2'}",
+        (8, 52),
+        cv2_module.FONT_HERSHEY_SIMPLEX,
+        0.48,
+        colour,
+        1,
+        cv2_module.LINE_AA,
+    )
+    cv2_module.putText(
+        overlap,
+        f"box_IoU={'n/a' if box_iou is None else f'{box_iou:.3f}'} | "
+        f"inliers={inliers} | receive_skew={assessment.receive_skew_ms:.1f}ms",
+        (8, 76),
+        cv2_module.FONT_HERSHEY_SIMPLEX,
+        0.48,
+        colour,
+        1,
+        cv2_module.LINE_AA,
+    )
+    return cv2_module.hconcat([a, b, overlap])
+
+
+class CompositeVideoRecorder:
+    """Fail-closed recorder for the exact three-panel operator composite."""
+
+    def __init__(
+        self,
+        run_dir: Path,
+        codec: str,
+        fps: float,
+        cv2_module: Any,
+    ) -> None:
+        self.path = run_dir / "video" / "three_panel.avi"
+        self.codec = codec
+        self.fps = fps
+        self.cv2 = cv2_module
+        self.writer: Any | None = None
+        self.frames = 0
+        self.resolution: tuple[int, int] | None = None
+        self.error: str | None = None
+        self.finalized = False
+
+    def write(self, frame: Any) -> None:
+        if self.finalized:
+            raise LiveDemoError("video recorder is already finalized")
+        shape = getattr(frame, "shape", ())
+        if len(shape) != 3 or int(shape[2]) != 3:
+            raise LiveDemoError("video composite must be a three-channel image")
+        height, width = int(shape[0]), int(shape[1])
+        if width <= 0 or height <= 0:
+            raise LiveDemoError("video composite has invalid dimensions")
+        if self.writer is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            if self.path.exists():
+                raise LiveDemoError(f"refusing to overwrite video: {self.path}")
+            fourcc = self.cv2.VideoWriter_fourcc(*self.codec)
+            writer = self.cv2.VideoWriter(
+                str(self.path), fourcc, self.fps, (width, height)
+            )
+            if not writer.isOpened():
+                writer.release()
+                raise LiveDemoError(
+                    f"video writer could not open codec={self.codec!r} "
+                    f"resolution={width}x{height} fps={self.fps:g}"
+                )
+            self.writer = writer
+            self.resolution = (width, height)
+        elif self.resolution != (width, height):
+            raise LiveDemoError(
+                f"video composite resolution changed from {self.resolution} "
+                f"to {(width, height)}"
+            )
+        self.writer.write(frame)
+        self.frames += 1
+
+    def finalize(self) -> dict[str, Any]:
+        if self.finalized:
+            raise LiveDemoError("video recorder finalized more than once")
+        self.finalized = True
+        try:
+            if self.writer is not None:
+                self.writer.release()
+        except Exception as exc:
+            self.error = f"video writer release failed: {type(exc).__name__}: {exc}"
+        finally:
+            self.writer = None
+
+        if self.error is None and self.frames <= 0:
+            self.error = "video writer produced no frames"
+        if self.error is None and (
+            not self.path.is_file() or self.path.stat().st_size <= 0
+        ):
+            self.error = "video writer did not finalize a non-empty file"
+        if self.error is None:
+            probe = self.cv2.VideoCapture(str(self.path))
+            try:
+                opened = bool(probe.isOpened())
+                read, frame = probe.read() if opened else (False, None)
+                if not opened or not read or frame is None:
+                    self.error = "finalized video could not be reopened and decoded"
+            finally:
+                probe.release()
+
+        relative_path = str(self.path.parent.name + "/" + self.path.name)
+        return {
+            "enabled": True,
+            "finalized": self.error is None,
+            "path": relative_path,
+            "sha256": _sha256(self.path) if self.error is None else None,
+            "codec": self.codec,
+            "resolution": (
+                None if self.resolution is None else list(self.resolution)
+            ),
+            "frames": self.frames,
+            "fps": self.fps,
+            "duration_seconds": self.frames / self.fps,
+            "bytes": self.path.stat().st_size if self.path.is_file() else 0,
+            "error": self.error,
+        }
 
 
 def _probe_release(
@@ -1080,6 +1560,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--require-cycles", type=int)
     parser.add_argument("--duration-seconds", type=float)
+    parser.add_argument(
+        "--record-video",
+        action="store_true",
+        help="record the exact three-panel composite under the run directory",
+    )
+    parser.add_argument(
+        "--video-codec",
+        default="MJPG",
+        help="four-character OpenCV video codec (default: MJPG)",
+    )
+    parser.add_argument(
+        "--video-fps",
+        type=float,
+        help="composite recording FPS (default: capture FPS)",
+    )
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--no-release-probe", action="store_true")
     return parser
@@ -1102,6 +1597,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if args.duration_seconds is not None and args.duration_seconds <= 0:
         print("ERROR: duration-seconds must be positive")
+        return 2
+    if args.video_fps is not None and args.video_fps <= 0:
+        print("ERROR: video-fps must be positive")
+        return 2
+    if len(args.video_codec) != 4 or not args.video_codec.isascii():
+        print("ERROR: video-codec must contain exactly four ASCII characters")
         return 2
     if args.open_timeout <= 0 or args.pair_timeout <= 0:
         print("ERROR: camera timeouts must be positive")
@@ -1132,6 +1633,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if required_cycles and args.headless:
         print("ERROR: required cycles need the interactive c/a/r labels")
+        return 2
+    if required_cycles and not args.record_video:
+        print("ERROR: accepted cycle runs require --record-video")
         return 2
 
     try:
@@ -1212,6 +1716,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "fps": args.fps,
             "release_timeout_seconds": args.release_timeout,
         },
+        "video": {
+            "enabled": args.record_video,
+            "codec": args.video_codec,
+            "fps": args.video_fps or args.fps,
+            "content": "exact_three_panel_composite",
+        },
         "thresholds": {
             "max_receive_skew_ms": args.max_receive_skew_ms,
             "timestamp_semantics": "host_receive_time_not_sensor_exposure_time",
@@ -1258,6 +1768,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     released = {"camera_a_worker": False, "camera_b_worker": False}
     worker_shutdown: dict[str, dict[str, Any]] = {}
     release_probe: dict[str, Any] = {}
+    video_summary: dict[str, Any] = {"enabled": False}
+    video_recorder = (
+        CompositeVideoRecorder(
+            run_dir,
+            args.video_codec,
+            args.video_fps or args.fps,
+            cv2,
+        )
+        if args.record_video
+        else None
+    )
 
     events_path = run_dir / "events.jsonl"
     events_handle = events_path.open("x", encoding="utf-8", newline="\n")
@@ -1321,6 +1842,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         args.camera_a_name,
                         args.camera_b_name,
                     )
+            if video_recorder is not None:
+                video_recorder.write(annotated)
 
             event_sequence += 1
             event = _event_record(
@@ -1395,6 +1918,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         errors.append(f"{type(exc).__name__}: {exc}")
     finally:
         events_handle.close()
+        if video_recorder is not None:
+            try:
+                video_summary = video_recorder.finalize()
+            except Exception as exc:
+                video_summary = {
+                    "enabled": True,
+                    "finalized": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            if not video_summary.get("finalized"):
+                errors.append(
+                    f"video_finalize_failed: {video_summary.get('error', 'unknown')}"
+                )
         worker_shutdown = _shutdown_workers(
             {
                 "camera_a_worker": worker_a,
@@ -1423,7 +1959,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         or all(item.get("opened") and item.get("read") for item in release_probe.values())
     )
     cycles_ok = tracker.completed >= required_cycles
-    passed = not errors and release_ok and cycles_ok
+    video_ok = not args.record_video or bool(video_summary.get("finalized"))
+    passed = not errors and release_ok and cycles_ok and video_ok
     summary = {
         **config_record,
         "finished_at_utc": _utc_now(),
@@ -1447,6 +1984,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         "release_probe": release_probe,
         "release_verified": release_ok,
+        "video_recording": video_summary,
         "errors": errors,
         "events_sha256": _sha256(events_path),
     }

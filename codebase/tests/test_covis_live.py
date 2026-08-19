@@ -14,13 +14,16 @@ from perception.claim import PerceptionClaim  # noqa: E402
 from perception.yolo_action import Detection  # noqa: E402
 from protocol.covis_features import FeatureAlignmentResult, FeatureMatchResult  # noqa: E402
 from tools.covis_live import (  # noqa: E402
+    CompositeVideoRecorder,
     CycleTracker,
     DetectorObservation,
     FramePacket,
     LiveDemoError,
     _actual_backend,
+    _annotated_pair,
     _backend_api,
     _draw_detections,
+    _event_record,
     _open_capture,
     _parser,
     _shutdown_workers,
@@ -321,6 +324,71 @@ def test_projected_iou_identity_alignment_is_one():
     assert evidence.view_overlap_iou == pytest.approx(1.0)
     assert evidence.same_class_best_box_iou == pytest.approx(1.0)
     assert evidence.same_class_candidate_pairs == 1
+    assert evidence.view_intersection_area_px == pytest.approx(120 * 160)
+    assert len(evidence.projected_view_a_polygon) == 4
+    assert len(evidence.view_intersection_polygon) == 4
+    assert len(evidence.projected_camera_a_boxes) == 1
+    assert len(evidence.camera_b_boxes) == 1
+    assert len(evidence.box_intersections) == 1
+    assert evidence.box_intersections[0].intersection_area_px > 0
+
+
+def test_projected_view_partial_overlap_records_shared_polygon_and_area():
+    frame = _textured()
+    translation = np.array([[1, 0, 80], [0, 1, 0], [0, 0, 1]], dtype=float)
+
+    evidence = projected_iou_evidence(frame, frame, translation, (), (), cv2)
+
+    assert evidence.view_overlap_iou == pytest.approx(1 / 3)
+    assert evidence.view_intersection_area_px == pytest.approx(80 * 120)
+    assert evidence.view_union_area_px == pytest.approx(240 * 120)
+    assert len(evidence.view_intersection_polygon) == 4
+
+
+def test_projected_view_zero_overlap_is_safe_and_explicit():
+    frame = _textured()
+    translation = np.array([[1, 0, 200], [0, 1, 0], [0, 0, 1]], dtype=float)
+
+    evidence = projected_iou_evidence(frame, frame, translation, (), (), cv2)
+
+    assert evidence.reason == "no_view_intersection"
+    assert evidence.view_overlap_iou == pytest.approx(0.0)
+    assert evidence.view_intersection_area_px == pytest.approx(0.0)
+    assert evidence.view_intersection_polygon == ()
+
+
+@pytest.mark.parametrize(
+    "homography",
+    [
+        np.full((3, 3), np.nan),
+        np.zeros((3, 3)),
+        np.array([[1, 0, 0], [0, 1, 0], [0.02, 0, -1.0]], dtype=float),
+    ],
+)
+def test_invalid_or_nonconvex_projected_view_is_rejected(homography):
+    frame = _textured()
+
+    evidence = projected_iou_evidence(frame, frame, homography, (), (), cv2)
+
+    assert evidence.view_overlap_iou is None
+    assert evidence.view_intersection_polygon == ()
+    assert evidence.reason in {"invalid_homography", "invalid_projected_view"}
+
+
+def test_mismatched_classes_record_boxes_without_cross_class_iou():
+    frame = _textured()
+    detection_a = Detection(cls=2, x=0.5, y=0.5, w=0.4, h=0.25, conf=0.9)
+    detection_b = Detection(cls=7, x=0.5, y=0.5, w=0.4, h=0.25, conf=0.8)
+
+    evidence = projected_iou_evidence(
+        frame, frame, np.eye(3), (detection_a,), (detection_b,), cv2
+    )
+
+    assert evidence.same_class_best_box_iou is None
+    assert evidence.same_class_candidate_pairs == 0
+    assert len(evidence.projected_camera_a_boxes) == 1
+    assert len(evidence.camera_b_boxes) == 1
+    assert evidence.box_intersections == ()
 
 
 def test_assessment_reports_projected_iou_in_common_plane():
@@ -344,6 +412,23 @@ def test_assessment_reports_projected_iou_in_common_plane():
     assert result.spatial is not None
     assert result.spatial.view_overlap_iou == pytest.approx(1.0)
     assert result.spatial.same_class_best_box_iou == pytest.approx(1.0)
+    event = _event_record(
+        sequence=1,
+        packet_a=_packet(frame, 1, 1_000_000_000),
+        packet_b=_packet(frame.copy(), 1, 1_000_000_000),
+        assessment=result,
+        operator_label="clean",
+        camera_a_name="camera_a",
+        camera_b_name="camera_b",
+        model_sha256="a" * 64,
+        m_min=15,
+    )
+    geometry = event["projected_iou"]
+    assert geometry["projected_view_a_polygon"]
+    assert geometry["view_intersection_polygon"]
+    assert geometry["projected_camera_a_boxes"]
+    assert geometry["camera_b_boxes"]
+    assert geometry["box_intersections"][0]["intersection_polygon"]
 
 
 def test_live_overlay_draws_exact_detector_box():
@@ -355,6 +440,98 @@ def test_live_overlay_draws_exact_detector_box():
     # Normalized box maps to (30, 40)-(70, 60); a real coloured border must exist.
     assert tuple(int(value) for value in frame[40, 30]) != (0, 0, 0)
     assert np.count_nonzero(frame) > 0
+
+
+def test_composite_renders_three_panels_and_required_geometry_colours():
+    frame = _textured()
+    detection = Detection(cls=2, x=0.5, y=0.5, w=0.3, h=0.2, conf=0.91)
+    observation = DetectorObservation(
+        detections=(detection,),
+        claim=PerceptionClaim.from_detections((detection,)),
+        class_names=((2, "car"),),
+    )
+    translation = np.array([[1, 0, 20], [0, 1, 0], [0, 0, 1]], dtype=float)
+    result = assess_pair(
+        _packet(frame, 1, 1_000_000_000),
+        _packet(frame.copy(), 1, 1_000_000_000),
+        cv2_module=cv2,
+        now_monotonic_ns=1_000_000_000,
+        alignment_provider=lambda _a, _b: FeatureAlignmentResult(
+            _features()(_a, _b), translation
+        ),
+        claim_provider=lambda _frame: observation,
+    )
+
+    composite = _annotated_pair(
+        _packet(frame, 1, 1_000_000_000),
+        _packet(frame.copy(), 1, 1_000_000_000),
+        result,
+        "clean",
+        cv2,
+    )
+
+    assert composite.shape[:2] == (120 + 92, 160 * 3)
+    third = composite[:, 160 * 2 :]
+    assert np.any(np.all(third == (255, 0, 255), axis=2))  # projected A: magenta
+    assert np.any(np.all(third == (255, 0, 0), axis=2))  # B boundary: blue
+    assert np.any(np.all(third == (255, 255, 0), axis=2))  # A box: cyan
+    assert np.any(np.all(third == (0, 255, 0), axis=2))  # B box: green
+    assert np.any(np.all(third == (0, 255, 255), axis=2))  # intersection: yellow
+
+
+class _ClosedVideoWriter:
+    def isOpened(self):
+        return False
+
+    def release(self):
+        return None
+
+
+class _VideoOpenFailureCv2:
+    @staticmethod
+    def VideoWriter_fourcc(*_codec):
+        return 0
+
+    @staticmethod
+    def VideoWriter(*_args):
+        return _ClosedVideoWriter()
+
+
+def test_video_writer_open_failure_is_fail_closed(tmp_path):
+    recorder = CompositeVideoRecorder(tmp_path, "MJPG", 15.0, _VideoOpenFailureCv2)
+
+    with pytest.raises(LiveDemoError, match="could not open"):
+        recorder.write(np.zeros((100, 300, 3), dtype=np.uint8))
+
+
+class _OpenedNoFileWriter:
+    def isOpened(self):
+        return True
+
+    def write(self, _frame):
+        return None
+
+    def release(self):
+        return None
+
+
+class _VideoFinalizeFailureCv2(_VideoOpenFailureCv2):
+    @staticmethod
+    def VideoWriter(*_args):
+        return _OpenedNoFileWriter()
+
+
+def test_video_writer_finalize_failure_is_recorded(tmp_path):
+    recorder = CompositeVideoRecorder(
+        tmp_path, "MJPG", 15.0, _VideoFinalizeFailureCv2
+    )
+    recorder.write(np.zeros((100, 300, 3), dtype=np.uint8))
+
+    summary = recorder.finalize()
+
+    assert summary["finalized"] is False
+    assert summary["frames"] == 1
+    assert "did not finalize" in summary["error"]
 
 
 def test_low_overlap_still_retains_live_yolo_boxes_but_abstains():
