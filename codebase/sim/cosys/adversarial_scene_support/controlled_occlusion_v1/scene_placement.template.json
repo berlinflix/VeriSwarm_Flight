@@ -1,0 +1,31 @@
+{
+  "schema": "veriswarm.cosys_physical_artifact_placement.v1",
+  "status": "measurement_required",
+  "artifact_id": "PRATIK-CONTROLLED-OCCLUSION-01",
+  "mode": "separate_attack_mode_not_qb",
+  "implementation": {
+    "representation": "physical printed sheet for webcams or visible 3-D plane/mesh for CoSys",
+    "material": "unlit opaque material using controlled_occlusion_v1.png",
+    "digital_compositing": false,
+    "frozen_qb_modification": false
+  },
+  "required_scene_fields": [
+    "world identifier and build hash",
+    "parent object name",
+    "object size in metres",
+    "object NED pose and Unreal transform",
+    "material and texture SHA-256",
+    "camera name and extrinsics",
+    "camera FOV and resolution",
+    "target range and frame-height fraction",
+    "lighting mode",
+    "clean and attacked synchronized frame IDs"
+  ],
+  "required_variants": [
+    "target_alone_clean",
+    "target_plus_artifact",
+    "artifact_without_target",
+    "target_after_artifact_removal",
+    "honest_partial_occlusion"
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "schema": "veriswarm.pratik_adversarial_scene_support.v1",
+  "artifact_id": "PRATIK-CONTROLLED-OCCLUSION-01",
+  "status": "prepared_unvalidated",
+  "classification": "controlled_occlusion_semantic_mismatch",
+  "claims": {
+    "optimized_adversarial_patch": false,
+    "detector_evasion_proven": false,
+    "accepted_attack_evidence": false
+  },
+  "artifact": {
+    "file": "controlled_occlusion_v1.png",
+    "sha256": "2AFA959D481D6AD5B745688F43E85D0DFBA03083BCC82F4684D0AEB7F1DB1D7E",
+    "bytes": 1015911,
+    "pixel_dimensions": [1254, 1254],
+    "color_mode": "RGB"
+  },
+  "clean_control": {
+    "file": "clean_control.svg",
+    "description": "Plain white control mounted and handled in the same way as the artifact."
+  },
+  "intended_target": {
+    "class": "person",
+    "support_status": "requires_validation_with_pinned_detector",
+    "minimum_clean_confidence": 0.25,
+    "minimum_target_frame_height_fraction": 0.7
+  },
+  "print": {
+    "paper": "A4 matte white",
+    "printed_square_mm": [180, 180],
+    "scale_percent": 100,
+    "color_management": "printer_default_no_auto_enhance",
+    "copies_required": 2
+  },
+  "camera_contract": {
+    "attacked_source": "Camera A only",
+    "reference_source": "Camera B unchanged",
+    "camera_motion_during_cycle": "forbidden",
+    "digital_frame_compositing": "forbidden"
+  },
+  "experiment_order": [
+    "clean_control",
+    "artifact_applied",
+    "artifact_removed_recovery"
+  ],
+  "required_rehearsals": 3,
+  "required_measurements_before_freeze": [
+    "pinned detector file and SHA-256",
+    "Camera A and Camera B device identities",
+    "camera-to-target distance",
+    "artifact-to-camera distance",
+    "artifact yaw and pitch",
+    "lighting description",
+    "placement marks or stand coordinates",
+    "clean detector output for both cameras",
+    "attacked detector output for both cameras",
+    "recovery detector output for both cameras",
+    "raw frame and result paths for three unchanged cycles"
+  ],
+  "acceptance_rule": "Freeze only when the clean control is stable and the measured attack effect is reproducible in all three cycles; otherwise replace it with a controlled occlusion and label the result honestly.",
+  "expected_system_outcome": "measured_dispute_or_abstention_not_hard_coded"
+}
