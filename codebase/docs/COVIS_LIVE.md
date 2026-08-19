@@ -211,6 +211,35 @@ Do not upgrade Torch, Ultralytics or OpenCV after the P2 environment is frozen.
 If Torch or Ultralytics is missing, feature-only setup can proceed, but the
 semantic attack claim cannot be demonstrated until Samik reviews the P2 stack.
 
+### Portable Windows semantic-demo shortcut
+
+Git carries the portable launcher and shortcut installer, never a machine-specific
+`.lnk`, virtual environment or model weight. After checking out the reviewed camera
+commit on another Windows laptop, privately place the approved `yolov8n.pt` under
+`codebase/` and keep its required SHA-256 unchanged. From the repository root run:
+
+```powershell
+$python = "C:\path\to\approved-semantic-venv\Scripts\python.exe"
+$weights = "$PWD\codebase\yolov8n.pt"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  ".\codebase\tools\install_covis_semantic_shortcut.ps1" `
+  -PythonPath $python `
+  -WeightsPath $weights `
+  -CameraA 0 -CameraABackend dshow `
+  -CameraB 2 -CameraBBackend msmf
+```
+
+The installer validates the semantic imports and frozen model hash before creating
+`VeriSwarm Semantic Camera Demo.lnk` on that laptop's Desktop. The generated
+shortcut resolves the current checkout and local Python/model paths, generates a
+fresh create-once demo run ID on every launch and never embeds model bytes. Camera
+indices are per-laptop values: confirm the physical USB and DroidCam mapping before
+installation. Use `-ValidateOnly` to check without creating a shortcut, and use
+`-Force` only to replace the intended existing shortcut. The shortcut runs a
+zero-required-cycle local demonstration; it is not acceptance evidence and does not
+authorize the three-cycle qualification.
+
 ## 5. Feature-only alignment run
 
 This proves capture, health, skew and co-visibility only. Samik's preserved P2
