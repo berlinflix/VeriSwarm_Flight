@@ -522,11 +522,23 @@ class CycleTracker:
         self.phase = "clean"
         self.completed = 0
 
-    def observe(self, operator_label: str, decision: str, reason: str) -> bool:
+    def observe(
+        self,
+        operator_label: str,
+        decision: str,
+        reason: str,
+        *,
+        both_detected: bool = True,
+    ) -> bool:
         if operator_label not in VALID_LABELS or decision not in VALID_DECISIONS:
             raise ValueError("invalid cycle observation")
         advanced = False
-        if self.phase == "clean" and operator_label == "clean" and decision == "AGREE":
+        if (
+            self.phase == "clean"
+            and operator_label == "clean"
+            and decision == "AGREE"
+            and both_detected
+        ):
             self.phase = "attack"
             advanced = True
         elif (
@@ -543,6 +555,7 @@ class CycleTracker:
             self.phase == "recovery"
             and operator_label == "recovery"
             and decision == "AGREE"
+            and both_detected
         ):
             self.completed += 1
             self.phase = "clean"
@@ -655,16 +668,62 @@ class CaptureWorker:
         with self._lock:
             return self._latest
 
-    def close(self, join_timeout: float = 3.0) -> bool:
+    def request_stop(self) -> None:
+        """Signal capture shutdown and ask OpenCV to unblock any pending read."""
         self._stop.set()
         capture = self._capture
         if capture is not None:
             capture.release()
+
+    def join(self, join_timeout: float) -> bool:
+        """Wait a bounded time for the capture thread to release its backend."""
         thread = self._thread
         if thread is not None:
             thread.join(join_timeout)
             return not thread.is_alive()
         return True
+
+    def close(self, join_timeout: float = 20.0) -> bool:
+        self.request_stop()
+        return self.join(join_timeout)
+
+
+def _shutdown_workers(
+    workers: Mapping[str, CaptureWorker],
+    timeout: float,
+) -> dict[str, dict[str, Any]]:
+    """Stop all workers first, then join them within one shared deadline."""
+    started = time.monotonic()
+    deadline = started + timeout
+    results: dict[str, dict[str, Any]] = {}
+    for name, worker in workers.items():
+        error: str | None = None
+        try:
+            worker.request_stop()
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        results[name] = {
+            "closed": False,
+            "elapsed_ms": None,
+            "timeout_seconds": timeout,
+            "error": error,
+        }
+    for name, worker in workers.items():
+        error = results[name]["error"]
+        closed = False
+        try:
+            closed = worker.join(max(0.0, deadline - time.monotonic()))
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            error = detail if error is None else f"{error}; {detail}"
+        results[name].update(
+            {
+                "closed": closed,
+                "elapsed_ms": (time.monotonic() - started) * 1000.0,
+                "error": error,
+            }
+        )
+    return results
 
 
 class YoloClaimProvider:
@@ -994,6 +1053,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--open-timeout", type=float, default=10.0)
     parser.add_argument("--pair-timeout", type=float, default=3.0)
     parser.add_argument(
+        "--release-timeout",
+        type=float,
+        default=20.0,
+        help="shared bounded seconds for both capture workers to close",
+    )
+    parser.add_argument(
         "--max-receive-skew-ms",
         "--max-skew-ms",
         dest="max_receive_skew_ms",
@@ -1040,6 +1105,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if args.open_timeout <= 0 or args.pair_timeout <= 0:
         print("ERROR: camera timeouts must be positive")
+        return 2
+    if not 0 < args.release_timeout <= 60:
+        print("ERROR: release-timeout must be in (0, 60] seconds")
         return 2
     if args.max_receive_skew_ms <= 0 or args.max_frame_age_ms <= 0:
         print("ERROR: receive-skew and frame-age bounds must be positive")
@@ -1138,7 +1206,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             "source": args.camera_b,
             "requested_backend": args.camera_b_backend,
         },
-        "capture": {"width": args.width, "height": args.height, "fps": args.fps},
+        "capture": {
+            "width": args.width,
+            "height": args.height,
+            "fps": args.fps,
+            "release_timeout_seconds": args.release_timeout,
+        },
         "thresholds": {
             "max_receive_skew_ms": args.max_receive_skew_ms,
             "timestamp_semantics": "host_receive_time_not_sensor_exposure_time",
@@ -1183,6 +1256,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     started_monotonic = time.monotonic()
     stop_reason = "unknown"
     released = {"camera_a_worker": False, "camera_b_worker": False}
+    worker_shutdown: dict[str, dict[str, Any]] = {}
     release_probe: dict[str, Any] = {}
 
     events_path = run_dir / "events.jsonl"
@@ -1262,13 +1336,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             manual_label = key in (ord("c"), ord("a"), ord("r"))
             manual_save = key == ord("s")
+            both_detected = bool(
+                assessment.claim_a is not None
+                and assessment.claim_b is not None
+                and assessment.claim_a.detections_present
+                and assessment.claim_b.detections_present
+            )
             advanced = tracker.observe(
-                operator_label, assessment.decision, assessment.reason
+                operator_label,
+                assessment.decision,
+                assessment.reason,
+                both_detected=both_detected,
             ) if manual_label else False
+            cycle_blocked_reason = None
+            if (
+                manual_label
+                and operator_label in {"clean", "recovery"}
+                and assessment.decision == "AGREE"
+                and not both_detected
+            ):
+                cycle_blocked_reason = "both_camera_detections_required"
             event["cycle"] = {
                 "advanced": advanced,
                 "next_phase": tracker.phase,
                 "completed": tracker.completed,
+                "both_cameras_detected": both_detected,
+                "blocked_reason": cycle_blocked_reason,
             }
             signature = (operator_label, assessment.decision)
             if manual_label or manual_save or signature != last_saved_signature:
@@ -1302,8 +1395,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         errors.append(f"{type(exc).__name__}: {exc}")
     finally:
         events_handle.close()
-        released["camera_a_worker"] = worker_a.close()
-        released["camera_b_worker"] = worker_b.close()
+        worker_shutdown = _shutdown_workers(
+            {
+                "camera_a_worker": worker_a,
+                "camera_b_worker": worker_b,
+            },
+            args.release_timeout,
+        )
+        released = {
+            name: bool(result["closed"] and result["error"] is None)
+            for name, result in worker_shutdown.items()
+        }
         if not args.headless:
             cv2.destroyAllWindows()
         if not args.no_release_probe:
@@ -1332,6 +1434,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "cycles_completed": tracker.completed,
         "cycles_required": required_cycles,
         "worker_release": released,
+        "worker_shutdown": worker_shutdown,
         "capture_backend": {
             "camera_a": {
                 "requested": args.camera_a_backend,

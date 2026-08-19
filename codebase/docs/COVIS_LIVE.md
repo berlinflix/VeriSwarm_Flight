@@ -49,6 +49,11 @@ class-stable colour. The JSONL event retains the same normalized detections.
 These are not a second visualization-only inference pass, so the screen and
 decision evidence cannot silently diverge.
 
+A clean or recovery key press advances a counted cycle only when both camera
+claims contain detections. Empty-versus-empty semantic agreement is still an
+honest scene result, but it cannot satisfy this physical target demonstration;
+the event records `both_camera_detections_required` instead.
+
 ## 1. Physical configuration
 
 1. Mount the Android phone in landscape orientation on the tripod. Use the rear
@@ -150,6 +155,7 @@ python -m tools.covis_live `
   --camera-a 0 --camera-a-name usb_webcam --camera-a-backend dshow `
   --camera-b "http://PHONE_IP:PORT/VIDEO_PATH" `
   --camera-b-name android_local_fallback --camera-b-backend ffmpeg `
+  --release-timeout 20 `
   --run-id SETUP-PHONE-FALLBACK-01 --require-cycles 0
 ```
 
@@ -188,18 +194,21 @@ semantic attack claim cannot be demonstrated until Samik reviews the P2 stack.
 
 ## 5. Feature-only alignment run
 
-This proves capture, health, skew and co-visibility only:
+This proves capture, health, skew and co-visibility only. Samik's preserved P2
+diagnostic mapped the Owl USB webcam to index `0`/DSHOW and the DroidCam virtual
+camera to index `2`/MSMF. Reconfirm those views after any USB/device change.
 
 ```powershell
 python -m tools.covis_live `
   --camera-a 0 `
   --camera-a-name usb_webcam `
   --camera-a-backend dshow `
-  --camera-b "http://PHONE_IP:4747/video" `
+  --camera-b 2 `
   --camera-b-name android_droidcam `
-  --camera-b-backend ffmpeg `
+  --camera-b-backend msmf `
   --width 640 --height 360 --fps 15 `
-  --run-id SETUP-COVIS-01 `
+  --release-timeout 20 `
+  --run-id SETUP-COVIS-P2-02 `
   --require-cycles 0
 ```
 
@@ -218,15 +227,16 @@ python -m tools.covis_live `
   --camera-a 0 `
   --camera-a-name usb_webcam `
   --camera-a-backend dshow `
-  --camera-b "http://PHONE_IP:4747/video" `
+  --camera-b 2 `
   --camera-b-name android_droidcam `
-  --camera-b-backend ffmpeg `
+  --camera-b-backend msmf `
   --width 640 --height 360 --fps 15 `
+  --release-timeout 20 `
   --max-receive-skew-ms 150 `
   --m-min 15 `
   --weights yolov8n.pt `
   --expected-model-sha256 f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36 `
-  --run-id IHQ-20260819-WEBCAM-01 `
+  --run-id IHQ-20260819-WEBCAM-P2-01 `
   --require-cycles 3
 ```
 
@@ -256,6 +266,13 @@ zero only when the required cycles pass and both sources close and reopen.
 and actual OpenCV backends plus a same-backend close/reopen probe for both
 sources.
 
+Windows MSMF capture can take roughly ten seconds to return from a blocked read
+after release. The runner therefore signals both workers first and gives them one
+shared, bounded 20-second shutdown budget. Keep `--release-timeout 20` in the
+frozen P2 command. `summary.json.worker_shutdown` records each worker's closed
+state, observed elapsed time, timeout and error. Do not raise the bound during an
+accepted run; a worker still alive after the bound makes `release_verified=false`.
+
 After `COMPLETE ... release=True`:
 
 1. close DroidCam on the phone/client;
@@ -278,6 +295,13 @@ After `COMPLETE ... release=True`:
 - **YOLO disagreement in clean state:** verify both views contain the same
   supported class and that the model hash is correct. Do not call a clean
   disagreement an attack success.
+- **No boxes on either panel:** feature-only mode intentionally has no detector
+  boxes. For boxes and class highlighting on both cameras, use semantic mode
+  with the pinned weights. Stop if either clean view cannot detect the supported
+  target; the exact boxes used for each claim must be visible on its panel.
+- **Slow MSMF shutdown:** retain `--release-timeout 20`. Both workers receive
+  their release signal before the shared timer starts waiting. Preserve the run
+  and report the `worker_shutdown` evidence if either worker exceeds the bound.
 - **GUI unavailable:** run feature-only diagnostics with `--headless
   --duration-seconds N --require-cycles 0`; the panel semantic cycle requires a
   display and explicit operator labels.

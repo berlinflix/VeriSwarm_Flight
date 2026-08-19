@@ -22,6 +22,8 @@ from tools.covis_live import (  # noqa: E402
     _backend_api,
     _draw_detections,
     _open_capture,
+    _parser,
+    _shutdown_workers,
     _source_value,
     assess_pair,
     projected_iou_evidence,
@@ -114,6 +116,45 @@ def test_missing_backend_fails_closed():
 def test_unknown_backend_fails_closed():
     with pytest.raises(LiveDemoError, match="unsupported capture backend"):
         _backend_api("invented", _FakeCv2)
+
+
+class _FakeWorker:
+    def __init__(self, name, calls):
+        self.name = name
+        self.calls = calls
+        self.join_timeout = None
+
+    def request_stop(self):
+        self.calls.append((self.name, "stop"))
+
+    def join(self, timeout):
+        self.calls.append((self.name, "join"))
+        self.join_timeout = timeout
+        return True
+
+
+def test_shutdown_signals_both_workers_before_joining_with_shared_budget():
+    calls = []
+    camera_a = _FakeWorker("a", calls)
+    camera_b = _FakeWorker("b", calls)
+
+    result = _shutdown_workers(
+        {"camera_a_worker": camera_a, "camera_b_worker": camera_b},
+        timeout=20.0,
+    )
+
+    assert calls == [("a", "stop"), ("b", "stop"), ("a", "join"), ("b", "join")]
+    assert 0 < camera_a.join_timeout <= 20.0
+    assert 0 < camera_b.join_timeout <= 20.0
+    assert result["camera_a_worker"]["closed"] is True
+    assert result["camera_b_worker"]["closed"] is True
+    assert result["camera_a_worker"]["error"] is None
+
+
+def test_parser_defaults_to_msmf_safe_bounded_release_timeout():
+    args = _parser().parse_args(["--camera-a", "0", "--camera-b", "2"])
+
+    assert args.release_timeout == 20.0
 
 
 def test_excessive_capture_skew_abstains_before_matching():
@@ -231,6 +272,27 @@ def test_cycle_tracker_requires_explicit_valid_clean_attack_recovery():
     assert tracker.observe("recovery", "AGREE", "semantic_agreement")
     assert tracker.completed == 1
     assert tracker.phase == "clean"
+
+
+def test_cycle_tracker_requires_boxes_in_both_clean_and_recovery_views():
+    tracker = CycleTracker()
+
+    assert not tracker.observe(
+        "clean", "AGREE", "semantic_agreement", both_detected=False
+    )
+    assert tracker.phase == "clean"
+    assert tracker.observe(
+        "clean", "AGREE", "semantic_agreement", both_detected=True
+    )
+    assert tracker.observe("attack", "DISPUTE", "semantic_disagreement")
+    assert not tracker.observe(
+        "recovery", "AGREE", "semantic_agreement", both_detected=False
+    )
+    assert tracker.phase == "recovery"
+    assert tracker.observe(
+        "recovery", "AGREE", "semantic_agreement", both_detected=True
+    )
+    assert tracker.completed == 1
 
 
 def test_feature_overlap_abstention_can_be_recorded_as_attack_evidence():
