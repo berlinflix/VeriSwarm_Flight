@@ -67,4 +67,9 @@ It never enables API control, arms, takes off, resets or moves the vehicle.
 The JSON passes only when the read-only checks and clean client shutdown all
 succeed. A poisoned or force-terminated RPC context reports
 `client_shutdown: false`; it is never represented as a clean shutdown. Console
-capture remains an operator-owned, create-once companion file.
+capture remains an operator-owned, create-once companion file. A process-owned
+CoSys client is cleanly shut down only after its owning child process completes
+vendor cleanup, cancels and gathers all remaining event-loop tasks, acknowledges
+that outcome to the parent, and then exits. Any child cleanup failure, pending
+task that cannot be drained, or forced termination reports `client_shutdown:
+false` with the shutdown reason retained in the evidence.

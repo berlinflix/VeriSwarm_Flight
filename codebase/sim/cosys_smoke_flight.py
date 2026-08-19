@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import functools
 import hashlib
+import inspect
 import json
 import math
 import multiprocessing
@@ -59,17 +60,73 @@ class StageTimeout(FlightInvariantError):
     """Raised when a bounded simulator operation exceeds its declared timeout."""
 
 
-def _close_vendor_client(client: Any) -> None:
+def _close_vendor_client(client: Any) -> Any:
     """Close a vendor client on the execution context that owns it."""
 
     close = getattr(client, "close", None)
     if callable(close):
-        close()
-        return
+        return close()
     transport = getattr(client, "client", None)
     close = getattr(transport, "close", None)
     if callable(close):
-        close()
+        return close()
+    return None
+
+
+async def _cancel_and_drain_loop_tasks(loop: asyncio.AbstractEventLoop) -> list[str]:
+    """Cancel every remaining child-loop task and wait until it has settled."""
+
+    current_task = asyncio.current_task(loop=loop)
+    failures: list[str] = []
+    for _attempt in range(4):
+        pending = [
+            task
+            for task in asyncio.all_tasks(loop)
+            if task is not current_task and not task.done()
+        ]
+        if not pending:
+            return failures
+        for task in pending:
+            task.cancel()
+        outcomes = await asyncio.gather(*pending, return_exceptions=True)
+        for outcome in outcomes:
+            if isinstance(outcome, asyncio.CancelledError):
+                continue
+            if isinstance(outcome, BaseException):
+                failures.append(
+                    f"pending event-loop task failed during cancellation: "
+                    f"{type(outcome).__name__}: {outcome}"
+                )
+    remaining = [
+        task
+        for task in asyncio.all_tasks(loop)
+        if task is not current_task and not task.done()
+    ]
+    if remaining:
+        failures.append(
+            f"{len(remaining)} event-loop task(s) remained pending after cancellation"
+        )
+    return failures
+
+
+def _cleanup_rpc_process_client(
+    client: Any, loop: asyncio.AbstractEventLoop
+) -> str | None:
+    """Clean up a vendor client and drain its owning loop before acknowledgement."""
+
+    failures: list[str] = []
+    try:
+        close_result = _close_vendor_client(client)
+        if inspect.isawaitable(close_result):
+            loop.run_until_complete(close_result)
+    except BaseException as exc:
+        failures.append(f"vendor client close failed: {type(exc).__name__}: {exc}")
+
+    try:
+        failures.extend(loop.run_until_complete(_cancel_and_drain_loop_tasks(loop)))
+    except BaseException as exc:
+        failures.append(f"event-loop cleanup failed: {type(exc).__name__}: {exc}")
+    return "; ".join(failures) if failures else None
 
 
 def _construct_live_cosys_client(host: str, port: int, timeout: float) -> Any:
@@ -90,6 +147,18 @@ def _rpc_process_entry(connection: Any, client_factory: Callable[[], Any]) -> No
     client: Any | None = None
     futures: dict[int, Any] = {}
     next_future_id = 1
+    cleanup_attempted = False
+    cleanup_error: str | None = None
+    cleanup_error_reported = False
+
+    def cleanup() -> str | None:
+        nonlocal cleanup_attempted, cleanup_error
+        if not cleanup_attempted:
+            cleanup_attempted = True
+            if client is not None:
+                cleanup_error = _cleanup_rpc_process_client(client, loop)
+        return cleanup_error
+
     try:
         try:
             client = client_factory()
@@ -102,7 +171,9 @@ def _rpc_process_entry(connection: Any, client_factory: Callable[[], Any]) -> No
             request = connection.recv()
             kind, request_id, payload = request
             if kind == "CLOSE":
-                connection.send((request_id, True, None))
+                error = cleanup()
+                connection.send((request_id, error is None, error))
+                cleanup_error_reported = True
                 return
             try:
                 if kind == "CALL":
@@ -129,16 +200,14 @@ def _rpc_process_entry(connection: Any, client_factory: Callable[[], Any]) -> No
     except (EOFError, BrokenPipeError):
         return
     finally:
-        if client is not None:
-            try:
-                _close_vendor_client(client)
-            except BaseException:
-                pass
+        error = cleanup()
         try:
             connection.close()
         finally:
             asyncio.set_event_loop(None)
             loop.close()
+        if error is not None and not cleanup_error_reported:
+            raise RuntimeError(f"CoSys child cleanup failed: {error}")
 
 
 class _RpcProcessWorker:
@@ -159,6 +228,7 @@ class _RpcProcessWorker:
         self._usable = True
         self._closed = False
         self._shutdown_clean: bool | None = None
+        self._shutdown_detail: str | None = None
         context = multiprocessing.get_context("spawn")
         parent_connection, child_connection = context.Pipe()
         self._connection = parent_connection
@@ -193,6 +263,11 @@ class _RpcProcessWorker:
         with self._state_lock:
             return self._usable and not self._closed
 
+    @property
+    def shutdown_detail(self) -> str | None:
+        with self._state_lock:
+            return self._shutdown_detail
+
     def _terminate_process(self) -> None:
         process = self._process
         if process.is_alive():
@@ -215,6 +290,7 @@ class _RpcProcessWorker:
                 self._usable = False
                 notify = True
             self._shutdown_clean = False
+            self._shutdown_detail = reason
         self._terminate_process()
         if notify and notify_timeout and self._on_timeout is not None:
             self._on_timeout(reason, timeout_seconds)
@@ -312,12 +388,34 @@ class _RpcProcessWorker:
                 request_id = self._request_id
                 self._connection.send(("CLOSE", request_id, None))
                 if self._connection.poll(1.0):
-                    response_id, succeeded, _value = self._connection.recv()
-                    if response_id == request_id and succeeded:
+                    response_id, succeeded, value = self._connection.recv()
+                    if response_id != request_id:
+                        self._shutdown_detail = (
+                            "client shutdown received an out-of-order RPC reply"
+                        )
+                    elif not succeeded:
+                        self._shutdown_detail = (
+                            f"child client cleanup failed: {value}"
+                        )
+                    else:
                         self._process.join(timeout=1.0)
                         graceful = not self._process.is_alive()
-            except (EOFError, BrokenPipeError, OSError):
-                pass
+                        if not graceful:
+                            self._shutdown_detail = (
+                                "child acknowledged cleanup but did not exit cleanly"
+                            )
+                else:
+                    self._shutdown_detail = "client shutdown acknowledgement timed out"
+            except (EOFError, BrokenPipeError, OSError) as exc:
+                self._shutdown_detail = (
+                    f"client shutdown RPC failed: {type(exc).__name__}: {exc}"
+                )
+        elif was_usable:
+            self._shutdown_detail = "client process was not alive for clean shutdown"
+        else:
+            self._shutdown_detail = self._shutdown_detail or (
+                "client context was already poisoned or force-terminated"
+            )
         self._terminate_process()
         try:
             self._connection.close()
@@ -382,6 +480,8 @@ class _ProcessAffineCosysClient:
         self._failsafe_mode = False
         self._had_forced_termination = False
         self._closed = False
+        self._shutdown_clean: bool | None = None
+        self._shutdown_detail: str | None = None
         self._command = self._new_worker("command")
         try:
             self._observation = self._new_worker("observation")
@@ -474,17 +574,34 @@ class _ProcessAffineCosysClient:
             "timeouts": list(self._timeouts),
         }
 
+    @property
+    def shutdown_detail(self) -> str | None:
+        return self._shutdown_detail
+
     def close(self) -> bool:
         if self._closed:
-            return not self._had_forced_termination
+            return self._shutdown_clean is True
         self._closed = True
         observation_closed = self._observation.close()
         command_closed = self._command.close()
-        return (
+        clean = (
             not self._had_forced_termination
             and observation_closed
             and command_closed
         )
+        details = [
+            detail
+            for detail in (
+                self._observation.shutdown_detail,
+                self._command.shutdown_detail,
+            )
+            if detail
+        ]
+        if self._had_forced_termination:
+            details.append("one or more RPC contexts required forced termination")
+        self._shutdown_detail = "; ".join(details) if details else None
+        self._shutdown_clean = clean
+        return clean
 
 
 @dataclass(frozen=True)
@@ -2532,6 +2649,9 @@ def _close_runtime_client(client: Any) -> tuple[bool, str | None]:
     except BaseException as exc:
         return False, f"client shutdown failed: {type(exc).__name__}: {exc}"
     if closed is False:
+        detail = getattr(client, "shutdown_detail", None)
+        if isinstance(detail, str) and detail:
+            return False, detail
         return False, "client shutdown required forced termination"
     return True, None
 

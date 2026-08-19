@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -93,6 +94,33 @@ class ProcessSafetyAbortClient:
         assert os.getpid() == self.owner_pid
         assert threading.get_ident() == self.owner_thread
         assert id(smoke_module.asyncio.get_event_loop()) == self.owner_loop
+
+
+class ProcessPendingTransportTaskClient:
+    """Child fake that would emit a pending-task warning without loop draining."""
+
+    def __init__(self, stderr_path):
+        self._stderr_handle = open(stderr_path, "w", encoding="utf-8", buffering=1)
+        sys.stderr = self._stderr_handle
+        self.owner_pid = os.getpid()
+        self.owner_thread = threading.get_ident()
+        self.owner_loop = id(smoke_module.asyncio.get_event_loop())
+        self._transport_task = smoke_module.asyncio.get_event_loop().create_task(
+            self._send_message()
+        )
+
+    async def _send_message(self):
+        await smoke_module.asyncio.Event().wait()
+
+    def close(self):
+        assert os.getpid() == self.owner_pid
+        assert threading.get_ident() == self.owner_thread
+        assert id(smoke_module.asyncio.get_event_loop()) == self.owner_loop
+
+
+class ProcessVendorCloseFailureClient:
+    def close(self):
+        raise RuntimeError("vendor close refused")
 
 
 class DirectLoopSensitiveClient:
@@ -253,6 +281,35 @@ def test_process_rpc_timeout_terminates_orphan_before_late_completion(tmp_path):
         ):
             worker.call("ping", 0.1, "ping", (), {})
         assert worker.close() is False
+    finally:
+        worker.close()
+
+
+def test_process_close_drains_pending_transport_task_with_empty_child_stderr(tmp_path):
+    stderr_path = tmp_path / "child-stderr.txt"
+    worker = smoke_module._RpcProcessWorker(
+        "pending-transport",
+        smoke_module.functools.partial(
+            ProcessPendingTransportTaskClient, str(stderr_path)
+        ),
+        2.0,
+    )
+    try:
+        assert worker.close() is True
+        assert worker.shutdown_detail is None
+        assert stderr_path.read_text(encoding="utf-8") == ""
+    finally:
+        worker.close()
+
+
+def test_process_close_propagates_child_vendor_cleanup_failure():
+    worker = smoke_module._RpcProcessWorker(
+        "vendor-close-failure", ProcessVendorCloseFailureClient, 2.0
+    )
+    try:
+        assert worker.close() is False
+        assert worker.shutdown_detail is not None
+        assert "vendor close refused" in worker.shutdown_detail
     finally:
         worker.close()
 
