@@ -1,0 +1,26 @@
+{
+  "schema": "veriswarm.covis_multicam.launch.v1",
+  "cameras": [
+    {
+      "name": "cam1",
+      "source": "0",
+      "backend": "dshow"
+    },
+    {
+      "name": "cam2",
+      "source": "REPLACE_WITH_PHONE_1_LOCAL_VIDEO_URL",
+      "backend": "ffmpeg"
+    }
+  ],
+  "width": 640,
+  "height": 360,
+  "fps": 15,
+  "analysis_fps": 3,
+  "release_timeout": 20,
+  "display_width": 1600,
+  "display_height": 900,
+  "record_video": true,
+  "video_codec": "MJPG",
+  "video_fps": 3,
+  "run_id_prefix": "DEMO-MULTICAM-P2"
+}

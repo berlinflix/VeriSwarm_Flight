@@ -74,6 +74,47 @@ For distinct virtual devices, use each verified index/backend instead:
 --camera cam2 2 msmf --camera cam3 3 dshow --camera cam4 4 dshow
 ```
 
+## Portable variable-camera shortcut
+
+The GitHub handoff includes a JSON-driven Windows launcher and shortcut installer.
+Copy the tracked example to a local ignored configuration and replace every
+placeholder with a genuinely different source:
+
+```powershell
+Copy-Item `
+  ".\config\covis_multicam.example.json" `
+  ".\config\covis_multicam.local.json"
+```
+
+The local JSON accepts 2–5 entries under `cameras`. Add or remove whole camera
+objects; do not edit Python or the shortcut when the source count changes. The
+launcher rejects placeholder, empty, duplicate or unsupported sources before it
+opens any camera.
+
+From `codebase`, validate the local configuration and frozen semantic runtime:
+
+```powershell
+$python = "C:\path\to\approved-semantic-venv\Scripts\python.exe"
+$weights = ".\yolov8n.pt"
+$config = ".\config\covis_multicam.local.json"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  ".\tools\install_covis_multicam_shortcut.ps1" `
+  -CameraConfigPath $config `
+  -PythonPath $python `
+  -WeightsPath $weights `
+  -ValidateOnly
+```
+
+If validation passes, repeat the same command without `-ValidateOnly`. It creates
+`VeriSwarm Multi-Camera Demo.lnk` on that laptop's Desktop. The `.lnk` stores only
+that laptop's resolved script, Python, model and local-config paths. Each launch
+reads the current local JSON and creates a unique run ID, so changing from two to
+three or four cameras requires only a validated JSON edit. Use `-FeatureOnly` on
+both installer and launcher only when intentionally omitting YOLO. The generated
+shortcut is an experimental zero-acceptance-cycle dashboard and does not authorize
+qualification evidence.
+
 ## Operation and evidence
 
 - `s` saves the exact dashboard under `screenshots/`.
