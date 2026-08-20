@@ -1,0 +1,43 @@
+{
+  "ApiServerPort": 41451,
+  "LocalHostIp": "127.0.0.1",
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor",
+  "Vehicles": {
+    "alpha": {
+      "VehicleType": "SimpleFlight",
+      "X": -4.5,
+      "Y": 4.5,
+      "Yaw": 0,
+      "Z": 0.0
+    },
+    "bravo": {
+      "VehicleType": "SimpleFlight",
+      "X": 4.5,
+      "Y": -4.5,
+      "Yaw": 15,
+      "Z": 0.0
+    },
+    "charlie": {
+      "VehicleType": "SimpleFlight",
+      "X": 4.5,
+      "Y": 4.5,
+      "Yaw": 30,
+      "Z": 0.0
+    },
+    "delta": {
+      "VehicleType": "SimpleFlight",
+      "X": -4.5,
+      "Y": -4.5,
+      "Yaw": 45,
+      "Z": 0.0
+    },
+    "echo": {
+      "VehicleType": "SimpleFlight",
+      "X": -0.8999999999999999,
+      "Y": -0.8999999999999999,
+      "Yaw": 60,
+      "Z": 0.0
+    }
+  }
+}

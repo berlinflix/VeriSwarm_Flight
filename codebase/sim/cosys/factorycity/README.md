@@ -10,6 +10,8 @@ evidence remain external content-addressed artifacts.
 - Base: `origin/main` at `4c83e7b8550dda407acb53705a29aec088a3c9d6`
 - Phase 0 status: frozen and verified
 - Phase 1 status: configuration contract implemented; live scene acceptance remains pending
+- Phase 2 status: deterministic placement and artifact rendering implemented; live
+  FactoryCity clearance remains pending Phase 3
 
 ## Scope
 
@@ -57,6 +59,12 @@ until the earlier gate passes with retained evidence.
 - `factorycity_five_drone.template.json` declares the intended five-vehicle, 10 m by 10 m
   contract. Its `TEMPLATE_NOT_SCENE_VALIDATED` status is intentional; Phase 3 scene
   qualification is required before promotion to `ACCEPTED`.
+- `launch.py` calculates usable square bounds, derives a candidate lattice from configured
+  fleet size and separation, calls a scene-clearance provider for every candidate, performs
+  seeded max-min selection, revalidates the resulting plan, and renders deterministic CoSys
+  settings and launch-manifest bytes.
+- `examples/` contains a prominently labelled synthetic renderer example, never live scene
+  evidence.
 
 ## Loading a contract
 
@@ -68,6 +76,24 @@ cross-section mismatches raise `ConfigurationError` before RPC creation.
 The accepted scenario values belong in a reviewed configuration derived from the template.
 Controller and adapter modules consume the validated object; they must not copy roster,
 geometry, endpoint, limit, timeout, order, or policy values into source code.
+
+## Phase 2 placement boundary
+
+`generate_launch_plan(config, clearance_provider)` works for configured fleet size `N`.
+The provider identity must match configuration and must return explicit ground-support,
+vertical-corridor, ground-height, reason, and evidence values. Missing, malformed, blocked,
+or inconsistent results fail closed.
+
+`render_cosys_settings(config, plan, base_settings)` independently revalidates the complete
+plan and patches only the exact configured roster's `VehicleType` and `X/Y/Z` values. All
+other CoSys values must be present in the caller-supplied base settings document; the
+renderer provides no endpoint, orientation, sensor, or runtime defaults.
+
+`render_launch_manifest(...)` records every clearance evaluation, generator input, selected
+position, pairwise distance, safety check, the exact configuration hash, and the generated
+settings hash. It contains no timestamp, so identical inputs produce identical bytes.
+`write_create_once(...)` persists those bytes with exclusive creation and rejects any
+attempt to replace existing evidence.
 
 ## Never commit here
 
