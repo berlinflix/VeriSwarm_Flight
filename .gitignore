@@ -25,6 +25,7 @@ results/*.jsonl.lock
 sim/demo_frames/
 sim/captured/
 codebase/results/covis_live/
+codebase/results/covis_multicam/
 
 # Pinned model weights are transferred privately and verified at runtime.
 codebase/yolov8n.pt

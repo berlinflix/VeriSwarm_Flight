@@ -1,0 +1,104 @@
+# Experimental VeriSwarm multi-camera dashboard
+
+## Scope and plan boundary
+
+`tools.covis_multicam` is an experimental 2–5 source visualizer. It does not
+replace the frozen `tools.covis_live` two-camera internal-qualifier command,
+Samik's reviewed semantic shortcut, or Suyash's current GO/NO-GO contract.
+Use a new run ID and retain its evidence separately. Suyash must approve any
+future use as qualification evidence.
+
+The runner is unarmed and has no flight, signing, OP-TEE or actuator interface.
+
+## What it displays
+
+- A compact top strip shows every live source with the exact class/confidence
+  boxes from that source's one YOLO invocation.
+- The larger centre grid contains every unordered pair. Two, three, four and
+  five sources therefore produce 1, 3, 6 and 10 pair tiles respectively.
+- Each valid tile projects the first camera into the second camera's 2-D image
+  plane using that pair's current ORB/RANSAC homography. It uses the reviewed
+  magenta/blue/green/cyan/yellow geometry and displays `AGREE`, `DISPUTE`,
+  `ABSTAIN` or feature-only `COVISIBLE`.
+- A pair with no accepted homography-projected intersection displays
+  `ABSTAIN / NO VALID INTERSECTION` and its exact reason. If no pair intersects,
+  the dashboard says `NO CAMERA PAIR HAS A VALID INTERSECTION`.
+
+Every pair is directional only for projection: `cam1 -> cam2` means Camera 1's
+footprint was projected into Camera 2 coordinates. It is still the one unordered
+pair `{cam1, cam2}` and is not counted twice. These are independent 2-D planar
+homographies, not calibrated stereo, multi-view 3-D reconstruction or 3-D IoU.
+
+## Important three-phone constraint
+
+Windows must expose four independent OpenCV sources. A single DroidCam virtual
+camera cannot carry three independently addressable phones. Use one of:
+
+1. three distinct local phone URLs, preferably one MJPEG/RTSP stream per phone;
+2. three genuinely distinct virtual camera devices with separate OpenCV indexes;
+3. a tested mixture of unique URLs and indexes.
+
+Do not configure the same URL or device index twice; the runner rejects duplicate
+sources. Keep phone streams on Samik's local network. Do not use Internet relays.
+Test 640×360 at 10–15 FPS first. Five YOLO inferences and ten RANSAC pair checks
+are substantially heavier than the reviewed two-camera run, so analysis defaults
+to 3 FPS while each capture worker continuously keeps only its newest frame.
+
+## Windows P2 example: one webcam and three phones
+
+Map the USB webcam and verify each phone URL separately before the combined run.
+From `codebase`:
+
+```powershell
+python -m tools.covis_multicam `
+  --camera cam1 0 dshow `
+  --camera cam2 "http://PHONE_1_IP:PORT/VIDEO_PATH" ffmpeg `
+  --camera cam3 "http://PHONE_2_IP:PORT/VIDEO_PATH" ffmpeg `
+  --camera cam4 "http://PHONE_3_IP:PORT/VIDEO_PATH" ffmpeg `
+  --width 640 --height 360 --fps 15 `
+  --analysis-fps 3 `
+  --release-timeout 20 `
+  --weights yolov8n.pt `
+  --expected-model-sha256 f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36 `
+  --run-id MULTICAM-P2-01 `
+  --record-video --video-codec MJPG --video-fps 3
+```
+
+Replace every placeholder privately. Never commit phone URLs, credentials,
+weights or generated evidence. For feature-only setup, omit both model options;
+the decisions will be `COVISIBLE` or `ABSTAIN`, and no YOLO boxes will appear.
+
+For distinct virtual devices, use each verified index/backend instead:
+
+```powershell
+--camera cam2 2 msmf --camera cam3 3 dshow --camera cam4 4 dshow
+```
+
+## Operation and evidence
+
+- `s` saves the exact dashboard under `screenshots/`.
+- `q` exits, finalizes the optional dashboard video, stops all workers together,
+  and reopens/reads every source to verify release.
+- Ctrl+C follows the same bounded cleanup path.
+- `events.jsonl` records every source observation and every pair's health, skew,
+  RANSAC result, projected footprint/intersection geometry, projected boxes,
+  matching box intersection and displayed decision.
+- `summary.json` records source shutdown/reopen proof and video metadata.
+- `video/multicam_dashboard.avi` contains the complete displayed dashboard when
+  `--record-video` is enabled.
+- A requested video that cannot open or finalize fails the run.
+
+Use `--no-release-probe` only for a disposable diagnostic when a phone server
+cannot accept a quick reconnect. It is not release proof.
+
+## Physical setup
+
+Place all cameras in landscape orientation, powered and rigidly mounted. Every
+pair you expect to intersect needs shared textured background, not just the same
+small object. Add cameras one at a time and verify distinct views. Start with two,
+then three, then four; this identifies the source or pair that causes latency,
+blur, skew or weak RANSAC evidence.
+
+No-intersection is a valid `ABSTAIN`, not a software failure and never an
+`AGREE`. `DISPUTE` is meaningful only when that pair remains co-visible and the
+two measured semantic claims differ.

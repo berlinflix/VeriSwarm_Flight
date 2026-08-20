@@ -1378,8 +1378,11 @@ class CompositeVideoRecorder:
         codec: str,
         fps: float,
         cv2_module: Any,
+        filename: str = "three_panel.avi",
     ) -> None:
-        self.path = run_dir / "video" / "three_panel.avi"
+        if not filename or Path(filename).name != filename:
+            raise ValueError("video filename must be one plain file name")
+        self.path = run_dir / "video" / filename
         self.codec = codec
         self.fps = fps
         self.cv2 = cv2_module
