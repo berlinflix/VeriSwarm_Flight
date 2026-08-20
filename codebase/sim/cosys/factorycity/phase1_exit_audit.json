@@ -1,0 +1,82 @@
+{
+  "phase": 1,
+  "phase_name": "contracts_and_configuration_system",
+  "status": "PASS",
+  "audited_at_utc": "2026-08-20T23:07:14.6653612Z",
+  "branch": "codex/pratik-five-drone-factorycity",
+  "base_commit": "4c83e7b8550dda407acb53705a29aec088a3c9d6",
+  "phase0_audit_commit": "8cb0befe918793de89bbf8bbbfab69c92d5f5c7d",
+  "implementation_commit": "a45bda60b2a9d40d219375243ed1d0dfd90962f6",
+  "contract": {
+    "schema_id": "veriswarm.factorycity.fleet_config.v1",
+    "sections": [
+      "fleet",
+      "launch_area",
+      "endpoint",
+      "limits",
+      "lifecycle",
+      "sensors",
+      "world",
+      "evidence"
+    ],
+    "immutable_runtime_model": true,
+    "unknown_fields_rejected": true,
+    "operational_defaults_in_loader": false,
+    "vendor_rpc_imports_in_loader": false,
+    "validation_precedes_rpc_construction": true
+  },
+  "scenario_template": {
+    "status": "TEMPLATE_NOT_SCENE_VALIDATED",
+    "configured_vehicle_count": 5,
+    "configured_vehicle_names": [
+      "alpha",
+      "bravo",
+      "charlie",
+      "delta",
+      "echo"
+    ],
+    "launch_side_length_m": 10.0,
+    "note": "Promotion to ACCEPTED requires the later live FactoryCity scene qualification; Phase 1 does not claim scene or flight acceptance."
+  },
+  "cross_section_checks": [
+    "fleet roster count and case-insensitive uniqueness",
+    "launch square usable area and configured separation feasibility bound",
+    "launch square containment inside the horizontal geofence",
+    "NED frame agreement across launch area, geofence, and world",
+    "altitude-band ordering and geofence containment",
+    "launch and runtime minimum-separation agreement",
+    "complete lifecycle roster permutations and sensor assignments",
+    "cleanup timeout agreement",
+    "RPC timeout bounded by connection timeout",
+    "required navigation and clearance sensor coverage",
+    "repository-relative normalized paths and create-once evidence"
+  ],
+  "verification": {
+    "focused_command": "python -m pytest tests/test_factorycity_config.py -q",
+    "focused_result": "62 passed",
+    "focused_seconds": 0.12,
+    "full_command": "python -m pytest tests -q",
+    "full_result": "470 passed, 3 skipped",
+    "full_seconds": 58.01,
+    "python_compile": "PASS",
+    "git_diff_check": "PASS",
+    "scenario_value_source_scan": "NO_SCENARIO_VALUES_IN_LOADER_SOURCE"
+  },
+  "artifact_sha256": {
+    "config.py": "385363C61B55EF13D579EBB63E310202DF7809DB86CD2B816BD97AD3BF2CD4FE",
+    "factorycity_five_drone.template.json": "30E7F89DB5B939035FA64ACECF27C7267AAE6B62AB5079436B7CA7FED8F630AB",
+    "factorycity_fleet_config.schema.json": "9CB237AE33D9F7D5DF130C631E80ECC2E8821DB305282F8D8C7784B757A32EFE",
+    "test_factorycity_config.py": "11A1FE7D4A2F4DC89070A8DF2F6EE9343215CC830A10AA18DD227A612FABF9D4"
+  },
+  "exit_gate": {
+    "validated_configuration_boundary": "PASS",
+    "controlled_values_are_configuration_data": "PASS",
+    "invalid_configuration_fails_before_rpc": "PASS",
+    "focused_configuration_tests": "PASS"
+  },
+  "deferred_by_design": [
+    "launch-position generation (Phase 2)",
+    "live FactoryCity scene clearance and promotion to ACCEPTED (Phase 3)",
+    "RPC connection and vehicle commands (Phases 4 onward)"
+  ]
+}
