@@ -1,0 +1,8 @@
+# Machine-specific inputs and high-volume/generated artifacts.
+local/
+unreal/
+evidence/raw/
+evidence/video/
+*.local.json
+*.zip
+*.mp4

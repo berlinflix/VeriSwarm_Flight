@@ -1,0 +1,68 @@
+{
+  "schema": "veriswarm.factorycity.phase0_baseline.v1",
+  "status": "PHASE_0_FROZEN",
+  "captured_at_utc": "2026-08-20T22:42:00.3042652Z",
+  "repository": {
+    "remote": "https://github.com/berlinflix/VeriSwarm_SIH.git",
+    "base_branch": "origin/main",
+    "base_commit": "4c83e7b8550dda407acb53705a29aec088a3c9d6",
+    "work_branch": "codex/pratik-five-drone-factorycity"
+  },
+  "source_project": {
+    "project_id": "MyProject",
+    "world_id": "/Game/FactoryCity.FactoryCity",
+    "uproject_sha256": "494423B5AA45498D5AE1B3AA82A81333158DA1E0F2EF2DA4CE5AC7CB2C8652D1",
+    "world_sha256": "2C56C0B11991719D88258D4AEDEFECF7A0314DB3BF9A65A0F650B66372CD59EB",
+    "active_settings_sha256": "7B09D526388948759D7B20355EC670BD875206A3FF615D43E1304D44FDB9EC45",
+    "source_backup": {
+      "storage": "external_local_backup",
+      "filename": "MyProject_source_2026-08-21.zip",
+      "bytes": 2263716941,
+      "entry_count": 608,
+      "sha256": "ED71F8167F47CA7739DA5DB07A0DEC96D65CBD60125C3B83CCBEB7E9BB060F08",
+      "contains": [
+        "MyProject.uproject",
+        "Config",
+        "Content"
+      ],
+      "excludes_transient_caches": true
+    }
+  },
+  "runtime": {
+    "operating_system": {
+      "family": "Windows",
+      "display_version": "25H2",
+      "build": "26200.9168"
+    },
+    "gpu": {
+      "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+      "driver_version": "610.62",
+      "memory_mib": 6141
+    },
+    "unreal_engine": {
+      "version": "5.8.1",
+      "build": "5.8.1-56057345+++UE5+Release-5.8"
+    },
+    "cosys_airsim": {
+      "version": "3.4.1",
+      "protocol_version": 4,
+      "plugin_descriptor_sha256": "2591354EF837128D9F7D8DC698A90AD77B590FC8A5DD235C711D1DEAD102E4C2",
+      "editor_plugin_dll_sha256": "6A785609D9A8BDA11651AC067ED17DCAA929FAA2E5FB6E6BD12401BDC37C59AC"
+    },
+    "python_client": {
+      "import": "cosysairsim",
+      "version": "3.4.1",
+      "python_version": "3.14.2"
+    }
+  },
+  "phase0_checks": {
+    "source_editor_closed": true,
+    "rpc_listener_absent_during_backup": true,
+    "repository_clean_before_branch": true,
+    "branch_based_on_origin_main": true,
+    "source_backup_created": true,
+    "source_backup_listing_verified": true,
+    "source_backup_sha256_recorded": true,
+    "historical_qb_artifacts_modified": false
+  }
+}

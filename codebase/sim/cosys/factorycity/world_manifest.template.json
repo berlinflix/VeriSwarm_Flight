@@ -1,0 +1,39 @@
+{
+  "schema": "veriswarm.factorycity.world_manifest.v1",
+  "status": "TEMPLATE_NOT_VALIDATED",
+  "scenario_id": null,
+  "world_id": null,
+  "source_artifact": {
+    "identifier": null,
+    "sha256": null,
+    "license_reference": null
+  },
+  "runtime": {
+    "unreal_engine_version": null,
+    "cosys_airsim_version": null,
+    "client_version": null
+  },
+  "coordinate_frames": {
+    "world": null,
+    "ned_origin_id": null,
+    "ned_origin_transform": null,
+    "body_convention": null,
+    "camera_convention": null
+  },
+  "configuration_references": {
+    "fleet_config": null,
+    "launch_area_config": null,
+    "limits_config": null,
+    "lifecycle_config": null,
+    "sensor_config": null
+  },
+  "launch_area_validation": {
+    "input_hash": null,
+    "result_hash": null,
+    "clearance_provider": null,
+    "passed": null
+  },
+  "artifacts": [],
+  "known_warnings": [],
+  "created_at_utc": null
+}
