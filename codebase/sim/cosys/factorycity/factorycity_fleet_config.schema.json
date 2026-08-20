@@ -1,0 +1,756 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://veriswarm.local/schemas/factorycity_fleet_config.v1.json",
+  "title": "VeriSwarm FactoryCity fleet configuration",
+  "description": "Portable structural contract. Cross-section safety invariants are enforced by config.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "configuration_id",
+    "status",
+    "fleet",
+    "launch_area",
+    "endpoint",
+    "limits",
+    "lifecycle",
+    "sensors",
+    "world",
+    "evidence"
+  ],
+  "properties": {
+    "schema": {
+      "const": "veriswarm.factorycity.fleet_config.v1"
+    },
+    "configuration_id": {
+      "$ref": "#/$defs/non_empty_string"
+    },
+    "status": {
+      "enum": [
+        "TEMPLATE_NOT_SCENE_VALIDATED",
+        "CANDIDATE",
+        "ACCEPTED"
+      ]
+    },
+    "fleet": {
+      "$ref": "#/$defs/fleet"
+    },
+    "launch_area": {
+      "$ref": "#/$defs/launch_area"
+    },
+    "endpoint": {
+      "$ref": "#/$defs/endpoint"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/lifecycle"
+    },
+    "sensors": {
+      "$ref": "#/$defs/sensors"
+    },
+    "world": {
+      "$ref": "#/$defs/world"
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidence"
+    }
+  },
+  "$defs": {
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!\\s)(?:.|\\n)*\\S$"
+    },
+    "positive_number": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "nonnegative_number": {
+      "type": "number",
+      "minimum": 0
+    },
+    "positive_integer": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nonnegative_integer": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "vector2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      }
+    },
+    "vector3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        }
+      }
+    },
+    "vehicle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "role"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "type": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "role": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    },
+    "fleet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_count",
+        "vehicles",
+        "arming_policy",
+        "failure_policy"
+      ],
+      "properties": {
+        "expected_count": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "vehicles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/vehicle"
+          }
+        },
+        "arming_policy": {
+          "enum": [
+            "staggered",
+            "simultaneous"
+          ]
+        },
+        "failure_policy": {
+          "enum": [
+            "abort_all",
+            "isolate_failed_vehicle"
+          ]
+        }
+      }
+    },
+    "launch_area": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "center_ned_m",
+        "side_length_m",
+        "edge_clearance_m",
+        "minimum_separation_m",
+        "altitude_reference",
+        "ground_clearance_probe",
+        "formation_generator",
+        "deterministic_seed"
+      ],
+      "properties": {
+        "frame": {
+          "const": "NED_METRES"
+        },
+        "center_ned_m": {
+          "$ref": "#/$defs/vector2"
+        },
+        "side_length_m": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "edge_clearance_m": {
+          "$ref": "#/$defs/nonnegative_number"
+        },
+        "minimum_separation_m": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "altitude_reference": {
+          "const": "ground_surface_ned"
+        },
+        "ground_clearance_probe": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "formation_generator": {
+          "const": "maxmin_lattice"
+        },
+        "deterministic_seed": {
+          "$ref": "#/$defs/nonnegative_integer"
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "port"
+      ],
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "geofence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "min",
+        "max"
+      ],
+      "properties": {
+        "frame": {
+          "const": "NED_METRES"
+        },
+        "min": {
+          "$ref": "#/$defs/vector3"
+        },
+        "max": {
+          "$ref": "#/$defs/vector3"
+        }
+      }
+    },
+    "altitude_band": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_z",
+        "max_z"
+      ],
+      "properties": {
+        "min_z": {
+          "type": "number"
+        },
+        "max_z": {
+          "type": "number"
+        }
+      }
+    },
+    "stage_timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connect",
+        "verify",
+        "api_control",
+        "arm",
+        "takeoff",
+        "hover",
+        "command",
+        "land",
+        "cleanup",
+        "reset"
+      ],
+      "properties": {
+        "connect": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "verify": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "api_control": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "arm": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "takeoff": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "hover": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "command": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "land": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "cleanup": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "reset": {
+          "$ref": "#/$defs/positive_number"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "geofence",
+        "altitude_band_ned_m",
+        "speed_mps",
+        "acceleration_mps2",
+        "yaw_rate_dps",
+        "command_ttl_ms",
+        "minimum_separation_m",
+        "collision_clearance_m",
+        "state_staleness_ms",
+        "sensor_staleness_ms",
+        "rpc_timeout_seconds",
+        "stage_timeouts_seconds"
+      ],
+      "properties": {
+        "geofence": {
+          "$ref": "#/$defs/geofence"
+        },
+        "altitude_band_ned_m": {
+          "$ref": "#/$defs/altitude_band"
+        },
+        "speed_mps": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "acceleration_mps2": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "yaw_rate_dps": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "command_ttl_ms": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "minimum_separation_m": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "collision_clearance_m": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "state_staleness_ms": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "sensor_staleness_ms": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "rpc_timeout_seconds": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "stage_timeouts_seconds": {
+          "$ref": "#/$defs/stage_timeouts"
+        }
+      }
+    },
+    "vehicle_offset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vehicle_name",
+        "offset_m"
+      ],
+      "properties": {
+        "vehicle_name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "offset_m": {
+          "type": "number"
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "takeoff_mode",
+        "takeoff_order",
+        "takeoff_altitude_offsets_m",
+        "hover_dwell_seconds",
+        "abort_action",
+        "landing_mode",
+        "landing_order",
+        "disarm_policy",
+        "api_control_release_policy",
+        "cleanup_timeout_seconds",
+        "reset_policy",
+        "retry_count"
+      ],
+      "properties": {
+        "takeoff_mode": {
+          "enum": [
+            "staggered",
+            "simultaneous"
+          ]
+        },
+        "takeoff_order": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          }
+        },
+        "takeoff_altitude_offsets_m": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/vehicle_offset"
+          }
+        },
+        "hover_dwell_seconds": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "abort_action": {
+          "enum": [
+            "hover_then_land",
+            "land_immediately"
+          ]
+        },
+        "landing_mode": {
+          "enum": [
+            "staggered",
+            "simultaneous"
+          ]
+        },
+        "landing_order": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          }
+        },
+        "disarm_policy": {
+          "const": "after_landing_verification"
+        },
+        "api_control_release_policy": {
+          "enum": [
+            "always_release",
+            "retain_until_process_exit"
+          ]
+        },
+        "cleanup_timeout_seconds": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "reset_policy": {
+          "enum": [
+            "rpc_reset",
+            "restart_simulator"
+          ]
+        },
+        "retry_count": {
+          "$ref": "#/$defs/nonnegative_integer"
+        }
+      }
+    },
+    "camera_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height",
+        "fov_degrees"
+      ],
+      "properties": {
+        "width": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "height": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "fov_degrees": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 180
+        }
+      }
+    },
+    "lidar_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channels",
+        "points_per_second",
+        "rotation_frequency_hz",
+        "vertical_fov_upper_degrees",
+        "vertical_fov_lower_degrees"
+      ],
+      "properties": {
+        "channels": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "points_per_second": {
+          "$ref": "#/$defs/positive_integer"
+        },
+        "rotation_frequency_hz": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "vertical_fov_upper_degrees": {
+          "type": "number"
+        },
+        "vertical_fov_lower_degrees": {
+          "type": "number"
+        }
+      }
+    },
+    "sensor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "frame",
+        "rate_hz",
+        "required",
+        "calibration_id",
+        "position_body_m",
+        "rotation_body_deg",
+        "settings"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "type": {
+          "enum": [
+            "rgb_camera",
+            "depth_camera",
+            "lidar",
+            "imu",
+            "barometer",
+            "magnetometer",
+            "gnss"
+          ]
+        },
+        "frame": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "rate_hz": {
+          "$ref": "#/$defs/positive_number"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "calibration_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "position_body_m": {
+          "$ref": "#/$defs/vector3"
+        },
+        "rotation_body_deg": {
+          "$ref": "#/$defs/vector3"
+        },
+        "settings": {
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "rgb_camera",
+                  "depth_camera"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "settings": {
+                "$ref": "#/$defs/camera_settings"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "lidar"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "settings": {
+                "$ref": "#/$defs/lidar_settings"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "imu",
+                  "barometer",
+                  "magnetometer",
+                  "gnss"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "settings": {
+                "maxProperties": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "sensor_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "sensors"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "sensors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/sensor"
+          }
+        }
+      }
+    },
+    "vehicle_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vehicle_name",
+        "profile"
+      ],
+      "properties": {
+        "vehicle_name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "profile": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    },
+    "sensors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profiles",
+        "vehicle_profiles"
+      ],
+      "properties": {
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/sensor_profile"
+          }
+        },
+        "vehicle_profiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/vehicle_profile"
+          }
+        }
+      }
+    },
+    "portable_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
+    },
+    "world": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_id",
+        "world_id",
+        "coordinate_frame",
+        "ned_origin_id",
+        "artifact_manifest_path",
+        "generated_settings_path"
+      ],
+      "properties": {
+        "scenario_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "world_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "coordinate_frame": {
+          "const": "NED_METRES"
+        },
+        "ned_origin_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "artifact_manifest_path": {
+          "$ref": "#/$defs/portable_path"
+        },
+        "generated_settings_path": {
+          "$ref": "#/$defs/portable_path"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "output_dir",
+        "large_artifact_store_uri",
+        "create_once",
+        "retain_raw_locally"
+      ],
+      "properties": {
+        "output_dir": {
+          "$ref": "#/$defs/portable_path"
+        },
+        "large_artifact_store_uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "create_once": {
+          "const": true
+        },
+        "retain_raw_locally": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

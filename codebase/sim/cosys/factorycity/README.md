@@ -9,6 +9,7 @@ evidence remain external content-addressed artifacts.
 - Feature branch: `codex/pratik-five-drone-factorycity`
 - Base: `origin/main` at `4c83e7b8550dda407acb53705a29aec088a3c9d6`
 - Phase 0 status: frozen and verified
+- Phase 1 status: configuration contract implemented; live scene acceptance remains pending
 
 ## Scope
 
@@ -50,6 +51,23 @@ until the earlier gate passes with retained evidence.
   integration.
 - `world_manifest.template.json` is a portable placeholder for the derived FactoryCity
   environment manifest. Phase 3 fills measured values and hashes.
+- `factorycity_fleet_config.schema.json` is the portable Draft 2020-12 structural schema.
+- `config.py` is the authoritative strict parser for structural and cross-section safety
+  invariants. It performs no RPC calls and supplies no operational defaults.
+- `factorycity_five_drone.template.json` declares the intended five-vehicle, 10 m by 10 m
+  contract. Its `TEMPLATE_NOT_SCENE_VALIDATED` status is intentional; Phase 3 scene
+  qualification is required before promotion to `ACCEPTED`.
+
+## Loading a contract
+
+Call `load_config(path)` before constructing any simulator client. It returns an immutable
+`FactoryCityConfig` plus the SHA-256 of the exact source bytes. Unknown fields, incomplete
+rosters, unsafe ranges, inconsistent limits, missing sensors, non-portable paths, and
+cross-section mismatches raise `ConfigurationError` before RPC creation.
+
+The accepted scenario values belong in a reviewed configuration derived from the template.
+Controller and adapter modules consume the validated object; they must not copy roster,
+geometry, endpoint, limit, timeout, order, or policy values into source code.
 
 ## Never commit here
 

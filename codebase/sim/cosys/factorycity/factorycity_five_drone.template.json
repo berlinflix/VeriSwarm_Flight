@@ -1,0 +1,309 @@
+{
+  "schema": "veriswarm.factorycity.fleet_config.v1",
+  "configuration_id": "factorycity-five-drone-template-v1",
+  "status": "TEMPLATE_NOT_SCENE_VALIDATED",
+  "fleet": {
+    "expected_count": 5,
+    "vehicles": [
+      {
+        "name": "alpha",
+        "type": "SimpleFlight",
+        "role": "member"
+      },
+      {
+        "name": "bravo",
+        "type": "SimpleFlight",
+        "role": "member"
+      },
+      {
+        "name": "charlie",
+        "type": "SimpleFlight",
+        "role": "member"
+      },
+      {
+        "name": "delta",
+        "type": "SimpleFlight",
+        "role": "member"
+      },
+      {
+        "name": "echo",
+        "type": "SimpleFlight",
+        "role": "member"
+      }
+    ],
+    "arming_policy": "staggered",
+    "failure_policy": "abort_all"
+  },
+  "launch_area": {
+    "frame": "NED_METRES",
+    "center_ned_m": {
+      "x": 0.0,
+      "y": 0.0
+    },
+    "side_length_m": 10.0,
+    "edge_clearance_m": 0.5,
+    "minimum_separation_m": 2.0,
+    "altitude_reference": "ground_surface_ned",
+    "ground_clearance_probe": "factorycity_scene_clearance_v1",
+    "formation_generator": "maxmin_lattice",
+    "deterministic_seed": 20260821
+  },
+  "endpoint": {
+    "host": "127.0.0.1",
+    "port": 41451
+  },
+  "limits": {
+    "geofence": {
+      "frame": "NED_METRES",
+      "min": {
+        "x": -20.0,
+        "y": -20.0,
+        "z": -10.0
+      },
+      "max": {
+        "x": 20.0,
+        "y": 20.0,
+        "z": 1.0
+      }
+    },
+    "altitude_band_ned_m": {
+      "min_z": -8.0,
+      "max_z": -2.0
+    },
+    "speed_mps": 2.0,
+    "acceleration_mps2": 1.0,
+    "yaw_rate_dps": 45.0,
+    "command_ttl_ms": 500,
+    "minimum_separation_m": 2.0,
+    "collision_clearance_m": 1.0,
+    "state_staleness_ms": 250,
+    "sensor_staleness_ms": 500,
+    "rpc_timeout_seconds": 5.0,
+    "stage_timeouts_seconds": {
+      "connect": 10.0,
+      "verify": 10.0,
+      "api_control": 5.0,
+      "arm": 5.0,
+      "takeoff": 30.0,
+      "hover": 15.0,
+      "command": 10.0,
+      "land": 30.0,
+      "cleanup": 30.0,
+      "reset": 15.0
+    }
+  },
+  "lifecycle": {
+    "takeoff_mode": "staggered",
+    "takeoff_order": [
+      "alpha",
+      "bravo",
+      "charlie",
+      "delta",
+      "echo"
+    ],
+    "takeoff_altitude_offsets_m": [
+      {
+        "vehicle_name": "alpha",
+        "offset_m": 0.0
+      },
+      {
+        "vehicle_name": "bravo",
+        "offset_m": 0.0
+      },
+      {
+        "vehicle_name": "charlie",
+        "offset_m": 0.0
+      },
+      {
+        "vehicle_name": "delta",
+        "offset_m": 0.0
+      },
+      {
+        "vehicle_name": "echo",
+        "offset_m": 0.0
+      }
+    ],
+    "hover_dwell_seconds": 2.0,
+    "abort_action": "hover_then_land",
+    "landing_mode": "staggered",
+    "landing_order": [
+      "echo",
+      "delta",
+      "charlie",
+      "bravo",
+      "alpha"
+    ],
+    "disarm_policy": "after_landing_verification",
+    "api_control_release_policy": "always_release",
+    "cleanup_timeout_seconds": 30.0,
+    "reset_policy": "rpc_reset",
+    "retry_count": 0
+  },
+  "sensors": {
+    "profiles": [
+      {
+        "name": "standard-navigation-v1",
+        "sensors": [
+          {
+            "name": "front_rgb",
+            "type": "rgb_camera",
+            "frame": "camera_front",
+            "rate_hz": 10.0,
+            "required": true,
+            "calibration_id": "factorycity_front_camera_candidate_v1",
+            "position_body_m": {
+              "x": 0.2,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "rotation_body_deg": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "settings": {
+              "width": 640,
+              "height": 360,
+              "fov_degrees": 90.0
+            }
+          },
+          {
+            "name": "front_depth",
+            "type": "depth_camera",
+            "frame": "camera_front_depth",
+            "rate_hz": 10.0,
+            "required": true,
+            "calibration_id": "factorycity_front_depth_candidate_v1",
+            "position_body_m": {
+              "x": 0.2,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "rotation_body_deg": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "settings": {
+              "width": 640,
+              "height": 360,
+              "fov_degrees": 90.0
+            }
+          },
+          {
+            "name": "imu",
+            "type": "imu",
+            "frame": "body",
+            "rate_hz": 100.0,
+            "required": true,
+            "calibration_id": "factorycity_imu_candidate_v1",
+            "position_body_m": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "rotation_body_deg": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "settings": {}
+          },
+          {
+            "name": "barometer",
+            "type": "barometer",
+            "frame": "body",
+            "rate_hz": 50.0,
+            "required": true,
+            "calibration_id": "factorycity_barometer_candidate_v1",
+            "position_body_m": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "rotation_body_deg": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "settings": {}
+          },
+          {
+            "name": "magnetometer",
+            "type": "magnetometer",
+            "frame": "body",
+            "rate_hz": 50.0,
+            "required": true,
+            "calibration_id": "factorycity_magnetometer_candidate_v1",
+            "position_body_m": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "rotation_body_deg": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "settings": {}
+          },
+          {
+            "name": "gnss",
+            "type": "gnss",
+            "frame": "body",
+            "rate_hz": 10.0,
+            "required": true,
+            "calibration_id": "factorycity_gnss_candidate_v1",
+            "position_body_m": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "rotation_body_deg": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "settings": {}
+          }
+        ]
+      }
+    ],
+    "vehicle_profiles": [
+      {
+        "vehicle_name": "alpha",
+        "profile": "standard-navigation-v1"
+      },
+      {
+        "vehicle_name": "bravo",
+        "profile": "standard-navigation-v1"
+      },
+      {
+        "vehicle_name": "charlie",
+        "profile": "standard-navigation-v1"
+      },
+      {
+        "vehicle_name": "delta",
+        "profile": "standard-navigation-v1"
+      },
+      {
+        "vehicle_name": "echo",
+        "profile": "standard-navigation-v1"
+      }
+    ]
+  },
+  "world": {
+    "scenario_id": "factorycity-five-drone-v1",
+    "world_id": "/Game/FactoryCity.FactoryCity",
+    "coordinate_frame": "NED_METRES",
+    "ned_origin_id": "factorycity-launch-origin-v1",
+    "artifact_manifest_path": "sim/cosys/factorycity/world_manifest.json",
+    "generated_settings_path": "sim/cosys/factorycity/generated/settings.json"
+  },
+  "evidence": {
+    "output_dir": "sim/cosys/factorycity/evidence",
+    "large_artifact_store_uri": "external://veriswarm/factorycity/evidence",
+    "create_once": true,
+    "retain_raw_locally": true
+  }
+}
