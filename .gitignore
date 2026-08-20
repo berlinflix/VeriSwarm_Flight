@@ -27,6 +27,11 @@ deliverables/
 # Captured frames — these grow fast. Keep them local.
 sim/demo_frames/
 sim/captured/
+codebase/results/covis_live/
+codebase/results/covis_multicam/
+
+# Pinned model weights are transferred privately and verified at runtime.
+codebase/yolov8n.pt
 
 # Paper working notes. Private to Suyash — these discuss what is wrong with an
 # unpublished manuscript and must not reach teammates or a public clone.
