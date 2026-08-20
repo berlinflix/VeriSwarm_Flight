@@ -1,0 +1,39 @@
+{
+  "schema": "veriswarm.factorycity.phase_exit_audit.v1",
+  "phase": 0,
+  "status": "PASS",
+  "audited_at_utc": "2026-08-20T22:46:25.1820234Z",
+  "audited_content_commit": "2d0e4e4716071845d724cf44388478da373490fe",
+  "branch": "codex/pratik-five-drone-factorycity",
+  "base": {
+    "branch": "origin/main",
+    "commit": "4c83e7b8550dda407acb53705a29aec088a3c9d6",
+    "is_ancestor": true
+  },
+  "checks": {
+    "remote_content_commit_equal": true,
+    "worktree_clean_at_audit": true,
+    "source_hashes_stable": true,
+    "backup_hash_stable": true,
+    "backup_entry_count": 608,
+    "backup_transient_entry_count": 0,
+    "json_manifests_parse": true,
+    "staged_diff_check": true,
+    "sensitive_or_local_path_scan": true,
+    "historical_qb_artifacts_modified": false
+  },
+  "tests": {
+    "command": "python -m pytest -q -p no:cacheprovider",
+    "passed": 408,
+    "skipped": 3,
+    "failed": 0,
+    "duration_seconds": 57.96
+  },
+  "exit_gate": {
+    "source_scene_recoverable": true,
+    "baseline_identities_recorded": true,
+    "feature_branch_created_and_pushed": true,
+    "historical_evidence_preserved": true,
+    "phase_1_authorized": false
+  }
+}
