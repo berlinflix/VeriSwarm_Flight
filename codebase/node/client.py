@@ -53,6 +53,7 @@ class Originator:
         peer_ids: Sequence[str],
         *,
         rpc_timeout_s: float = 2.0,
+        start_sequence: int = 0,
     ):
         common.validate_manifest(manifest, local_node_id=originator_id)
         self.manifest = manifest
@@ -73,7 +74,15 @@ class Originator:
         self.rpc_timeout_s = float(rpc_timeout_s)
         if self.rpc_timeout_s <= 0.0:
             raise ValueError("rpc_timeout_s must be positive")
-        self._sequence = 0
+        # Peers enforce per-(mission, drone) sequence uniqueness, and a receipt
+        # sequence is never reusable within a mission epoch. A long-lived
+        # originator can start at 0, but any caller that runs as a *fresh
+        # process* against still-running peers must seed a value it has not used
+        # before, or its first receipt collides with the previous run's and is
+        # rejected as `duplicate_sequence`.
+        if not isinstance(start_sequence, int) or start_sequence < 0:
+            raise ValueError("start_sequence must be a non-negative integer")
+        self._sequence = start_sequence
         self._channels = {
             pid: common.channel_for(manifest, originator_id, pid)
             for pid in self.peer_ids
@@ -83,22 +92,32 @@ class Originator:
         }
         self._pool = ThreadPoolExecutor(max_workers=max(1, len(self.peer_ids)))
 
-    def wait_ready(self, timeout: float = 20.0) -> bool:
-        """Block until every peer answers Ping (or timeout)."""
+    def wait_ready(self, timeout: float = 20.0, minimum: Optional[int] = None) -> bool:
+        """Block until `minimum` peers answer Ping (default: all of them).
+
+        `minimum` exists for deliberate degraded-quorum runs. Demanding every
+        peer would abort such a round before it starts, and the resulting
+        "peers not ready" error looks like a setup fault rather than the
+        condition being demonstrated. A caller that expects a peer to be absent
+        says so, and the tally still reports it as `missing`.
+        """
         from protocol import attestation_pb2 as pb
 
+        required = len(self.peer_ids) if minimum is None else max(0, int(minimum))
+        if required == 0:
+            return True
         deadline = time.time() + timeout
-        pending = set(self.peer_ids)
-        while pending and time.time() < deadline:
-            for pid in list(pending):
+        ready: set[str] = set()
+        while len(ready) < required and time.time() < deadline:
+            for pid in [p for p in self.peer_ids if p not in ready]:
                 try:
                     self._stubs[pid].Ping(
                         pb.PingRequest(from_drone_id=self.originator_id), timeout=2.0
                     )
-                    pending.discard(pid)
+                    ready.add(pid)
                 except grpc.RpcError:
                     time.sleep(0.2)
-        return not pending
+        return len(ready) >= required
 
     def originate(
         self,
