@@ -26,6 +26,7 @@ from tools.covis_multicam import (  # noqa: E402
     assess_all_pairs,
     camera_pairs,
     event_record,
+    fit_visible_window,
     observe_once_per_camera,
     parse_camera_specs,
     render_dashboard,
@@ -126,6 +127,18 @@ def test_all_unordered_camera_pairs_are_generated(count, expected):
 
     assert len(pairs) == expected
     assert len(set(pairs)) == expected
+
+
+def test_visible_window_preserves_aspect_ratio_and_fits_usable_screen():
+    width, height = fit_visible_window(1920, 1080, 1536, 864)
+
+    assert width <= 1536 - 40
+    assert height <= 864 - 110
+    assert width / height == pytest.approx(16 / 9, rel=0.01)
+
+
+def test_visible_window_does_not_enlarge_a_dashboard_that_already_fits():
+    assert fit_visible_window(1280, 720, 1920, 1080) == (1280, 720)
 
 
 class _LatestWorker:
@@ -302,6 +315,70 @@ def test_feature_gate_failure_is_explicit_no_intersection_abstain():
     assert pair.displayed_decision == "ABSTAIN"
     assert pair.displayed_reason == "feature_overlap_below_threshold"
     assert pair.assessment.decision == "ABSTAIN"
+
+
+def test_matching_same_class_crops_are_shown_as_an_explicit_assumption_only():
+    specs = _specs(2)
+    frame = _frame(21)
+    packets = {"cam1": _packet(frame), "cam2": _packet(frame.copy())}
+    observations = {"cam1": _observation(), "cam2": _observation()}
+
+    def no_features(_a, _b):
+        return FeatureAlignmentResult(FeatureMatchResult(0, 0, 10, 10), None)
+
+    pair = assess_all_pairs(
+        specs,
+        packets,
+        observations,
+        cv2_module=cv2,
+        now_monotonic_ns=1_000_000_000,
+        alignment_provider=no_features,
+    )[0]
+
+    assert pair.overlap_available is False
+    assert pair.displayed_decision == "ABSTAIN"
+    assert pair.appearance_assumption is not None
+    assert pair.appearance_assumption.assumed_same_object is True
+    assert pair.appearance_assumption.identity_proven is False
+    assert pair.appearance_assumption.class_name == "car"
+    event = event_record(1, specs, packets, observations, (pair,), "f" * 64)
+    assumption = event["pairs"][0]["appearance_assumption"]
+    assert assumption["assumed_same_object"] is True
+    assert assumption["identity_proven"] is False
+
+    dashboard = render_dashboard(
+        specs,
+        packets,
+        observations,
+        (pair,),
+        width=1000,
+        height=700,
+        cv2_module=cv2,
+    )
+    assert dashboard.shape == (700, 1000, 3)
+    assert np.count_nonzero(dashboard) > 0
+
+
+def test_different_classes_never_create_an_appearance_assumption():
+    specs = _specs(2)
+    frame = _frame(22)
+    packets = {"cam1": _packet(frame), "cam2": _packet(frame.copy())}
+    observations = {"cam1": _observation(2), "cam2": _observation(3)}
+
+    def no_features(_a, _b):
+        return FeatureAlignmentResult(FeatureMatchResult(0, 0, 10, 10), None)
+
+    pair = assess_all_pairs(
+        specs,
+        packets,
+        observations,
+        cv2_module=cv2,
+        now_monotonic_ns=1_000_000_000,
+        alignment_provider=no_features,
+    )[0]
+
+    assert pair.displayed_decision == "ABSTAIN"
+    assert pair.appearance_assumption is None
 
 
 def test_dashboard_uses_small_source_strip_and_all_large_pair_tiles():

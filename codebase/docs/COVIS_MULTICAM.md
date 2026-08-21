@@ -23,6 +23,13 @@ The runner is unarmed and has no flight, signing, OP-TEE or actuator interface.
 - A pair with no accepted homography-projected intersection displays
   `ABSTAIN / NO VALID INTERSECTION` and its exact reason. If no pair intersects,
   the dashboard says `NO CAMERA PAIR HAS A VALID INTERSECTION`.
+- In semantic mode, an `ABSTAIN` pair may additionally show an explicitly
+  labelled `ASSUMED SAME OBJECT` side-by-side panel when same-class YOLO crops
+  exceed the configured rough colour/shape appearance threshold. This is an
+  operator-requested visualization heuristic: it is recorded as
+  `appearance_assumption`, keeps the geometric decision at `ABSTAIN`, and always
+  states `identity_proven=false`. It must not be reported as calibrated geometry,
+  object re-identification or proof that two similar instances are one object.
 
 Every pair is directional only for projection: `cam1 -> cam2` means Camera 1's
 footprint was projected into Camera 2 coordinates. It is still the one unordered
@@ -143,3 +150,8 @@ blur, skew or weak RANSAC evidence.
 No-intersection is a valid `ABSTAIN`, not a software failure and never an
 `AGREE`. `DISPUTE` is meaningful only when that pair remains co-visible and the
 two measured semantic claims differ.
+
+The optional rough-appearance heuristic defaults to `--appearance-threshold
+0.60`. It compares only same-class YOLO crops using HSV colour distribution and
+bounding-box aspect similarity. The dashboard counts these separately as
+`assumed object intersections`; it never adds them to `valid intersections`.
