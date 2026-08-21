@@ -4,7 +4,7 @@
 
 Kaggle is approved for rapid private hackathon experimentation and cloud training. A
 missing or unclear licence is no longer a download blocker. It is still a release blocker:
-record the Kaggle slug, owner, version/date, URL, archive SHA-256 and the terms displayed
+record the Kaggle slug, owner, version/date, URL, archive name/size and the terms displayed
 at retrieval. Do not commit raw data, re-upload a restricted dataset, publish its samples,
 or release weights trained from unclear/restrictive data until Suyash reviews the terms.
 
@@ -51,7 +51,7 @@ not a legal-review queue. Required now:
 dataset_id and Kaggle slug/URL
 Kaggle owner and visible version/date
 retrieval timestamp UTC
-archive filename, bytes and SHA-256
+archive filename and bytes; final release packager supplies checksums
 terms/licence exactly as displayed, or TERMS_NOT_DISPLAYED
 allowed use state: PRIVATE_HACKATHON_EXPERIMENT
 raw and converted counts

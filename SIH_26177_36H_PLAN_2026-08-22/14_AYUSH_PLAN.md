@@ -7,6 +7,10 @@ is a configurable rescue-model adapter for the existing camera interface and ind
 dataset/converter verification. Suyash activates heavier training assistance only when a
 trigger below occurs.
 
+Proceed independently on audit tooling, bounded multi-camera adaptation and tests. Only
+coordinate before starting duplicate GPU training that would compete with Samik's same
+experiment; do not wait for per-file approval.
+
 ## H0–H4: independent readiness
 
 - [ ] Create a clean `ayush/sih26177-perception-support` worktree.
@@ -17,9 +21,10 @@ trigger below occurs.
 - [ ] Prepare a 100-image label montage tool.
 - [ ] Review Samik's first converter output independently and report pass/fail.
 
-## Backup activation triggers
+## Backup lane triggers
 
-Suyash may activate exactly one of these lanes:
+Ayush may enter exactly one of these lanes after posting a coordination note so work is not
+duplicated; no approval response is required:
 
 - **A — download/conversion:** Samik's primary download or converter is blocked at H3.
 - **B — thermal training:** RGB is healthy by H6 and a second GPU/cloud slot is available.
@@ -39,7 +44,8 @@ not the disaster map and not a five-drone simulator. Make only these bounded cha
 - [ ] Preserve the existing 2-D homography-projected overlap language.
 - [ ] Add track IDs and show when multiple cameras support the same observation.
 - [ ] Never merge observations solely because boxes overlap in two image planes.
-- [ ] Preserve `AGREE`, `DISPUTE`, `ABSTAIN`, create-once evidence and release verification.
+- [ ] Preserve `AGREE`, `DISPUTE`, `ABSTAIN` and release verification. Development runs may
+      reuse scratch output; only final demonstration evidence is retained uniquely.
 - [ ] Keep all sources local; no internet relay.
 - [ ] Keep all five source panels available and label camera angle/source health.
 - [ ] Demonstrate one occluded/turned-away camera becoming weak or `ABSTAIN` while other
@@ -53,7 +59,8 @@ blocked view abstains rather than manufacturing agreement.
 
 ## H8–H18: integration help
 
-- [ ] Verify the model hash, class map, preprocessing and thresholds on P2.
+- [ ] Verify the final selected model identity once, plus class map, preprocessing and
+      thresholds on P2. Intermediate checkpoints require no approval.
 - [ ] Run saved-frame inference and compare UI boxes to emitted observation boxes.
 - [ ] Add tests for missing registry, wrong hash, unsupported class and empty detections.
 - [ ] Confirm camera output never directly controls a drone.
@@ -74,7 +81,7 @@ reviewed commit and base
 files owned/changed
 focused and full test output
 dataset audit result
-model/registry hashes checked
+final selected model/registry identity checked once
 camera source mapping
 semantic or feature-only status
 release proof

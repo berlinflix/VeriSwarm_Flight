@@ -66,7 +66,7 @@ discovery and safer responder access—not autonomous medical diagnosis.”
 
 ### 0:25–0:55 — launch and allocation
 
-Start the create-once campaign. Show all drones, sector assignment, model identities,
+Start the final retained campaign. Show all drones, sector assignment, model identities,
 offline edge status and coverage beginning.
 
 ### 0:55–1:35 — person discovery
@@ -127,7 +127,8 @@ Avoid:
 ## 5. Cold-run GO/NO-GO checklist
 
 - [ ] exact clean commits and no dirty worktrees;
-- [ ] dataset/model/world/settings/config hashes match;
+- [ ] final selected model identity matches the allowlist and the one generated release
+      manifest validates the final bundle;
 - [ ] correct five host/IP identities when the wired trust stage is used;
 - [ ] clocks synchronized and default routes unchanged;
 - [ ] simulator and endpoint listener healthy;
@@ -154,8 +155,10 @@ Avoid:
 - all vehicles land/disarm/release control and reset;
 - no camera/simulator/client process remains unexpectedly alive.
 
-If a run fails, preserve it unchanged, stop and use a new run ID only after review. Never
-overwrite, relabel or silently repeat a failed campaign.
+This preservation rule applies to final H30+ rehearsals. During development, owners may
+fix and rerun immediately in their scratch directories without approval. If a final run
+fails, preserve it, fix on the owning branch and use a new final run ID; no separate
+checksum confirmation is required.
 
 ## 7. Suggested final artifacts
 

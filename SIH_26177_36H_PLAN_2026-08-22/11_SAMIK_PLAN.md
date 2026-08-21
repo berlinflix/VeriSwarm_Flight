@@ -17,8 +17,8 @@ local/offline.
 - [ ] In parallel, download VisDrone DET train/val for aerial RGB and HIT-UAV for thermal.
 - [ ] Start HERIDAL in parallel only if 8.3 GB can finish before H5.
 - [ ] Start FloodNet only after one RGB loader passes.
-- [ ] Record Kaggle slug/owner/version, visible terms state and archive hash before
-      extraction. `TERMS_NOT_DISPLAYED` permits private experiment but not redistribution.
+- [ ] Record Kaggle slug/owner/version, visible terms state, archive name and size. Do not
+      wait for a checksum approval before extraction or training.
 
 ## H1–H5: converters and quality gate
 
@@ -47,7 +47,8 @@ fails, fix the converter before training.
 - [ ] Freeze the confidence/NMS thresholds.
 - [ ] Evaluate the winner once on the untouched test subset.
 - [ ] Export fixed-shape ONNX and compare it against PyTorch on 100 held-out images.
-- [ ] Produce `sar-rgb-person-v1` registry entry and hashes.
+- [ ] Produce the `sar-rgb-person-v1` registry entry. Hash only the final selected weights
+      and class map when they enter the model-identity policy.
 
 ## H6–H16: secondary specialist
 
@@ -87,7 +88,8 @@ Priority order after the rapid Kaggle detector begins:
 - [ ] Do not modify the qualified OP-TEE environment.
 - [ ] Inventory JetPack/TensorRT/PyTorch/ONNX Runtime.
 - [ ] Create a separate inference environment only when compatible.
-- [ ] Copy ONNX plus registry by hash and benchmark with network disabled.
+- [ ] Copy the selected ONNX plus registry and benchmark with network disabled; final
+      packaging verifies the selected artifact once.
 - [ ] If Jetson runtime cannot be completed safely, preserve the blocker and use P2 offline
       inference; do not call that Jetson deployment.
 
@@ -105,7 +107,8 @@ Priority order after the rapid Kaggle detector begins:
 - [ ] Package only models, registry, class maps, thresholds, evaluation and commands in an
       external content-addressed bundle.
 - [ ] Run wrong-model/wrong-class-map/corrupt-model/empty-frame tests.
-- [ ] Send Suyash exact commits, hashes, held-out metrics, limitations and runtime commands.
+- [ ] Send Suyash branch/commit, held-out metrics, limitations and exact runtime commands.
+      Continue other owned work without waiting for acknowledgement.
 - [ ] Freeze at H30. No retraining after the integrated threshold is accepted.
 
 ## Required deliverables

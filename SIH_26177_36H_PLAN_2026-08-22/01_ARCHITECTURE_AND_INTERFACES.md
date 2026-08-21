@@ -105,7 +105,7 @@ Every event is JSON and contains:
 ```json
 {
   "schema": "veriswarm.rescue.event.v1",
-  "event_id": "create-once-uuid",
+  "event_id": "unique-event-uuid",
   "mission_id": "OP-VARUNA-001",
   "sequence": 1,
   "event_time_ns": 0,

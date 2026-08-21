@@ -26,7 +26,8 @@ task reassignment, landing and reset.
 - [ ] Generate RGB, DepthPlanar and pose/state streams for every drone.
 - [ ] Add instance segmentation labels where supported.
 - [ ] Produce a read-only endpoint and actor/transform probe before flight.
-- [ ] Prove two identical cold boots/resets and give hashes to Abhijan/Suyash.
+- [ ] Prove two identical cold boots/resets and send the result plus branch/commit to
+      Abhijan/Suyash. Continue work without waiting for approval.
 
 ## H3–H8: deterministic mission configuration
 
@@ -47,7 +48,8 @@ dashboard dependency.
 - [ ] Implement a frame source that returns RGB, depth, pose and timestamps from the same
       declared vehicle and camera.
 - [ ] Measure skew/freshness; do not call separately fetched values synchronized.
-- [ ] Save frame IDs and hashes so Samik's observation traces to simulator evidence.
+- [ ] Save frame IDs and paths so Samik's observation traces to simulator evidence. Hash
+      only frames retained in the final demo bundle, automatically at packaging.
 - [ ] Call Samik's inference adapter; never import dataset truth.
 - [ ] Geolocate person/hazard observations using pose + calibration + metric depth.
 - [ ] If depth is invalid/stale, emit image-only observation and no map point.
@@ -90,12 +92,13 @@ frame/model/pose provenance and bounded uncertainty.
 - [ ] Stale sensor: affected drone HOLDs; no guessed motion.
 - [ ] Run focused and full tests; report all deselections/skips.
 - [ ] Push clean commits with no Unreal/generated artifacts.
-- [ ] Freeze runnable external bundle with world, settings, commands, hashes and reset card.
+- [ ] Freeze the runnable external bundle at H30 with world, settings, commands and reset
+      card; generate one bundle-level checksum manifest automatically.
 
 ## Required evidence per run
 
 ```text
-world/settings/config/route/model/commit hashes
+branch/commit plus final release-manifest identity
 raw startup and endpoint probes
 per-vehicle pose/velocity/collision/separation telemetry
 sensor freshness and command TTL decisions

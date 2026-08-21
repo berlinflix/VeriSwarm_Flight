@@ -74,8 +74,9 @@ Samik oversees and executes that runtime, Abhijan owns attack execution, and Suy
 security policy and presentation language.
 
 No lane may edit another lane's owned files without an explicit handoff. Shared schemas
-are frozen in `01_ARCHITECTURE_AND_INTERFACES.md`; changes require Suyash and both affected
-owners to acknowledge the new schema version.
+start from `01_ARCHITECTURE_AND_INTERFACES.md`. Owners may extend their own implementation
+without approval. Only a backward-incompatible shared-schema change needs coordination
+with affected owners and Suyash.
 
 ## 4. Git and artifact discipline
 
@@ -93,8 +94,13 @@ codex/sih26177-independent-verification
 
 Each branch must have a narrow file-ownership list in its first commit. Never copy a
 weight, dataset, absolute machine path, credential, private manifest or generated evidence
-into Git. Every external artifact receives a manifest containing source, displayed terms,
-byte-size and SHA-256.
+into Git. During development, identify work by branch/commit and readable artifact name;
+do not create per-file checksum approvals. At H30, automatically generate one manifest and
+`SHA256SUMS` for the selected model and final external demo bundle.
+
+Every owner is authorized to continue within their lane without waiting for Suyash. Normal
+handoffs are branch, commit, run command, interface/sample and known limitations. Follow
+`05_FAST_INDEPENDENT_EXECUTION_RULES.md`.
 
 Merge order:
 
@@ -144,15 +150,15 @@ Merge order:
 - model registry entry and exact class map;
 - preprocessing contract, image size and color order;
 - inference API example with deterministic output schema;
-- frozen threshold chosen on validation data;
-- model and ONNX SHA-256;
+- current threshold chosen on validation data;
+- selected model/ONNX filenames and registry ID; the final packager hashes them once;
 - held-out metrics and P2 latency;
 - classes that the model does **not** support.
 
 ### Pratik → Suyash by H18
 
 - simulator adapter command;
-- deterministic world/settings/config hashes;
+- world/settings/config version names and Git commit;
 - emitted RGB/depth/pose and mission-event samples;
 - search-path and safety evidence;
 - reset/abort procedure;
@@ -160,7 +166,7 @@ Merge order:
 
 ### Suyash → everyone by H20
 
-- accepted event schema and dashboard endpoint;
+- current compatible event schema and dashboard endpoint;
 - mission campaign IDs;
 - exact clean and attack expected outcomes;
 - evidence directory convention;
@@ -168,9 +174,9 @@ Merge order:
 
 ## 7. Stop conditions
 
-Stop a run, preserve it and use a new run ID if:
+During development, stop unsafe motion, fix and rerun in `scratch`. Preserve and use a new
+run ID only for final H30+ rehearsal evidence. Always stop immediately if:
 
-- the model/dataset/config hash differs from the frozen manifest;
 - a detector class is claimed without held-out labels and metrics;
 - simulator pose or segmentation truth leaks into the autonomy input where an estimated
   value is claimed;
@@ -178,13 +184,12 @@ Stop a run, preserve it and use a new run ID if:
 - depth/LiDAR is stale or absent while motion is requested near obstacles;
 - the coordinate frame is ambiguous;
 - a drone collision, geofence breach, stale command or duplicate identity occurs;
-- an evidence path already exists;
 - dashboard markers cannot be traced back to a source frame, model and pose; or
 - the camera, simulator, peer or OP-TEE process remains owned after its stage exits.
 
 ## 8. Definition of done
 
-The build is done only when two unchanged cold rehearsals produce create-once evidence,
+The build is done only when two unchanged final cold rehearsals produce retained evidence,
 zero unapproved motion, traceable alerts, the advertised model metrics and a clean reset.
 The final presentation must distinguish real measurements, simulated sensors, simulator
 truth used only by the evaluator, and roadmap capabilities.

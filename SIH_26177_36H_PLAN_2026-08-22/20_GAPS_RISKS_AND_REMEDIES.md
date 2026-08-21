@@ -32,8 +32,8 @@
 ## Dataset/model risks
 
 - **Terms/licence ambiguity:** do not wait to download or privately evaluate. Record the
-  Kaggle owner/version/URL/hash and `TERMS_NOT_DISPLAYED`; keep data and derived weights
-  private until release rights are reviewed.
+  Kaggle owner/version/URL and `TERMS_NOT_DISPLAYED`; keep data and derived weights private
+  until release rights are reviewed. Hash only the final selected release artifact.
 - **Kaggle provenance:** combined/web-scraped sets can contain duplicates, mislabels and
   unknown source overlap. Use them for rapid internal models, then cross-test on official
   aerial datasets and never use their supplied test alone as proof.
@@ -45,7 +45,8 @@
 - **Small targets:** use higher input resolution/tiling only if edge latency still passes.
 - **Leakage:** split by scene/video, not random adjacent frames.
 - **Test overfitting:** model/threshold selection uses validation only.
-- **Cloud provenance:** local reproduction and hashes are mandatory.
+- **Cloud provenance:** local reproduction is mandatory for the selected model; hash that
+  final checkpoint once when it enters the demo allowlist, not after every cloud run.
 - **False confidence:** dashboard displays confidence and uncertainty, not a binary rescue
   verdict.
 

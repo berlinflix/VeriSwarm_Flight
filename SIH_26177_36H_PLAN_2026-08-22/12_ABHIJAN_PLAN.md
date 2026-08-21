@@ -35,7 +35,8 @@ Minimum layout:
 - [ ] Define expected detection visibility by camera route, not desired model verdict.
 - [ ] Define mission start, discovery and completion events.
 - [ ] Define clean reset and abort behavior.
-- [ ] Hand the frozen contract to Pratik by H3.
+- [ ] Hand the versioned contract and sample to Pratik by H3. Pratik may begin immediately;
+      no Suyash confirmation or per-file checksum is required.
 
 ## H3–H10: world design support
 
@@ -80,7 +81,8 @@ Minimum layout:
 
 ## H26–H36: evidence and presentation
 
-- [ ] Freeze world/settings/truth hashes and two reset screenshots.
+- [ ] At final feature freeze, include world/settings/truth in the one automated release
+      manifest and retain two reset screenshots. Do not hash each development revision.
 - [ ] Provide a one-page map showing sectors, targets, hazards and safe route.
 - [ ] Review both cold runs against truth without changing expected outcomes.
 - [ ] Prepare a 30-second scenario narration centered on responder value.
@@ -93,6 +95,6 @@ Minimum layout:
 - [ ] Person targets are visible from declared paths.
 - [ ] At least one traversable route exists.
 - [ ] Collision geometry matches visible geometry.
-- [ ] Truth is hash-frozen and inaccessible to autonomy.
+- [ ] Truth is versioned, immutable during final evaluation and inaccessible to autonomy.
 - [ ] Reset removes all state and restores exact starting poses.
 - [ ] No unsupported AI hazard claim appears in labels or narration.

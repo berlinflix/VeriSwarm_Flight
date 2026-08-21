@@ -34,16 +34,17 @@ its unvisited cells are reassigned and the remaining fleet continues.
 3. `02_DATASET_MODEL_AND_EDGE_PLAN.md`
 4. `03_KAGGLE_DATASET_SHORTLIST.md`
 5. `04_PRESERVED_VERISWARM_CAPABILITIES.md`
-6. Your individual file:
+6. `05_FAST_INDEPENDENT_EXECUTION_RULES.md`
+7. Your individual file:
    - `10_SUYASH_PLAN.md`
    - `11_SAMIK_PLAN.md`
    - `12_ABHIJAN_PLAN.md`
    - `13_PRATIK_PLAN.md`
    - `14_AYUSH_PLAN.md`
-7. `20_GAPS_RISKS_AND_REMEDIES.md`
-8. `21_ACCEPTANCE_MATRIX_AND_DEMO.md`
-9. `22_FULL_REMEDIATION_BACKLOG.md` for the complete post-sprint engineering roadmap
-10. `30_START_NOW.md`
+8. `20_GAPS_RISKS_AND_REMEDIES.md`
+9. `21_ACCEPTANCE_MATRIX_AND_DEMO.md`
+10. `22_FULL_REMEDIATION_BACKLOG.md` for the complete post-sprint engineering roadmap
+11. `30_START_NOW.md`
 
 ## Non-negotiable boundaries
 
@@ -53,9 +54,13 @@ its unvisited cells are reassigned and the remaining fleet continues.
 - Work in clean worktrees and dedicated branches. The dirty
   `C:\Users\suyas\sih` checkout must not be pulled, reset or used as a merge workspace.
 - Datasets, weights, virtual environments, videos, Unreal projects and evidence stay out
-  of Git. Commit only manifests, hashes, converters, configuration, code, tests and docs.
+  of Git. Commit only lightweight manifests, converters, configuration, code, tests and
+  docs; the final packager generates release hashes automatically.
 - Seven Codex sessions are seven parallel engineering lanes, not permission for seven
   sessions to edit the same files.
+- During development, owners work without per-file hash approvals. Follow
+  `05_FAST_INDEPENDENT_EXECUTION_RULES.md`; integrity hashes are generated once at final
+  freeze for the selected model and release bundle.
 - Feature work stops at hour 30. Hours 30–36 are exclusively for integration, two
   unchanged rehearsals, evidence review, pitch preparation and fallback verification.
 

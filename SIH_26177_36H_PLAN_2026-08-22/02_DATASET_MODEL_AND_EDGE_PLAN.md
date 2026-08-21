@@ -84,7 +84,7 @@ source URL and DOI/repository
 retrieval time UTC
 terms/licence exactly as displayed, copied terms filename, or TERMS_NOT_DISPLAYED
 acceptance state: ACCEPTED_DEMO_INTERNAL, ACCEPTED_RELEASE or EXPLORATORY_ONLY
-archive filename, byte size and SHA-256
+archive filename and byte size; optional checksum generated automatically at final freeze
 official split identity
 original classes
 frozen class remapping
@@ -92,6 +92,9 @@ converter commit and command
 image/annotation counts before and after conversion
 rejected/corrupt sample count and reasons
 ```
+
+Do not delay extraction/training for a checksum or human confirmation. The final selected
+dataset/model bundle receives one automated integrity manifest at H30.
 
 `ACCEPTED_DEMO_INTERNAL` data may be processed privately for the hackathon when its source,
 version and integrity are recorded. Do not commit, redistribute or present raw samples from
@@ -104,8 +107,8 @@ duplicated across splits, or sequence-adjacent frames leak between train and val
 
 ## 4. Training sequence
 
-Use the already frozen Samik P2 Python 3.12/CUDA environment or a separately hashed cloud
-environment. Do not upgrade the accepted webcam environment in place.
+Use the already working Samik P2 Python 3.12/CUDA environment or a separately documented
+cloud environment. Do not upgrade the working webcam environment in place.
 
 Illustrative pinned-environment commands; Samik must substitute exact manifest paths and
 record the fully resolved command:
@@ -136,20 +139,20 @@ inference. Prefer Kaggle notebooks for Kaggle-hosted data so the source stays on
 For other data, record where it was uploaded and keep unclear/restricted sources in a
 private workspace. Do not publish notebooks containing data or credentials.
 
-Every cloud run must export:
+Every cloud run must export enough to reproduce and compare it:
 
-- notebook/script bytes and SHA-256;
+- notebook/script or Git commit;
 - base image or `pip freeze`/`pip inspect` record;
 - GPU type and framework/CUDA versions;
-- exact dataset manifest and split hashes;
+- dataset version and split definition;
 - command/config, seed and start/end timestamps;
 - complete stdout/stderr and metrics;
-- `last.pt`, `best.pt`, optimizer/training metadata and hashes; and
+- `last.pt`, `best.pt` and optimizer/training metadata; and
 - a locally repeated validation on the downloaded `best.pt`.
 
-Cloud checkpoints are untrusted until their hash is recorded, the model loads in the local
-frozen environment, class names match, and local held-out validation reproduces within the
-declared tolerance. Cloud inference is prohibited during the demo.
+Owners may compare and retrain cloud checkpoints without approval. Before the selected
+checkpoint enters the demo allowlist, load it locally, verify class names, repeat held-out
+validation and hash that final file once. Cloud inference is prohibited during the demo.
 
 Parallel cloud runs should explore only the predeclared `n` versus `s` comparison. Do not
 conduct uncontrolled test-set-driven hyperparameter search.

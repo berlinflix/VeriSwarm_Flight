@@ -4,8 +4,9 @@
 
 The rescue pivot adds a mission profile; it does not delete or rewrite the accepted
 multi-camera, model-provenance, protocol, OP-TEE or prior attack evidence. Preserve source
-commits, hashes, commands, videos and create-once results exactly as produced. New rescue
-runs use new run IDs and reference—not rename—the prior evidence.
+commits, existing manifests, commands, videos and retained final results exactly as
+produced. New development runs may use overwriteable scratch output; final rescue runs use
+new run IDs and reference—not rename—the prior evidence.
 
 ## 1. Five-camera multi-view rescue observation
 
@@ -25,7 +26,7 @@ arbitrary viewpoints unless those functions are separately implemented and measu
 - the three-panel/projected-overlap UI and existing feature/release evidence;
 - per-camera raw boxes, model/hash, frame/capture time and latency;
 - overlap/covisibility values, `AGREE`/`DISPUTE`/`ABSTAIN` outcome and reasons;
-- create-once summary JSON/JSONL, screenshot, internal recording and camera-release proof;
+- retained final summary JSON/JSONL, screenshot, internal recording and camera-release proof;
 - current accepted commits and model/environment manifests; and
 - one fallback video that can be replayed without representing it as live.
 
