@@ -64,11 +64,19 @@ Minimum layout:
 ## H16–H26: attack and resilience beat
 
 - [ ] Reuse the existing model-hash attack as the security event.
+- [ ] Preserve all prior attack commits, fixtures, patches and evidence; new rescue attack
+      runs receive new immutable run IDs.
+- [ ] Add replay/stale, peer-timeout and adversarial-patch cases only when their exact
+      expected reason/HOLD contract is frozen.
 - [ ] Define which drone is quarantined and which unvisited cells must be reassigned.
 - [ ] Ensure the dashboard tells the story as “unapproved perception model rejected,” not
       “the system proved the alternative model malicious.”
 - [ ] Keep the physical multi-camera/occlusion demonstration separate unless the accepted
       semantic camera cycle passes.
+- [ ] Describe the result as resistance to the demonstrated attacks, never
+      “adversarial-proof” or “tamper-proof.”
+- [ ] Prepare one roadmap sentence explaining that border surveillance can reuse the trust
+      and autonomy core after domain-specific model and operational validation.
 
 ## H26–H36: evidence and presentation
 

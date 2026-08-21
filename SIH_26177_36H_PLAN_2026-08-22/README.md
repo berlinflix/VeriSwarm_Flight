@@ -33,20 +33,23 @@ its unvisited cells are reassigned and the remaining fleet continues.
 2. `01_ARCHITECTURE_AND_INTERFACES.md`
 3. `02_DATASET_MODEL_AND_EDGE_PLAN.md`
 4. `03_KAGGLE_DATASET_SHORTLIST.md`
-5. Your individual file:
+5. `04_PRESERVED_VERISWARM_CAPABILITIES.md`
+6. Your individual file:
    - `10_SUYASH_PLAN.md`
    - `11_SAMIK_PLAN.md`
    - `12_ABHIJAN_PLAN.md`
    - `13_PRATIK_PLAN.md`
    - `14_AYUSH_PLAN.md`
-6. `20_GAPS_RISKS_AND_REMEDIES.md`
-7. `21_ACCEPTANCE_MATRIX_AND_DEMO.md`
-8. `22_FULL_REMEDIATION_BACKLOG.md` for the complete post-sprint engineering roadmap
-9. `30_START_NOW.md`
+7. `20_GAPS_RISKS_AND_REMEDIES.md`
+8. `21_ACCEPTANCE_MATRIX_AND_DEMO.md`
+9. `22_FULL_REMEDIATION_BACKLOG.md` for the complete post-sprint engineering roadmap
+10. `30_START_NOW.md`
 
 ## Non-negotiable boundaries
 
 - Preserve all previous Q-B, camera, OP-TEE and protocol evidence unchanged.
+- Preserve the five-camera and attack demonstrations as optional, independently accepted
+  VeriSwarm capabilities; do not rewrite their evidence to fit the rescue mission.
 - Work in clean worktrees and dedicated branches. The dirty
   `C:\Users\suyas\sih` checkout must not be pulled, reset or used as a merge workspace.
 - Datasets, weights, virtual environments, videos, Unreal projects and evidence stay out

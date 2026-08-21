@@ -19,6 +19,11 @@ At hour 36 the team must be able to run one command sequence that demonstrates:
    completion; and
 10. the entire mission works without cloud inference.
 
+The previous five-camera co-visibility application and cyber-attack campaigns are retained
+as independent VeriSwarm capability stages under `04_PRESERVED_VERISWARM_CAPABILITIES.md`.
+They must not be deleted, relabelled as rescue-flight evidence or allowed to block the P0
+rescue thin slice.
+
 If five-drone integration is not stable by hour 24, the accepted fallback is a fully
 functional **two-drone mission** with the same data, navigation, safety, mapping and
 alerting contracts. Five moving pawns without an end-to-end data path are not preferable
@@ -63,6 +68,10 @@ to two functioning autonomous agents.
 | C5 | Pratik | coverage planner, fleet mission and safety adapter | autonomous mission runner |
 | C6 | Suyash | event schema, dashboard, alert/report pipeline | command-center experience |
 | C7 | Suyash-appointed reviewer | integration tests, campaign runner, runbook | independent acceptance evidence |
+
+Preserved-capability ownership remains: Ayush designs the bounded five-camera UI changes,
+Samik oversees and executes that runtime, Abhijan owns attack execution, and Suyash accepts
+security policy and presentation language.
 
 No lane may edit another lane's owned files without an explicit handoff. Shared schemas
 are frozen in `01_ARCHITECTURE_AND_INTERFACES.md`; changes require Suyash and both affected

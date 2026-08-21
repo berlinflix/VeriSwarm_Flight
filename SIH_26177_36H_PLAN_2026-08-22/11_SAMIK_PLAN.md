@@ -91,6 +91,15 @@ Priority order after the rapid Kaggle detector begins:
 - [ ] If Jetson runtime cannot be completed safely, preserve the blocker and use P2 offline
       inference; do not call that Jetson deployment.
 
+## Preserved five-camera responsibility
+
+- [ ] Keep the accepted five-camera branch, model/environment hashes and evidence intact.
+- [ ] Oversee Ayush's bounded rescue UI adaptation; require projected overlap and detector
+      boxes to remain visually and semantically distinct.
+- [ ] Execute the final five-camera stage on the qualified machine, including an occluded
+      view that abstains and complete release verification.
+- [ ] Do not call image-plane overlap calibrated 3-D fusion or multi-drone localization.
+
 ## H24–H30: evidence and freeze
 
 - [ ] Package only models, registry, class maps, thresholds, evaluation and commands in an

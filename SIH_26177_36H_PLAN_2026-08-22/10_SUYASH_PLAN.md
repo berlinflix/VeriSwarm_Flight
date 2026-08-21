@@ -41,6 +41,12 @@ Only capabilities that pass the acceptance matrix appear as live claims.
   - model ID/hash and trust decision; and
   - evidence link/run ID.
 - [ ] Preserve the existing model-hash dashboard and protocol demo as a separate mode.
+- [ ] Preserve the five-camera application/evidence as a separate multi-view rescue
+      observation stage; never rewrite old run IDs or evidence.
+- [ ] Add a claim/evidence row for each retained attack: model swap, replay/stale, timeout
+      and adversarial patch where actually executed.
+- [ ] Present border surveillance only as a future domain profile requiring new data,
+      validation and operating approval.
 
 The dashboard may initially consume a tailed JSONL file or local SSE service. It must not
 invent movement, detections, hazards or verdicts when upstream data is absent.

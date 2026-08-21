@@ -16,6 +16,8 @@
 | model trust | approved case releases; wrong hash rejects for exact reason and HOLDs | security beat rejected |
 | situational report | report matches event projection and truth evaluation | manual summary only |
 | on-device inference | retained P2/Jetson benchmark with network disabled | call it offline workstation inference or roadmap |
+| five-camera multi-view observation | per-source boxes, projected overlap, agreement/abstention and release evidence | keep as feature-only preserved stage |
+| cyber containment | exact demonstrated attack reason, reject/HOLD and reassignment evidence | no adversarial-resilience claim |
 
 ## 2. Required tests
 
@@ -106,6 +108,9 @@ Use:
 - “the observation was geolocated with this uncertainty”;
 - “inference continued locally with the network unavailable”;
 - “the unapproved model identity was rejected and the command was held”;
+- “five local viewpoints independently support or abstain on this observation”;
+- “the system is adversarially evaluated against these demonstrated cases”;
+- “border surveillance is a future domain profile of the same trusted autonomy core”;
 - “simulated sensor” and “synthetic thermal” where applicable.
 
 Avoid:
@@ -115,6 +120,7 @@ Avoid:
 - “GPS-denied” if simulator pose/GPS is still used;
 - “thermal camera” for a recolored RGB or segmentation view;
 - “military-grade,” “certified,” “perfect” or “unhackable”;
+- “adversarial-proof” or “tamper-proof”;
 - “Byzantine tolerant” for three nodes; and
 - “OP-TEE secures the whole AI pipeline.”
 

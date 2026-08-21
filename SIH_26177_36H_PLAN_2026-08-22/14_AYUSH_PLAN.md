@@ -31,7 +31,7 @@ Do not start a second uncontrolled version of Samik's RGB training.
 
 ## Multi-camera changes
 
-The current multi-camera tool is valuable as a redundancy/co-visibility display, but it is
+The current five-camera tool is preserved as a redundancy/co-visibility display, but it is
 not the disaster map and not a five-drone simulator. Make only these bounded changes:
 
 - [ ] Load a model from the immutable registry rather than assuming COCO class names.
@@ -41,6 +41,9 @@ not the disaster map and not a five-drone simulator. Make only these bounded cha
 - [ ] Never merge observations solely because boxes overlap in two image planes.
 - [ ] Preserve `AGREE`, `DISPUTE`, `ABSTAIN`, create-once evidence and release verification.
 - [ ] Keep all sources local; no internet relay.
+- [ ] Keep all five source panels available and label camera angle/source health.
+- [ ] Demonstrate one occluded/turned-away camera becoming weak or `ABSTAIN` while other
+      valid views continue; do not fabricate consensus.
 - [ ] Do not claim the tripod represents calibrated multi-drone 3-D mapping.
 
 The five-camera rig can become a separate stage called **multi-view rescue observation
