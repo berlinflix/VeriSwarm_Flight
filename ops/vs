@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# vs - short front-end for the VeriSwarm demo on Alpha (Jetson).
+#
+#   vs check    preconditions only, changes nothing
+#   vs matrix   print the outcome table
+#   vs full     both peers up      -> ACCEPTED + REJECTED
+#   vs deg      one peer up        -> NO_QUORUM + REJECTED
+#   vs iso      no peers up        -> NO_QUORUM + NO_QUORUM
+#   vs dash     start the dashboard API for Abhijan
+#   vs peers    who is reachable right now
+#
+# Every subcommand is a thin alias so the demo is typed, not pasted. The real
+# logic and all safety gates live in run_model_hash.sh.
+set -uo pipefail
+R=~/run_model_hash.sh
+CYN=$'\e[36m'; GRN=$'\e[32m'; OFF=$'\e[0m'
+
+case "${1:-help}" in
+  check)  exec "$R" --check ;;
+  matrix) exec "$R" --matrix ;;
+  full)   exec "$R" ;;
+  deg|degraded) exec "$R" --degraded ;;
+  iso|isolated) exec "$R" --isolated ;;
+  dash)   exec ~/start_dashboard.sh ;;
+  peers)
+    for hp in "bravo 192.168.50.12 51001" "charlie 192.168.50.13 51003"; do
+      set -- $hp
+      if timeout 2 bash -c "</dev/tcp/$2/$3" 2>/dev/null; then
+        printf "  ${GRN}UP  ${OFF}%-8s %s:%s\n" "$1" "$2" "$3"
+      else
+        printf "  ${CYN}DOWN${OFF} %-8s %s:%s\n" "$1" "$2" "$3"
+      fi
+    done ;;
+  *)
+    cat <<EOF
+
+${CYN}vs${OFF} - VeriSwarm demo commands
+
+  ${GRN}vs peers${OFF}    who is reachable right now
+  ${GRN}vs check${OFF}    preconditions, changes nothing
+  ${GRN}vs matrix${OFF}   the outcome table (say this before proving it)
+
+  ${GRN}vs full${OFF}     both peers up   -> ACCEPTED + REJECTED
+  ${GRN}vs deg${OFF}      one peer up     -> NO_QUORUM + REJECTED
+  ${GRN}vs iso${OFF}      no peers up     -> NO_QUORUM + NO_QUORUM
+
+  ${GRN}vs dash${OFF}     start the dashboard API for Abhijan
+
+EOF
+    ;;
+esac
