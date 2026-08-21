@@ -55,11 +55,15 @@ def test_five_drone_template_loads_and_hashes_exact_bytes():
     config, digest = load_config(TEMPLATE_PATH)
 
     assert config.schema == CONFIG_SCHEMA_ID
-    assert config.status == "TEMPLATE_NOT_SCENE_VALIDATED"
+    assert config.status == "ACCEPTED"
     assert config.fleet.expected_count == 5
     assert config.fleet.names == ("alpha", "bravo", "charlie", "delta", "echo")
     assert config.launch_area.side_length_m == 10.0
     assert config.launch_area.usable_side_length_m == 9.0
+    assert config.launch_area.initial_spawn_clearance_m == 0.2243
+    assert config.launch_area.takeoff_corridor_start_clearance_m == 1.5
+    assert config.limits.spawn_position_tolerance_m == 0.02
+    assert config.limits.support_contact_max_penetration_m == 0.01
     assert digest == hashlib.sha256(TEMPLATE_PATH.read_bytes()).hexdigest()
 
 
@@ -187,6 +191,27 @@ def test_unknown_stage_timeout_is_rejected(document):
 def test_rpc_timeout_cannot_exceed_connect_timeout(document):
     document["limits"]["rpc_timeout_seconds"] = 11.0
     _assert_rejected(document, "RPC timeout")
+
+
+def test_spawn_clearance_must_preserve_collision_and_position_margin(document):
+    document["launch_area"]["takeoff_corridor_start_clearance_m"] = 1.01
+    _assert_rejected(document, "spawn-position tolerance")
+
+
+def test_spawn_clearance_must_exceed_collision_clearance(document):
+    document["launch_area"]["takeoff_corridor_start_clearance_m"] = 1.0
+    _assert_rejected(document, "takeoff corridor start clearance")
+
+
+def test_verification_sampling_must_fit_verify_timeout(document):
+    document["limits"]["verification_sample_count"] = 5
+    document["limits"]["verification_sample_interval_seconds"] = 3.0
+    _assert_rejected(document, "verification sample window")
+
+
+def test_support_contact_penetration_limit_is_nonnegative(document):
+    document["limits"]["support_contact_max_penetration_m"] = -0.01
+    _assert_rejected(document, "non-negative")
 
 
 def test_runtime_and_launch_separation_values_must_match(document):

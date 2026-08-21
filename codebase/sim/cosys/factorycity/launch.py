@@ -115,6 +115,7 @@ class LaunchPosition:
     candidate_id: str
     x_m: float
     y_m: float
+    ground_z_ned_m: float
     z_ned_m: float
     clearance_evidence_id: str
 
@@ -340,7 +341,7 @@ def _pairwise_distances(
     return tuple(distances)
 
 
-def _validate_ground_z(config: FactoryCityConfig, ground_z_ned_m: float) -> None:
+def _validate_ground_z(config: FactoryCityConfig, ground_z_ned_m: float) -> float:
     geofence = config.limits.geofence
     if not geofence.minimum.z <= ground_z_ned_m <= geofence.maximum.z:
         raise LaunchPlacementError(
@@ -350,6 +351,18 @@ def _validate_ground_z(config: FactoryCityConfig, ground_z_ned_m: float) -> None
         raise LaunchPlacementError(
             "configured NED flight altitude band is not entirely above selected ground"
         )
+    spawn_z_ned_m = (
+        ground_z_ned_m - config.launch_area.initial_spawn_clearance_m
+    )
+    if not (
+        config.limits.geofence.minimum.z
+        <= spawn_z_ned_m
+        <= config.limits.geofence.maximum.z
+    ):
+        raise LaunchPlacementError(
+            "configured initial spawn height lies outside the vertical geofence"
+        )
+    return spawn_z_ned_m
 
 
 def generate_launch_plan(
@@ -413,7 +426,10 @@ def generate_launch_plan(
             candidate_id=evaluation.candidate.candidate_id,
             x_m=evaluation.candidate.x_m,
             y_m=evaluation.candidate.y_m,
-            z_ned_m=float(evaluation.ground_z_ned_m),
+            ground_z_ned_m=float(evaluation.ground_z_ned_m),
+            z_ned_m=_validate_ground_z(
+                config, float(evaluation.ground_z_ned_m)
+            ),
             clearance_evidence_id=evaluation.evidence_id,
         )
         for vehicle, evaluation in zip(config.fleet.vehicles, selected, strict=True)
@@ -522,7 +538,12 @@ def validate_launch_plan(config: FactoryCityConfig, plan: LaunchPlan) -> None:
             raise LaunchPlacementError(
                 "launch-plan position lacks an accepted clearance evaluation"
             )
-        values = (position.x_m, position.y_m, position.z_ned_m)
+        values = (
+            position.x_m,
+            position.y_m,
+            position.ground_z_ned_m,
+            position.z_ned_m,
+        )
         if any(
             isinstance(value, bool)
             or not isinstance(value, (int, float))
@@ -532,12 +553,17 @@ def validate_launch_plan(config: FactoryCityConfig, plan: LaunchPlan) -> None:
             raise LaunchPlacementError("launch-plan positions must be finite numbers")
         if not plan.bounds.contains(position.x_m, position.y_m):
             raise LaunchPlacementError("launch-plan position lies outside usable bounds")
-        _validate_ground_z(config, float(position.z_ned_m))
+        expected_spawn_z = _validate_ground_z(
+            config, float(position.ground_z_ned_m)
+        )
         if not (
             _same_number(position.x_m, evaluation.candidate.x_m)
             and _same_number(position.y_m, evaluation.candidate.y_m)
             and evaluation.ground_z_ned_m is not None
-            and _same_number(position.z_ned_m, evaluation.ground_z_ned_m)
+            and _same_number(
+                position.ground_z_ned_m, evaluation.ground_z_ned_m
+            )
+            and _same_number(position.z_ned_m, expected_spawn_z)
             and position.clearance_evidence_id == evaluation.evidence_id
         ):
             raise LaunchPlacementError(
@@ -702,6 +728,12 @@ def render_launch_manifest(
             "collision_clearance_m": config.limits.collision_clearance_m,
             "edge_clearance_m": config.launch_area.edge_clearance_m,
             "frame": config.launch_area.frame,
+            "initial_spawn_clearance_m": (
+                config.launch_area.initial_spawn_clearance_m
+            ),
+            "takeoff_corridor_start_clearance_m": (
+                config.launch_area.takeoff_corridor_start_clearance_m
+            ),
             "minimum_separation_m": config.launch_area.minimum_separation_m,
             "requested_count": config.fleet.expected_count,
             "side_length_m": config.launch_area.side_length_m,
@@ -727,6 +759,7 @@ def render_launch_manifest(
                 "vehicle_name": position.vehicle_name,
                 "x_m": position.x_m,
                 "y_m": position.y_m,
+                "ground_z_ned_m": position.ground_z_ned_m,
                 "z_ned_m": position.z_ned_m,
             }
             for position in plan.positions

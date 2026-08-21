@@ -1,0 +1,57 @@
+{
+  "schema": "veriswarm.factorycity.cosys_runtime.v1",
+  "status": "ACCEPTED_RUNTIME_VALIDATED",
+  "runtime": {
+    "settings_version": 2.0,
+    "sim_mode": "Multirotor",
+    "clock_speed": 1.0,
+    "enable_rpc": true
+  },
+  "vehicle_defaults": {
+    "yaw_degrees": 0.0,
+    "auto_create": true,
+    "allow_api_always": true,
+    "enable_collisions": true,
+    "enable_collision_passthrough": false
+  },
+  "protocol": {
+    "image_type_codes": {
+      "rgb_camera": 0,
+      "depth_camera": 2
+    },
+    "sensor_type_codes": {
+      "barometer": 1,
+      "imu": 2,
+      "gnss": 3,
+      "magnetometer": 4
+    },
+    "update_frequency_sensor_types": [
+      "barometer",
+      "gnss",
+      "magnetometer"
+    ]
+  },
+  "coordinate_transform": {
+    "origin_unreal_units": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "world_to_meters": 100.0,
+    "ned_to_unreal_axis_sign": {
+      "x": 1.0,
+      "y": 1.0,
+      "z": -1.0
+    }
+  },
+  "clearance_probe": {
+    "trace_channel": "ECC_VISIBILITY",
+    "trace_complex": true,
+    "minimum_ground_normal_z": 0.9
+  },
+  "runtime_identity": {
+    "unreal_engine_version": "5.8.1",
+    "cosys_airsim_version": "3.4.1",
+    "cosys_protocol_version": 4
+  }
+}

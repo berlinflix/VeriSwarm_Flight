@@ -1,7 +1,7 @@
 {
   "schema": "veriswarm.factorycity.fleet_config.v1",
-  "configuration_id": "factorycity-five-drone-template-v1",
-  "status": "TEMPLATE_NOT_SCENE_VALIDATED",
+  "configuration_id": "factorycity-five-drone-endpoint-a-v1",
+  "status": "ACCEPTED",
   "fleet": {
     "expected_count": 5,
     "vehicles": [
@@ -42,6 +42,8 @@
     },
     "side_length_m": 10.0,
     "edge_clearance_m": 0.5,
+    "initial_spawn_clearance_m": 0.2243,
+    "takeoff_corridor_start_clearance_m": 1.5,
     "minimum_separation_m": 2.0,
     "altitude_reference": "ground_surface_ned",
     "ground_clearance_probe": "factorycity_scene_clearance_v1",
@@ -76,9 +78,13 @@
     "command_ttl_ms": 500,
     "minimum_separation_m": 2.0,
     "collision_clearance_m": 1.0,
+    "spawn_position_tolerance_m": 0.02,
+    "support_contact_max_penetration_m": 0.01,
     "state_staleness_ms": 250,
     "sensor_staleness_ms": 500,
     "rpc_timeout_seconds": 5.0,
+    "verification_sample_count": 3,
+    "verification_sample_interval_seconds": 0.5,
     "stage_timeouts_seconds": {
       "connect": 10.0,
       "verify": 10.0,

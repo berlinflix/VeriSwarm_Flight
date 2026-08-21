@@ -44,7 +44,7 @@ class SyntheticClearanceProvider:
         ground_blocked=(),
         corridor_blocked=(),
         scene_validated=False,
-        ground_z=0.0,
+        ground_z=-1.0,
     ):
         self.provider_id = provider_id
         self.scene_validated = scene_validated
@@ -208,7 +208,7 @@ def test_plan_is_generic_over_roster_size_and_square(raw_document):
     config = validate_config(raw_document)
     provider = SyntheticClearanceProvider(
         config.launch_area.ground_clearance_probe,
-        ground_z=lambda request: request.candidate.x_m / 100.0,
+        ground_z=lambda request: -1.0 + (request.candidate.x_m / 100.0),
     )
 
     plan = generate_launch_plan(config, provider)
@@ -415,6 +415,12 @@ def test_plan_contains_complete_bounds_distances_and_clearance(config, plan):
         item.distance_m for item in plan.pairwise_distances
     )
     assert plan.minimum_pairwise_distance_m >= config.launch_area.minimum_separation_m
+    assert all(position.ground_z_ned_m == -1.0 for position in plan.positions)
+    assert all(
+        position.z_ned_m
+        == position.ground_z_ned_m - config.launch_area.initial_spawn_clearance_m
+        for position in plan.positions
+    )
     selected = {item.candidate_id for item in plan.positions}
     assert all(
         evaluation.accepted

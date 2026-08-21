@@ -1,0 +1,36 @@
+{
+  "schema": "veriswarm.factorycity.world_manifest.v1",
+  "status": "ACCEPTED_ENDPOINT_A",
+  "scenario_id": "factorycity-five-drone-v1",
+  "world_id": "/Game/FactoryCity.FactoryCity",
+  "source_artifact": {
+    "project_descriptor_sha256": "494423B5AA45498D5AE1B3AA82A81333158DA1E0F2EF2DA4CE5AC7CB2C8652D1",
+    "world_sha256": "2C56C0B11991719D88258D4AEDEFECF7A0314DB3BF9A65A0F650B66372CD59EB"
+  },
+  "runtime": {
+    "unreal_engine_version": "5.8.1",
+    "cosys_airsim_version": "3.4.1",
+    "cosys_protocol_version": 4,
+    "game_mode_class": "/Script/AirSim.AirSimGameMode",
+    "plugin_descriptor_sha256": "2591354EF837128D9F7D8DC698A90AD77B590FC8A5DD235C711D1DEAD102E4C2",
+    "editor_plugin_dll_sha256": "6A785609D9A8BDA11651AC067ED17DCAA929FAA2E5FB6E6BD12401BDC37C59AC"
+  },
+  "coordinate_transform": {
+    "frame": "NED_METRES",
+    "origin_unreal_units": {"x": 0.0, "y": 0.0, "z": 0.0},
+    "world_to_meters": 100.0,
+    "ned_to_unreal_axis_sign": {"x": 1.0, "y": 1.0, "z": -1.0},
+    "origin_note": "Configured world-origin transform; no placed origin actor exists."
+  },
+  "inventory": {
+    "status": "PASS",
+    "loaded_world_name": "FactoryCity",
+    "actor_count": 4859,
+    "static_mesh_actor_count": 4285,
+    "landscape_actor_count": 1,
+    "workspace_copy_inventory_sha256": "66AB7F15C830D3A2DECD8F9F6987FBB9E962C4DB65B88375FEE211B332690E07"
+  },
+  "known_visual_warnings": [
+    "Two source material texture packages, T_G_a_s and T_power_box, are unavailable in the protected source."
+  ]
+}

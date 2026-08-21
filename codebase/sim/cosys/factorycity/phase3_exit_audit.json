@@ -1,0 +1,77 @@
+{
+  "schema": "veriswarm.factorycity.phase3_exit_audit.v1",
+  "status": "PASS",
+  "scope": "FactoryCity endpoint-A setup and read-only five-drone runtime validation",
+  "accepted_sources": {
+    "configuration_sha256": "0C124D0F5EE5485AF1BD8BAC1C9E4F2DBD5463DD09E948FE76F742CEC2450595",
+    "configuration_status": "ACCEPTED",
+    "runtime_profile_sha256": "2A9C3E5BB2E8DC8388A6595A386717379C7BC3D856CDFAA0F04C95D06F471DBD",
+    "runtime_status": "ACCEPTED_RUNTIME_VALIDATED",
+    "probe_adapter_sha256": "396886D0EEE2570205E2AC7D2855623EE1D0F70C9D3D0830A9A898B8AD5EA179",
+    "rpc_verifier_sha256": "AAB26260DA4AFD81C02EB3D6FE4675865BA294A28614BC7FDE9B9CD72F578E02"
+  },
+  "authoritative_scene_evidence": {
+    "attempt": 9,
+    "clearance_request_sha256": "C76DD02C7C479E2C1544D1F422792951EB5569D5F79B54C46CF9B096C37B86D2",
+    "clearance_result_sha256": "23B80BBB64F2D6D0F8808EE081A7E9F7367C10A10019ADC6C0738F622F809062",
+    "generated_settings_sha256": "62F11AC2F51AADC46143EED858C2292BF8740E1ED124DF50EBCE677391631149",
+    "launch_manifest_sha256": "42657CF62575CC23C468090D3F5D948D89BDA2F8D909F472719F37D63667A330",
+    "candidate_count": 36,
+    "accepted_candidate_count": 23,
+    "selected_vehicle_count": 5,
+    "minimum_pairwise_distance_m": 3.6
+  },
+  "live_rpc_evidence": {
+    "behavioral_attempt": 8,
+    "observation_sha256": "D9FABA91D3AFFDE3562561DE5D677E2CD644E579437F993A1B0E67C86B839FFA",
+    "settings_sha256": "62F11AC2F51AADC46143EED858C2292BF8740E1ED124DF50EBCE677391631149",
+    "sample_count": 3,
+    "maximum_spawn_error_m": 0.005432936477713391,
+    "minimum_observed_pairwise_distance_m": 3.600000023841858,
+    "initial_support_contacts": 5,
+    "initial_support_penetration_m": 0.0,
+    "later_collision_count": 0,
+    "all_vehicles_landed": true,
+    "all_api_control_disabled": true,
+    "server_settings_matched": true,
+    "read_only": true,
+    "promotion_note": "Attempt 9 changes only acceptance identity/status metadata. Its generated runtime settings are byte-identical to the settings validated live in attempt 8."
+  },
+  "launch_area": {
+    "side_length_m": 10.0,
+    "usable_side_length_m": 9.0,
+    "minimum_configured_separation_m": 2.0,
+    "initial_spawn_clearance_m": 0.2243,
+    "takeoff_corridor_start_clearance_m": 1.5,
+    "collision_clearance_m": 1.0
+  },
+  "tests": {
+    "focused_command": "python -m pytest codebase/tests/test_factorycity_config.py codebase/tests/test_factorycity_launch.py codebase/tests/test_factorycity_phase3.py -q -p no:cacheprovider",
+    "focused_passed": 136,
+    "full_command": "python -m pytest codebase/tests -q -p no:cacheprovider",
+    "full_passed": 544,
+    "full_skipped": 3,
+    "failed": 0,
+    "local_runtime_note": "Python 3.14 required NumPy 2.5.2 in the ignored test environment because the repository-pinned NumPy 2.2.6 failed during import on this interpreter."
+  },
+  "local_direct_check": {
+    "workspace_copy_created": true,
+    "headless_open_status": "PASS",
+    "inventory_sha256": "66AB7F15C830D3A2DECD8F9F6987FBB9E962C4DB65B88375FEE211B332690E07",
+    "verified_settings_left_active_by_user_request": true,
+    "previous_global_settings_sha256": "7B09D526388948759D7B20355EC670BD875206A3FF615D43E1304D44FDB9EC45"
+  },
+  "mission_semantics": {
+    "endpoint_a": "Accepted five-drone launch positions inside the configured square.",
+    "endpoint_b": "Must be configured and scene-qualified in the flight phase.",
+    "endpoint_contact": "Ground contact or penetration at A or B is not an in-flight crash when takeoff or landing is safe.",
+    "route_collision": "An obstacle collision between A and B marks the flight as failed."
+  },
+  "deferred": [
+    "Endpoint-B selection and A-to-B distance validation",
+    "API-control ownership and arming",
+    "Collective A-to-B flight controller",
+    "In-flight collision and separation monitoring",
+    "Abort behavior, landing at B, and cleanup"
+  ]
+}

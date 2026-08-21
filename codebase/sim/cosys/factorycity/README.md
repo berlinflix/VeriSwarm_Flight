@@ -9,9 +9,9 @@ evidence remain external content-addressed artifacts.
 - Feature branch: `codex/pratik-five-drone-factorycity`
 - Base: `origin/main` at `4c83e7b8550dda407acb53705a29aec088a3c9d6`
 - Phase 0 status: frozen and verified
-- Phase 1 status: configuration contract implemented; live scene acceptance remains pending
-- Phase 2 status: deterministic placement and artifact rendering implemented; live
-  FactoryCity clearance remains pending Phase 3
+- Phase 1 status: configuration contract implemented and promoted by Phase 3 evidence
+- Phase 2 status: deterministic placement and artifact rendering implemented
+- Phase 3 status: endpoint-A FactoryCity/CoSys integration accepted and live-verified
 
 ## Scope
 
@@ -51,14 +51,22 @@ until the earlier gate passes with retained evidence.
 
 - `phase0_baseline.json` freezes the source/runtime/repository identities observed before
   integration.
-- `world_manifest.template.json` is a portable placeholder for the derived FactoryCity
-  environment manifest. Phase 3 fills measured values and hashes.
+- `world_manifest.json` records the accepted portable FactoryCity/runtime identities;
+  `world_manifest.template.json` remains the blank reusable form.
 - `factorycity_fleet_config.schema.json` is the portable Draft 2020-12 structural schema.
 - `config.py` is the authoritative strict parser for structural and cross-section safety
   invariants. It performs no RPC calls and supplies no operational defaults.
-- `factorycity_five_drone.template.json` declares the intended five-vehicle, 10 m by 10 m
-  contract. Its `TEMPLATE_NOT_SCENE_VALIDATED` status is intentional; Phase 3 scene
-  qualification is required before promotion to `ACCEPTED`.
+- `factorycity_five_drone.template.json` is the accepted five-vehicle endpoint-A contract.
+  Operational values remain data in this document rather than constants in Python.
+- `phase3_exit_audit.json` identifies the authoritative scene, settings, live-RPC, test,
+  and local direct-check evidence without storing machine-specific paths.
+
+## Mission boundary after Phase 3
+
+Endpoint A is accepted. Endpoint B and the appropriate A-to-B distance are configuration
+work for the flight phase. Ground contact at A or B is permitted when takeoff or landing is
+safe. Any obstacle collision during the airborne A-to-B segment marks the mission failed.
+No API control, arming, flight, abort, or landing command was issued in Phase 3.
 - `launch.py` calculates usable square bounds, derives a candidate lattice from configured
   fleet size and separation, calls a scene-clearance provider for every candidate, performs
   seeded max-min selection, revalidates the resulting plan, and renders deterministic CoSys

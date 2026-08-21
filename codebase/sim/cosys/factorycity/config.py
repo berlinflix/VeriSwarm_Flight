@@ -105,6 +105,8 @@ class LaunchAreaConfig:
     center: Vector2
     side_length_m: float
     edge_clearance_m: float
+    initial_spawn_clearance_m: float
+    takeoff_corridor_start_clearance_m: float
     minimum_separation_m: float
     altitude_reference: str
     ground_clearance_probe: str
@@ -151,9 +153,13 @@ class LimitsConfig:
     command_ttl_ms: int
     minimum_separation_m: float
     collision_clearance_m: float
+    spawn_position_tolerance_m: float
+    support_contact_max_penetration_m: float
     state_staleness_ms: int
     sensor_staleness_ms: int
     rpc_timeout_seconds: float
+    verification_sample_count: int
+    verification_sample_interval_seconds: float
     stage_timeouts: tuple[StageTimeout, ...]
 
     def timeout_for(self, stage: str) -> float:
@@ -443,6 +449,8 @@ def _parse_launch_area(value: Any) -> LaunchAreaConfig:
             "center_ned_m",
             "side_length_m",
             "edge_clearance_m",
+            "initial_spawn_clearance_m",
+            "takeoff_corridor_start_clearance_m",
             "minimum_separation_m",
             "altitude_reference",
             "ground_clearance_probe",
@@ -474,6 +482,16 @@ def _parse_launch_area(value: Any) -> LaunchAreaConfig:
         center=_vector2(raw["center_ned_m"], f"{context}.center_ned_m"),
         side_length_m=side_length,
         edge_clearance_m=edge_clearance,
+        initial_spawn_clearance_m=_finite(
+            raw["initial_spawn_clearance_m"],
+            f"{context}.initial_spawn_clearance_m",
+            positive=True,
+        ),
+        takeoff_corridor_start_clearance_m=_finite(
+            raw["takeoff_corridor_start_clearance_m"],
+            f"{context}.takeoff_corridor_start_clearance_m",
+            positive=True,
+        ),
         minimum_separation_m=minimum_separation,
         altitude_reference=_choice(
             raw["altitude_reference"],
@@ -516,9 +534,13 @@ def _parse_limits(value: Any) -> LimitsConfig:
             "command_ttl_ms",
             "minimum_separation_m",
             "collision_clearance_m",
+            "spawn_position_tolerance_m",
+            "support_contact_max_penetration_m",
             "state_staleness_ms",
             "sensor_staleness_ms",
             "rpc_timeout_seconds",
+            "verification_sample_count",
+            "verification_sample_interval_seconds",
             "stage_timeouts_seconds",
         },
         context,
@@ -600,6 +622,14 @@ def _parse_limits(value: Any) -> LimitsConfig:
             f"{context}.collision_clearance_m",
             positive=True,
         ),
+        spawn_position_tolerance_m=_nonnegative(
+            raw["spawn_position_tolerance_m"],
+            f"{context}.spawn_position_tolerance_m",
+        ),
+        support_contact_max_penetration_m=_nonnegative(
+            raw["support_contact_max_penetration_m"],
+            f"{context}.support_contact_max_penetration_m",
+        ),
         state_staleness_ms=_positive_int(
             raw["state_staleness_ms"], f"{context}.state_staleness_ms"
         ),
@@ -609,6 +639,15 @@ def _parse_limits(value: Any) -> LimitsConfig:
         rpc_timeout_seconds=_finite(
             raw["rpc_timeout_seconds"],
             f"{context}.rpc_timeout_seconds",
+            positive=True,
+        ),
+        verification_sample_count=_positive_int(
+            raw["verification_sample_count"],
+            f"{context}.verification_sample_count",
+        ),
+        verification_sample_interval_seconds=_finite(
+            raw["verification_sample_interval_seconds"],
+            f"{context}.verification_sample_interval_seconds",
             positive=True,
         ),
         stage_timeouts=stage_timeouts,
@@ -982,6 +1021,18 @@ def validate_config(raw: Mapping[str, Any]) -> FactoryCityConfig:
         raise ConfigurationError(
             "launch-area and runtime minimum-separation values must match"
         )
+    corridor_clearance_margin = (
+        launch_area.takeoff_corridor_start_clearance_m
+        - limits.collision_clearance_m
+    )
+    if corridor_clearance_margin <= 0.0:
+        raise ConfigurationError(
+            "takeoff corridor start clearance must exceed collision clearance"
+        )
+    if limits.spawn_position_tolerance_m >= corridor_clearance_margin:
+        raise ConfigurationError(
+            "spawn-position tolerance must be smaller than the configured takeoff-corridor margin"
+        )
     if not math.isclose(
         lifecycle.cleanup_timeout_seconds,
         limits.timeout_for("cleanup"),
@@ -994,6 +1045,14 @@ def validate_config(raw: Mapping[str, Any]) -> FactoryCityConfig:
     if limits.rpc_timeout_seconds > limits.timeout_for("connect"):
         raise ConfigurationError(
             "RPC timeout must not exceed the connect-stage timeout"
+        )
+    verification_duration = (
+        (limits.verification_sample_count - 1)
+        * limits.verification_sample_interval_seconds
+    )
+    if verification_duration > limits.timeout_for("verify"):
+        raise ConfigurationError(
+            "verification sample window must fit inside the verify-stage timeout"
         )
 
     return FactoryCityConfig(
