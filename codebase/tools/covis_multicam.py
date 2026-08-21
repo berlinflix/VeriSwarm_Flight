@@ -60,10 +60,12 @@ from tools.covis_live import (
     assess_pair,
 )
 
-SCHEMA = "veriswarm.covis_multicam.v1"
+SCHEMA = "veriswarm.covis_multicam.v2"
 CAMERA_NAME_RE = RUN_ID_RE
 MIN_CAMERAS = 2
 MAX_CAMERAS = 5
+DEFAULT_APPEARANCE_THRESHOLD = 0.60
+WINDOW_TITLE = "VeriSwarm multi-camera | s save | q quit"
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,22 @@ class PairResult:
     overlap_available: bool
     displayed_decision: str
     displayed_reason: str
+    appearance_assumption: "AppearanceAssumption | None" = None
+
+
+@dataclass(frozen=True)
+class AppearanceAssumption:
+    """Heuristic same-object suggestion; never geometric identity evidence."""
+
+    class_id: int
+    class_name: str
+    score: float
+    colour_similarity: float
+    shape_similarity: float
+    camera_a_detection_index: int
+    camera_b_detection_index: int
+    assumed_same_object: bool
+    identity_proven: bool = False
 
 
 def parse_camera_specs(values: Sequence[Sequence[str]]) -> tuple[CameraSpec, ...]:
@@ -179,6 +197,87 @@ def _cached_pair_provider(
     return provider
 
 
+def _detection_crop(frame: Any, detection: Any) -> Any | None:
+    """Return one bounded YOLO crop from normalized detection coordinates."""
+    height, width = frame.shape[:2]
+    x0 = max(0, min(width, int(round((detection.x - detection.w / 2) * width))))
+    x1 = max(0, min(width, int(round((detection.x + detection.w / 2) * width))))
+    y0 = max(0, min(height, int(round((detection.y - detection.h / 2) * height))))
+    y1 = max(0, min(height, int(round((detection.y + detection.h / 2) * height))))
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+    return frame[y0:y1, x0:x1]
+
+
+def _appearance_similarity(
+    frame_a: Any,
+    detection_a: Any,
+    frame_b: Any,
+    detection_b: Any,
+    cv2_module: Any,
+) -> tuple[float, float, float] | None:
+    """Compare same-class crops by HSV colour distribution and box shape."""
+    crop_a = _detection_crop(frame_a, detection_a)
+    crop_b = _detection_crop(frame_b, detection_b)
+    if crop_a is None or crop_b is None:
+        return None
+
+    histograms = []
+    for crop in (crop_a, crop_b):
+        hsv = cv2_module.cvtColor(crop, cv2_module.COLOR_BGR2HSV)
+        histogram = cv2_module.calcHist(
+            [hsv], [0, 1], None, [24, 16], [0, 180, 0, 256]
+        )
+        cv2_module.normalize(histogram, histogram)
+        histograms.append(histogram)
+    distance = float(
+        cv2_module.compareHist(
+            histograms[0], histograms[1], cv2_module.HISTCMP_BHATTACHARYYA
+        )
+    )
+    colour_similarity = max(0.0, min(1.0, 1.0 - distance))
+    aspect_a = detection_a.w / max(detection_a.h, 1e-9)
+    aspect_b = detection_b.w / max(detection_b.h, 1e-9)
+    shape_similarity = math.exp(-abs(math.log(max(aspect_a, 1e-9) / max(aspect_b, 1e-9))))
+    score = 0.8 * colour_similarity + 0.2 * shape_similarity
+    return score, colour_similarity, shape_similarity
+
+
+def _best_appearance_assumption(
+    frame_a: Any,
+    frame_b: Any,
+    assessment: Any,
+    cv2_module: Any,
+    threshold: float,
+) -> AppearanceAssumption | None:
+    """Select the strongest same-class crop match and state that it is assumed."""
+    names = dict(assessment.class_names)
+    best: AppearanceAssumption | None = None
+    for index_a, detection_a in enumerate(assessment.detections_a):
+        for index_b, detection_b in enumerate(assessment.detections_b):
+            if detection_a.cls != detection_b.cls:
+                continue
+            similarities = _appearance_similarity(
+                frame_a, detection_a, frame_b, detection_b, cv2_module
+            )
+            if similarities is None:
+                continue
+            score, colour_similarity, shape_similarity = similarities
+            candidate = AppearanceAssumption(
+                class_id=detection_a.cls,
+                class_name=names.get(detection_a.cls, f"class_{detection_a.cls}"),
+                score=score,
+                colour_similarity=colour_similarity,
+                shape_similarity=shape_similarity,
+                camera_a_detection_index=index_a,
+                camera_b_detection_index=index_b,
+                assumed_same_object=score >= threshold,
+            )
+            if best is None or candidate.score > best.score:
+                best = candidate
+    return best
+
+
 def assess_all_pairs(
     specs: Sequence[CameraSpec],
     packets: Mapping[str, FramePacket],
@@ -193,9 +292,12 @@ def assess_all_pairs(
     max_luma: float = 250.0,
     m_min: int = 15,
     min_intersection_pixels: float = 1.0,
+    appearance_threshold: float = DEFAULT_APPEARANCE_THRESHOLD,
     alignment_provider: Any = None,
 ) -> tuple[PairResult, ...]:
     """Assess every unordered pair using cached per-camera observations."""
+    if not 0.0 <= appearance_threshold <= 1.0:
+        raise ValueError("appearance_threshold must be in [0, 1]")
     results: list[PairResult] = []
     kwargs = {
         "cv2_module": cv2_module,
@@ -252,6 +354,15 @@ def assess_all_pairs(
                 decision=displayed_decision,
                 reason=displayed_reason,
             )
+        appearance_assumption = None
+        if observations is not None:
+            appearance_assumption = _best_appearance_assumption(
+                packets[name_a].frame,
+                packets[name_b].frame,
+                assessment,
+                cv2_module,
+                appearance_threshold,
+            )
         results.append(
             PairResult(
                 name_a,
@@ -260,6 +371,7 @@ def assess_all_pairs(
                 overlap_available,
                 displayed_decision,
                 displayed_reason,
+                appearance_assumption,
             )
         )
     return tuple(results)
@@ -279,6 +391,45 @@ def _fit_image(frame: Any, width: int, height: int, cv2_module: Any) -> Any:
     y = (height - resized_height) // 2
     canvas[y : y + resized_height, x : x + resized_width] = resized
     return canvas
+
+
+def fit_visible_window(
+    render_width: int,
+    render_height: int,
+    screen_width: int,
+    screen_height: int,
+    *,
+    horizontal_margin: int = 40,
+    vertical_margin: int = 110,
+) -> tuple[int, int]:
+    """Fit a rendered dashboard inside the usable screen without cropping it."""
+    available_width = max(1, screen_width - horizontal_margin)
+    available_height = max(1, screen_height - vertical_margin)
+    scale = min(
+        1.0,
+        available_width / render_width,
+        available_height / render_height,
+    )
+    return max(1, round(render_width * scale)), max(1, round(render_height * scale))
+
+
+def _visible_window_size(render_width: int, render_height: int) -> tuple[int, int]:
+    """Use DPI-aware Windows metrics when available; otherwise retain render size."""
+    if sys.platform != "win32":
+        return render_width, render_height
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        screen_width = int(user32.GetSystemMetrics(0))
+        screen_height = int(user32.GetSystemMetrics(1))
+    except Exception:
+        return render_width, render_height
+    if screen_width <= 0 or screen_height <= 0:
+        return render_width, render_height
+    return fit_visible_window(
+        render_width, render_height, screen_width, screen_height
+    )
 
 
 def _put_lines(
@@ -356,6 +507,7 @@ def _source_tile(
 
 def _pair_tile(
     pair: PairResult,
+    packet_a: FramePacket,
     packet_b: FramePacket,
     width: int,
     height: int,
@@ -363,7 +515,7 @@ def _pair_tile(
 ) -> Any:
     import numpy as np
 
-    header = 66
+    header = 104
     tile = np.zeros((height, width, 3), dtype=np.uint8)
     colour = _decision_colour(pair.displayed_decision)
     assessment = pair.assessment
@@ -372,9 +524,51 @@ def _pair_tile(
     view_iou = None if spatial is None else spatial.view_overlap_iou
     box_iou = None if spatial is None else spatial.same_class_best_box_iou
     inliers = 0 if features is None else features.inliers
+    object_label = "none"
+    if (
+        spatial is not None
+        and spatial.best_box_intersection_index is not None
+        and 0 <= spatial.best_box_intersection_index < len(spatial.box_intersections)
+    ):
+        class_id = spatial.box_intersections[
+            spatial.best_box_intersection_index
+        ].class_id
+        object_label = dict(assessment.class_names).get(class_id, f"class_{class_id}")
     if pair.overlap_available:
         panel = _overlap_panel(packet_b.frame, assessment, cv2_module)
         tile[header:] = _fit_image(panel, width, height - header, cv2_module)
+    elif (
+        pair.appearance_assumption is not None
+        and pair.appearance_assumption.assumed_same_object
+    ):
+        view_a = packet_a.frame.copy()
+        view_b = packet_b.frame.copy()
+        _draw_detections(
+            view_a, assessment.detections_a, assessment.class_names, cv2_module
+        )
+        _draw_detections(
+            view_b, assessment.detections_b, assessment.class_names, cv2_module
+        )
+        half = max(1, width // 2)
+        panel_a = _fit_image(view_a, half, height - header, cv2_module)
+        panel_b = _fit_image(view_b, width - half, height - header, cv2_module)
+        panel = np.hstack((panel_a, panel_b))
+        assumption = pair.appearance_assumption
+        _put_lines(
+            panel,
+            (
+                f"ASSUMED SAME OBJECT: {assumption.class_name}",
+                f"appearance={assumption.score:.3f} | identity not proven",
+            ),
+            (8, max(22, (height - header) - 38)),
+            (255, 0, 255),
+            cv2_module,
+            scale=0.48,
+            thickness=2,
+            spacing=21,
+        )
+        tile[header:] = panel
+        colour = (255, 0, 255)
     else:
         body = np.full((height - header, width, 3), 18, dtype=np.uint8)
         _put_lines(
@@ -392,20 +586,31 @@ def _pair_tile(
             spacing=34,
         )
         tile[header:] = body
+    assumption_text = pair.displayed_reason
+    if (
+        pair.appearance_assumption is not None
+        and pair.appearance_assumption.assumed_same_object
+        and not pair.overlap_available
+    ):
+        assumption_text = (
+            f"ASSUMED_OBJECT_INTERSECTION:{pair.appearance_assumption.class_name} "
+            f"score={pair.appearance_assumption.score:.3f}; geometry=ABSTAIN"
+        )
+        object_label = pair.appearance_assumption.class_name
     _put_lines(
         tile,
         (
             f"{pair.camera_a} -> {pair.camera_b} | {pair.displayed_decision}",
             f"view_IoU={'n/a' if view_iou is None else f'{view_iou:.3f}'} | "
-            f"box_IoU={'n/a' if box_iou is None else f'{box_iou:.3f}'} | "
+            f"box_IoU={'n/a' if box_iou is None else f'{box_iou:.3f}'} | object={object_label}",
             f"inliers={inliers} | skew={assessment.receive_skew_ms:.1f}ms",
-            f"{pair.displayed_reason}",
+            assumption_text,
         ),
         (7, 18),
         colour,
         cv2_module,
-        scale=0.43,
-        spacing=20,
+        scale=0.46,
+        spacing=23,
     )
     cv2_module.rectangle(tile, (0, 0), (width - 1, height - 1), colour, 2)
     return tile
@@ -426,8 +631,8 @@ def render_dashboard(
 
     canvas = np.zeros((height, width, 3), dtype=np.uint8)
     gap = 8
-    title_height = 48
-    source_height = max(110, min(170, height // 5))
+    title_height = 52
+    source_height = max(105, min(130, height // 7))
     source_width = (width - gap * (len(specs) + 1)) // len(specs)
     observation_map = observations or {}
     for index, spec in enumerate(specs):
@@ -457,6 +662,7 @@ def render_dashboard(
         y = grid_top + gap + row * (cell_height + gap)
         tile = _pair_tile(
             pair,
+            packets[pair.camera_a],
             packets[pair.camera_b],
             cell_width,
             cell_height,
@@ -465,9 +671,15 @@ def render_dashboard(
         canvas[y : y + cell_height, x : x + cell_width] = tile
 
     valid = sum(pair.overlap_available for pair in pairs)
+    assumed = sum(
+        not pair.overlap_available
+        and pair.appearance_assumption is not None
+        and pair.appearance_assumption.assumed_same_object
+        for pair in pairs
+    )
     title = (
         f"VeriSwarm multi-camera | sources={len(specs)} | pairs={pair_count} | "
-        f"valid intersections={valid}"
+        f"valid intersections={valid} | assumed object intersections={assumed}"
     )
     if valid == 0:
         title += " | NO CAMERA PAIR HAS A VALID INTERSECTION"
@@ -492,6 +704,11 @@ def _pair_json(pair: PairResult) -> dict[str, Any]:
         "displayed_decision": pair.displayed_decision,
         "displayed_reason": pair.displayed_reason,
         "overlap_available": pair.overlap_available,
+        "appearance_assumption": (
+            None
+            if pair.appearance_assumption is None
+            else asdict(pair.appearance_assumption)
+        ),
         "assessment": asdict(pair.assessment),
     }
 
@@ -562,6 +779,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-luma", type=float, default=250.0)
     parser.add_argument("--m-min", type=int, default=15)
     parser.add_argument("--min-intersection-pixels", type=float, default=1.0)
+    parser.add_argument(
+        "--appearance-threshold",
+        type=float,
+        default=DEFAULT_APPEARANCE_THRESHOLD,
+        help=(
+            "minimum same-class crop colour/shape score for an explicitly "
+            "assumed object intersection; never proves identity"
+        ),
+    )
     parser.add_argument("--weights", type=Path)
     parser.add_argument("--expected-model-sha256")
     parser.add_argument("--confidence", type=float, default=0.25)
@@ -602,6 +828,8 @@ def _validate_args(args: argparse.Namespace) -> tuple[CameraSpec, ...]:
         raise ValueError("m-min must be at least 4")
     if not 0 < args.confidence <= 1:
         raise ValueError("confidence must be in (0, 1]")
+    if not 0 <= args.appearance_threshold <= 1:
+        raise ValueError("appearance-threshold must be in [0, 1]")
     if not 0 <= args.min_luma < args.max_luma <= 255:
         raise ValueError("luma bounds must satisfy 0 <= min < max <= 255")
     if args.min_focus < 0:
@@ -646,6 +874,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ImportError:
         print("ERROR: OpenCV is required")
         return 2
+
+    visible_window = _visible_window_size(args.display_width, args.display_height)
 
     weights_hash: str | None = None
     detector: YoloClaimProvider | None = None
@@ -694,12 +924,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             "max_luma": args.max_luma,
             "m_min": args.m_min,
             "min_intersection_pixels": args.min_intersection_pixels,
+            "appearance_threshold": args.appearance_threshold,
         },
         "video": {
             "enabled": args.record_video,
             "codec": args.video_codec,
             "fps": args.video_fps or args.analysis_fps,
             "resolution": [args.display_width, args.display_height],
+        },
+        "visible_window": {
+            "width": visible_window[0],
+            "height": visible_window[1],
+            "render_width": args.display_width,
+            "render_height": args.display_height,
+            "fit_to_screen": True,
         },
     }
     _atomic_json(run_dir / "run_config.json", config)
@@ -737,6 +975,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     events_handle = events_path.open("x", encoding="utf-8", newline="\n")
     started = time.monotonic()
     try:
+        if not args.headless:
+            window_flags = cv2.WINDOW_NORMAL
+            if hasattr(cv2, "WINDOW_KEEPRATIO"):
+                window_flags |= cv2.WINDOW_KEEPRATIO
+            cv2.namedWindow(WINDOW_TITLE, window_flags)
+            cv2.resizeWindow(WINDOW_TITLE, *visible_window)
         for worker in workers.values():
             worker.start()
         ready_deadline = time.monotonic() + args.open_timeout
@@ -768,6 +1012,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_luma=args.max_luma,
                 m_min=args.m_min,
                 min_intersection_pixels=args.min_intersection_pixels,
+                appearance_threshold=args.appearance_threshold,
             )
             dashboard = render_dashboard(
                 specs,
@@ -791,7 +1036,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             key = -1
             if not args.headless:
-                cv2.imshow("VeriSwarm multi-camera | s save | q quit", dashboard)
+                cv2.imshow(WINDOW_TITLE, dashboard)
                 key = cv2.waitKey(1) & 0xFF
             if key == ord("s"):
                 screenshots = run_dir / "screenshots"

@@ -127,6 +127,14 @@ $width = [int](Get-NumberSetting $config "width" 640 1)
 $height = [int](Get-NumberSetting $config "height" 360 1)
 $fps = Get-NumberSetting $config "fps" 15 0.01
 $analysisFps = Get-NumberSetting $config "analysis_fps" 3 0.01
+$appearanceThreshold = Get-NumberSetting $config "appearance_threshold" 0.60 0
+if ($appearanceThreshold -gt 1) {
+    throw "Configuration value appearance_threshold must not exceed 1."
+}
+$confidence = Get-NumberSetting $config "confidence" 0.25 0.01
+if ($confidence -gt 1) {
+    throw "Configuration value confidence must not exceed 1."
+}
 $releaseTimeout = Get-NumberSetting $config "release_timeout" 20 1
 $displayWidth = [int](Get-NumberSetting $config "display_width" 1600 800)
 $displayHeight = [int](Get-NumberSetting $config "display_height" 900 600)
@@ -172,6 +180,8 @@ if ($ValidateOnly) {
     Write-Host "Python: $PythonPath"
     Write-Host "Configuration: $CameraConfigPath"
     Write-Host "Cameras: $($cameraSpecs.Count); pairs: $(($cameraSpecs.Count * ($cameraSpecs.Count - 1)) / 2)"
+    Write-Host "Appearance assumption threshold: $(Convert-Invariant $appearanceThreshold)"
+    Write-Host "YOLO confidence threshold: $(Convert-Invariant $confidence)"
     foreach ($camera in $cameraSpecs) {
         Write-Host "  $($camera.Name): $($camera.Source) [$($camera.Backend)]"
     }
@@ -196,6 +206,7 @@ $runnerArguments += @(
     "--height", $height.ToString(),
     "--fps", (Convert-Invariant $fps),
     "--analysis-fps", (Convert-Invariant $analysisFps),
+    "--appearance-threshold", (Convert-Invariant $appearanceThreshold),
     "--release-timeout", (Convert-Invariant $releaseTimeout),
     "--display-width", $displayWidth.ToString(),
     "--display-height", $displayHeight.ToString(),
@@ -212,7 +223,7 @@ if (-not $FeatureOnly) {
     $runnerArguments += @(
         "--weights", $WeightsPath,
         "--expected-model-sha256", $expectedModelSha256,
-        "--confidence", "0.25"
+        "--confidence", (Convert-Invariant $confidence)
     )
 }
 
