@@ -1,69 +1,89 @@
 # STATUS — SAMIK
 
-Updated: 2026-08-22 14:00 IST
+Updated: 2026-08-22 IST
 
 Branch: `samik/sih26177-perception`
 
-Latest work commit: `15d1af6fca21c9b1b306c234390097b6d3f7e8b7`
+Latest work commit before this status update: `db73384`
 
 ## Completed since the previous update
 
-- Selected RunPod Secure Cloud with one NVIDIA GeForce RTX 5090 (32 GB VRAM) as the
-  training target; no Pod or cloud environment is ready yet.
-- Froze the external execution plan at
-  `C:\projects\VeriSwarm\My work\SAMIK_RESCUE_PERSON_MODEL_2026-08-22\IMPLEMENTATION_PLAN.md`.
-- Selected official VisDrone2019-DET train and validation for the real aerial-person
-  baseline and C2A v2 for later synthetic disaster-human refinement.
-- Re-ran the focused adapter tests from the current branch using an external pytest
-  temporary directory: `10 passed in 0.04s`. This is Codex verification, not Samik
-  acceptance or model-training evidence.
+- Installed and authenticated the official RunPod integration and verified a funded
+  account balance of `$20.00`.
+- Prepared, but did not deploy, one Secure RTX 5090 configuration named
+  `samik-rescue-person-training`: one RTX 5090, 30 GB temporary container disk, 100 GB
+  network volume mounted at `/workspace`, Jupyter/SSH enabled and a pinned container
+  image digest. The current displayed rate is approximately `$1.00/hour`.
+- Verified local C2A intake at `E:\dataset\C2A_Dataset.zip`: `4,903,081,990` bytes,
+  SHA-256 `CC21B41D7FCD555134117F95F52EAB7FD39A96CD694E8EDC8728C540E9EAE653`,
+  archive listing exit `0`, 10,215 PNG entries, 20,431 TXT entries and three official
+  split JSON entries. This is Codex-generated unreviewed intake evidence, not Samik
+  dataset acceptance.
+- Read and adopted Suyash's latest Jetson gate and synthetic-POV handoffs from
+  `origin/suyash/sih26177-rescue-integration` through commit `60317d3`.
+- Updated the external implementation plan to distinguish cloud training, onboard Jetson
+  production deployment and the secondary Windows live/video demonstration wrapper.
+- Re-ran the focused rescue perception-adapter tests with an external pytest temporary
+  directory: `10 passed in 0.12s`. This is Codex verification, not Samik acceptance or
+  model-training evidence.
 
 ## In progress now
 
-- C2A v2 is still an unverified browser download at
-  `C:\Users\Samik\Downloads\Unconfirmed 732194.crdownload`; observed partial size was
-  `4,614,983,459` bytes at 2026-08-22 13:58 IST. It has not been moved, uploaded,
-  extracted or counted as accepted data.
-- Preparing the RunPod RTX 5090 environment and persistent storage gate. The planned
-  persistent root is `/workspace/samik-rescue-person-model-20260822` on a 100 GB
-  network volume.
-- Preparing official VisDrone train/validation intake, deterministic one-class
-  conversion, duplicate checks and the rendered label audit.
+- Production target is the Jetson Orin Nano 8GB installed onboard the drone, using the
+  available 15 W power profile and one live RGB stream. RunPod RTX 5090 is training and
+  validation infrastructure only.
+- Frozen candidate order is mandatory `YOLOv8n@640`, mandatory `YOLOv8n@960`, then
+  optional `YOLOv8s@640` if budget remains. The selected model must pass the Nano gate.
+- Frozen artifact chain is cloud `.pt` -> static batch-1 ONNX -> TensorRT FP16 engine
+  built on the actual target Nano. An RTX-built TensorRT engine will not be transferred
+  to Jetson.
+- The Windows `.exe` is demonstration-only and will expose Live Camera and Video File
+  modes. Recorded-video integration will adopt Suyash's `VideoFileSource`, preserve source
+  timestamps and use newest-frame sampling without a stale-frame queue.
 
 ## Outputs available
 
-- Frozen output class: `person_candidate` only.
+- External implementation plan:
+  `C:\projects\VeriSwarm\My work\SAMIK_RESCUE_PERSON_MODEL_2026-08-22\IMPLEMENTATION_PLAN.md`.
+- Frozen detector output class: `person_candidate` only.
 - VisDrone input mapping: `pedestrian` and `people` -> `person_candidate`.
-- C2A use: later refinement only; real VisDrone and synthetic C2A metrics remain
-  separate.
 - Verified VisDrone images downloaded: `0`; verified annotations downloaded: `0`.
 - Converted images: `0`; converted labels: `0`.
-- Corrupt-file checks completed: `0`; cross-split duplicate checks completed: `0`.
-- Planned first audit path:
-  `/workspace/samik-rescue-person-model-20260822/label-audit/visdrone-person-100/`;
-  not created yet.
-- Five-epoch smoke job: **NOT STARTED**. Planned persistent output root:
-  `/workspace/samik-rescue-person-model-20260822/runs/training/`.
-- Latest detector metrics: **NONE**. No baseline, smoke, validation, test or P2 latency
-  metric exists yet.
+- Five-epoch smoke job: **NOT STARTED**.
+- Latest model metrics: **NONE**.
+- Trained `.pt`, ONNX, TensorRT engine and Nano benchmark: **NONE**.
+- Executable training pipeline: **NOT GENERATED**. The current artifact is a reviewed
+  implementation plan, not completed training code.
+
+## Suyash interface adoption
+
+- The most accurate held-out candidate that passes the Orin Nano 8GB at 15 W gate is the
+  production choice; speed alone does not select the model.
+- The one-drone Nano gate covers one RGB stream and the complete capture-to-event/outbox
+  path. The five-camera tripod demonstration remains separate evidence.
+- The release allowlist binds the exact executed TensorRT `.engine` SHA-256, source `.pt`
+  and ONNX lineage, class map, threshold, input shape, precision, runtime identity and
+  accuracy/benchmark reports.
+- Generated disaster POV results are labelled `synthetic_rgb` and kept separate from
+  real-aerial held-out metrics.
+- The detector proves only RGB `person_candidate`; it does not prove thermal or disaster
+  hazard detection. Green/red safe-disaster triage remains a separate classifier/display
+  capability and does not change `veriswarm.rescue.event.v1`.
+- No schema, five-camera, security or frozen network evidence was changed.
 
 ## Blockers
 
-- No RunPod or Kaggle credential environment variables are present in the current
-  shell, and `runpodctl` is not installed. This does not block local preparation or
-  public VisDrone intake; cloud provisioning requires an authenticated RunPod access
-  path.
-
-## Shared-interface changes
-
-- NONE. The detector still emits only `person_candidate` through Suyash's frozen
-  `veriswarm.rescue.event.v1` schema. No schema, five-camera, security or network
-  evidence was changed.
-- Candidate `15d1af6` remains unreviewed and still lacks model ID/hash and class-map
-  binding, stale-frame rejection and runtime failure handling.
+- The billable RunPod Pod has not been deployed. Training cannot start until compute is
+  created and the immutable environment gate passes.
+- Safe/disaster state classification still requires reviewed per-person labels; the
+  `karthika95/pedestrian-detection` dataset is not accepted as a `safe_walking` label
+  source.
+- Physical Jetson Orin Nano access is required later to build and qualify the final
+  TensorRT engine.
 
 ## Next checkpoint
 
-- Establish the RunPod RTX 5090 Pod and immutable environment identity, then download
-  and verify VisDrone train/validation, publish counts and hashes, complete the
-  100-image label audit, and start the five-epoch YOLOv8n smoke gate.
+- Deploy the prepared RunPod configuration, verify its actual GPU/datacenter/image and
+  persistent volume, create the pinned environment, download and audit VisDrone, then run
+  the five-epoch `YOLOv8n@640` smoke gate. Publish measured duration, cost projection,
+  CUDA/VRAM evidence and preliminary validation metrics before full candidates.
