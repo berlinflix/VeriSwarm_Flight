@@ -8,6 +8,13 @@ const dashboardRoot = dirname(fileURLToPath(import.meta.url));
 const codebaseRoot = resolve(dashboardRoot, "..");
 const attackFile = resolve(codebaseRoot, "attack.json");
 const eventFile = resolve(codebaseRoot, "results", "live_events.jsonl");
+const movementConfigFile = resolve(
+  codebaseRoot,
+  "sim",
+  "cosys",
+  "factorycity",
+  "factorycity_joint_movement_contract.development.json",
+);
 const qualifierUrl = (process.env.VERISWARM_QUALIFIER_URL ?? "").replace(/\/$/, "");
 const qualifierToken = process.env.VERISWARM_QUALIFIER_TOKEN ?? "";
 const rescueUrl = (process.env.VERISWARM_RESCUE_URL ?? "").replace(/\/$/, "");
@@ -253,6 +260,25 @@ function dashboardApi() {
           "/state": "/state",
           "/report": "/report",
         };
+        if (request.url === "/config") {
+          try {
+            const config = JSON.parse(await fs.readFile(movementConfigFile, "utf8"));
+            sendJson(response, 200, {
+              ok: true,
+              config: {
+                schema: config.schema,
+                scenario_id: config.scenario_id,
+                map_binding: config.map_binding,
+                route: config.route,
+                search_cells: config.search_cells,
+                vehicles: config.vehicles,
+              },
+            });
+          } catch (error) {
+            sendJson(response, 503, { ok: false, error: `movement_config_unavailable:${error.message}` });
+          }
+          return;
+        }
         const target = routes[request.url];
         if (!target) {
           sendJson(response, 404, { ok: false, error: "not_found" });

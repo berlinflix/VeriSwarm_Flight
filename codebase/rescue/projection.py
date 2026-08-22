@@ -376,6 +376,9 @@ class MissionProjection:
             "mission_status": self.mission_status,
             "events_applied": self.events_applied,
             "coverage": self._coverage_summary(),
+            "coverage_by_sector": sorted(
+                self.coverage.values(), key=lambda item: item["sector_id"]
+            ),
             "vehicles": sorted(self.vehicles.values(), key=lambda item: item["node"]),
             "assignments": sorted(self.assignments.values(), key=lambda item: item["node"]),
             "assignment_conflicts": self._assignment_conflicts(),
