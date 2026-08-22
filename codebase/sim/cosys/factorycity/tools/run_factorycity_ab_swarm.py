@@ -57,12 +57,15 @@ def _load_config(path: Path, map_file: Path) -> dict[str, object]:
     limits = data["limits"]
     rpc = data["rpc"]
     flood = data["flood"]
+    landing = data["landing"]
     for field in ("timeout_seconds",):
         _positive(rpc, field)
     for field in (
         "horizontal_distance_m",
         "horizontal_velocity_mps",
         "control_step_seconds",
+        "arrival_correction_velocity_mps",
+        "arrival_convergence_timeout_seconds",
         "arrival_tolerance_m",
         "maximum_lateral_error_m",
     ):
@@ -84,6 +87,12 @@ def _load_config(path: Path, map_file: Path) -> dict[str, object]:
         "update_period_seconds",
     ):
         _positive(flood, field)
+    for field in (
+        "command_timeout_seconds",
+        "confirmation_timeout_seconds",
+        "confirmation_poll_seconds",
+    ):
+        _positive(landing, field)
     delta = tuple(float(value) for value in route["target_delta_ned_m"])
     if len(delta) != 2 or not all(math.isfinite(value) for value in delta):
         raise RuntimeError("target_delta_ned_m must contain two finite values")
@@ -519,6 +528,151 @@ def main() -> None:
                     **observation,
                 }
             )
+        # A duration-integrated velocity command is not an odometry guarantee: vehicle
+        # acceleration and settling can leave the swarm short of Point_B. Converge using
+        # the same velocity direction and measured per-vehicle local NED odometry. A
+        # shared moveToPosition target is deliberately avoided because CoSim AirSim
+        # interprets that target in the world NED frame and would collapse the formation.
+        pending_arrival = set(active)
+        convergence_started = time.monotonic()
+        convergence_timeout = float(route["arrival_convergence_timeout_seconds"])
+        correction_velocity = float(route["arrival_correction_velocity_mps"])
+        correction_vx = correction_velocity * dx / distance
+        correction_vy = correction_velocity * dy / distance
+        correction_step = float(route["control_step_seconds"])
+        convergence_step = 0
+        # Do not issue a correction to a drone that is already within the configured
+        # Point_B tolerance. This prevents a final one-step overshoot at the roof edge.
+        initial_arrival_errors = {}
+        initially_arrived = []
+        for vehicle in tuple(sorted(pending_arrival)):
+            x, y = _local_xy(client, vehicle)
+            horizontal_error = math.hypot(x - dx, y - dy)
+            cross_track_error = abs(dx * y - dy * x) / distance
+            initial_arrival_errors[vehicle] = {
+                "horizontal_error_m": horizontal_error,
+                "cross_track_error_m": cross_track_error,
+            }
+            if (
+                horizontal_error <= float(route["arrival_tolerance_m"])
+                and cross_track_error <= float(route["maximum_lateral_error_m"])
+            ):
+                pending_arrival.remove(vehicle)
+                initially_arrived.append(vehicle)
+                states[vehicle] = "ARRIVED"
+                client.hoverAsync(vehicle_name=vehicle).join()
+        if initially_arrived:
+            current_water = client.simGetObjectPose(water_name, ned=True)
+            water_z = float(current_water.position.z_val)
+            observation = _observation(
+                client,
+                tuple(sorted(active)),
+                water_z,
+                float(limits["minimum_pairwise_separation_m"]),
+            )
+            events.append(
+                {
+                    "state": "ARRIVAL_CONVERGENCE",
+                    "step": convergence_step,
+                    "elapsed_seconds": 0.0,
+                    "pending": sorted(pending_arrival),
+                    "newly_arrived": initially_arrived,
+                    "new_collisions": [],
+                    "collision_samples": {},
+                    "arrival_errors": initial_arrival_errors,
+                    **observation,
+                }
+            )
+        while pending_arrival:
+            elapsed = time.monotonic() - convergence_started
+            if elapsed > convergence_timeout:
+                remaining = ", ".join(sorted(pending_arrival))
+                raise RuntimeError(
+                    f"Point_B convergence timed out for: {remaining}"
+                )
+            current_water = client.simGetObjectPose(water_name, ned=True)
+            water_z = float(current_water.position.z_val)
+            target_z = min(
+                float(route["cruise_z_ned_m"]),
+                water_z - float(flood["desired_clearance_above_water_m"]),
+            )
+            _join_all(
+                [
+                    client.moveByVelocityZAsync(
+                        correction_vx,
+                        correction_vy,
+                        target_z,
+                        correction_step,
+                        drivetrain=cosysairsim.DrivetrainType.MaxDegreeOfFreedom,
+                        yaw_mode=yaw_mode,
+                        vehicle_name=vehicle,
+                    )
+                    for vehicle in tuple(sorted(pending_arrival))
+                ]
+            )
+            convergence_step += 1
+            new_collisions = []
+            collision_samples = {}
+            for vehicle in tuple(sorted(active)):
+                sample = _collision_record(client, vehicle)
+                collision_samples[vehicle] = sample
+                if sample["has_collided"] and sample["timestamp"] > collision_baseline[vehicle]:
+                    states[vehicle] = "DESTROYED_BY_COLLISION"
+                    collided[vehicle] = sample
+                    active.remove(vehicle)
+                    pending_arrival.discard(vehicle)
+                    new_collisions.append(vehicle)
+                    _terminate_collision(client, vehicle)
+                    armed.discard(vehicle)
+                    api_enabled.discard(vehicle)
+            arrival_errors = {}
+            newly_arrived = []
+            for vehicle in tuple(sorted(pending_arrival)):
+                x, y = _local_xy(client, vehicle)
+                horizontal_error = math.hypot(x - dx, y - dy)
+                cross_track_error = abs(dx * y - dy * x) / distance
+                arrival_errors[vehicle] = {
+                    "horizontal_error_m": horizontal_error,
+                    "cross_track_error_m": cross_track_error,
+                }
+                if (
+                    horizontal_error <= float(route["arrival_tolerance_m"])
+                    and cross_track_error <= float(route["maximum_lateral_error_m"])
+                ):
+                    pending_arrival.remove(vehicle)
+                    newly_arrived.append(vehicle)
+                    states[vehicle] = "ARRIVED"
+                    client.hoverAsync(vehicle_name=vehicle).join()
+            observation = (
+                _observation(
+                    client,
+                    tuple(sorted(active)),
+                    water_z,
+                    float(limits["minimum_pairwise_separation_m"]),
+                )
+                if active
+                else {}
+            )
+            minimum_clearance = min(
+                observation.get("clearance_above_water_m", {"none": math.inf}).values()
+            )
+            if minimum_clearance < float(flood["minimum_clearance_above_water_m"]):
+                raise RuntimeError(
+                    f"water clearance breached during convergence: {minimum_clearance:.3f} m"
+                )
+            events.append(
+                {
+                    "state": "ARRIVAL_CONVERGENCE",
+                    "step": convergence_step,
+                    "elapsed_seconds": elapsed,
+                    "pending": sorted(pending_arrival),
+                    "newly_arrived": newly_arrived,
+                    "new_collisions": new_collisions,
+                    "collision_samples": collision_samples,
+                    "arrival_errors": arrival_errors,
+                    **observation,
+                }
+            )
         survivors = tuple(sorted(active))
         arrival_errors = {}
         for vehicle in survivors:
@@ -550,19 +704,45 @@ def main() -> None:
             _join_all(
                 [
                     client.landAsync(
-                        timeout_sec=float(limits["command_timeout_seconds"]),
+                        timeout_sec=float(config["landing"]["command_timeout_seconds"]),
                         vehicle_name=vehicle,
                     )
                     for vehicle in survivors
                 ]
             )
-            for vehicle in survivors:
-                landed = client.getMultirotorState(vehicle_name=vehicle).landed_state
-                if landed != cosysairsim.LandedState.Landed:
-                    raise RuntimeError(f"{vehicle} did not report Landed at Point_B")
-                client.armDisarm(False, vehicle_name=vehicle)
-                armed.discard(vehicle)
-                states[vehicle] = "LANDED"
+            pending_landing = set(survivors)
+            confirmation_started = time.monotonic()
+            while pending_landing:
+                landed_now = []
+                landed_states = {}
+                for vehicle in tuple(sorted(pending_landing)):
+                    landed = client.getMultirotorState(vehicle_name=vehicle).landed_state
+                    landed_states[vehicle] = int(landed)
+                    if landed == cosysairsim.LandedState.Landed:
+                        client.armDisarm(False, vehicle_name=vehicle)
+                        armed.discard(vehicle)
+                        states[vehicle] = "LANDED"
+                        pending_landing.remove(vehicle)
+                        landed_now.append(vehicle)
+                elapsed = time.monotonic() - confirmation_started
+                events.append(
+                    {
+                        "state": "LANDING_CONFIRMATION",
+                        "elapsed_seconds": elapsed,
+                        "pending": sorted(pending_landing),
+                        "landed_now": landed_now,
+                        "landed_states": landed_states,
+                    }
+                )
+                if pending_landing and elapsed >= float(
+                    config["landing"]["confirmation_timeout_seconds"]
+                ):
+                    remaining = ", ".join(sorted(pending_landing))
+                    raise RuntimeError(
+                        f"landing confirmation timed out at Point_B for: {remaining}"
+                    )
+                if pending_landing:
+                    time.sleep(float(config["landing"]["confirmation_poll_seconds"]))
         if collided and survivors:
             status = "PARTIAL_COLLISION"
         elif collided:

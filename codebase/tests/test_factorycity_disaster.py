@@ -198,11 +198,20 @@ def test_ab_mission_is_five_drone_straight_flood_safe_and_map_bound() -> None:
     )
     assert route["cruise_z_ned_m"] == -10.0
     assert route["control_step_seconds"] > 0.0
+    assert 0.0 < route["arrival_correction_velocity_mps"] < route[
+        "horizontal_velocity_mps"
+    ]
+    assert route["arrival_convergence_timeout_seconds"] > 0.0
     assert config["flood"]["manage_water_to_peak"] is True
     assert config["flood"]["leave_water_at_peak_after_mission"] is True
     assert config["collision_policy"]["monitor_from_state"] == "EN_ROUTE"
     assert config["collision_policy"]["ignore_takeoff_and_landing_collisions"] is True
     assert config["landing"]["collision_actor"] == "VS_PointB_LandingCollision"
+    assert config["landing"]["command_timeout_seconds"] > config["limits"][
+        "command_timeout_seconds"
+    ]
+    assert config["landing"]["confirmation_timeout_seconds"] > 0.0
+    assert config["landing"]["confirmation_poll_seconds"] > 0.0
 
 
 def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> None:
@@ -216,7 +225,15 @@ def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> N
     assert "simSetObjectPose" in source
     assert "initial_clearance_z = max(" in source
     assert "route_started = time.monotonic()" in source
+    assert "correction_vx = correction_velocity * dx / distance" in source
+    assert "correction_vy = correction_velocity * dy / distance" in source
+    assert "for vehicle in tuple(sorted(pending_arrival))" in source
+    assert '"state": "ARRIVAL_CONVERGENCE"' in source
+    assert "pending_arrival.discard(vehicle)" in source
+    assert "client.hoverAsync(vehicle_name=vehicle).join()" in source
     assert "client.landAsync(" in source
+    assert '"state": "LANDING_CONFIRMATION"' in source
+    assert "pending_landing = set(survivors)" in source
     assert "cosysairsim.LandedState.Landed" in source
     assert "client.isApiControlEnabled" in source
     assert 'status = "PARTIAL_COLLISION"' in source

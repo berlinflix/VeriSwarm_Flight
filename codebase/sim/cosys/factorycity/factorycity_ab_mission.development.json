@@ -32,6 +32,8 @@
     "cruise_z_ned_m": -10.0,
     "horizontal_velocity_mps": 4.0,
     "control_step_seconds": 0.25,
+    "arrival_correction_velocity_mps": 1.0,
+    "arrival_convergence_timeout_seconds": 15.0,
     "arrival_tolerance_m": 1.0,
     "maximum_lateral_error_m": 1.0,
     "yaw_faces_route": true
@@ -65,7 +67,10 @@
   "landing": {
     "collision_actor": "VS_PointB_LandingCollision",
     "platform_size_m": [5.5, 5.5],
-    "land_survivors_at_point_b": true
+    "land_survivors_at_point_b": true,
+    "command_timeout_seconds": 30.0,
+    "confirmation_timeout_seconds": 10.0,
+    "confirmation_poll_seconds": 0.25
   },
   "weather": {
     "Rain": 0.05,
