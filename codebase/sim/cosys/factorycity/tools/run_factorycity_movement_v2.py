@@ -375,15 +375,21 @@ def _emit_vehicle_state(
     client: object,
     node: str,
     state: str,
-    observed_at_ms: int,
+    *,
+    clock_ms: Callable[[], int] = _now_ms,
 ) -> dict[str, Any]:
+    # The transition is observed only after CoSim returns the position sample.  Starting
+    # the 500 ms durable-enqueue budget before this RPC incorrectly charges telemetry
+    # acquisition latency to SQLite and can abort a healthy cold-start before takeoff.
+    position_ned = list(_world_position(client, node))
+    observed_at_ms = clock_ms()
     return events.emit(
         source=f"{node}.telemetry",
         kind="vehicle_state",
         payload={
             "node": node,
             "state": state,
-            "position_ned": list(_world_position(client, node)),
+            "position_ned": position_ned,
         },
         observed_at_ms=observed_at_ms,
     )
@@ -739,7 +745,7 @@ def main() -> None:
                 payload={"node": node, "state": "ONLINE"},
                 observed_at_ms=_now_ms(),
             )
-            _emit_vehicle_state(movement_events, client, node, "READY", _now_ms())
+            _emit_vehicle_state(movement_events, client, node, "READY")
 
         if mission.get("weather"):
             client.simEnableWeather(True)
@@ -936,7 +942,7 @@ def main() -> None:
                 if future is not None:
                     futures.append(future)
                 _emit_vehicle_state(
-                    movement_events, client, node, states[node], _now_ms()
+                    movement_events, client, node, states[node]
                 )
                 if (
                     "SAFETY_HOLD" in transitions
@@ -977,7 +983,7 @@ def main() -> None:
                 if cell_id not in ledger.completed[node] and cell_id not in ledger.blocked[node]:
                     ledger.mark(node, cell_id, "COMPLETED")
             movement_events.coverage(node=node, observed_at_ms=_now_ms())
-            _emit_vehicle_state(movement_events, client, node, "LANDING", _now_ms())
+            _emit_vehicle_state(movement_events, client, node, "LANDING")
         if survivors:
             _controlled_point_b_land(
                 client=client,
@@ -989,7 +995,7 @@ def main() -> None:
             )
             for node in survivors:
                 states[node] = "LANDED"
-                _emit_vehicle_state(movement_events, client, node, "LANDED", _now_ms())
+                _emit_vehicle_state(movement_events, client, node, "LANDED")
 
         completed_cells = len(set().union(*ledger.completed.values()))
         blocked_cells = len(set().union(*ledger.blocked.values()))

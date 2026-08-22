@@ -19,6 +19,7 @@ from sim.cosys.factorycity.movement_v2 import (
 from sim.cosys.factorycity.tools.run_factorycity_movement_v2 import (
     AuthorizationFileProvider,
     LiveCoSimCommandAdapter,
+    _emit_vehicle_state,
     _fail_closed_hover_or_disarm_landed,
     _gate_separation,
     _outbox_factory,
@@ -246,6 +247,41 @@ def test_failed_run_hovers_flying_vehicle_and_disarms_only_landed_vehicle() -> N
 
     assert failures == ()
     assert calls == [("hover", "alpha"), ("disarm", "bravo")]
+
+
+def test_vehicle_state_enqueue_budget_starts_after_position_observation() -> None:
+    calls: list[str] = []
+
+    class Events:
+        def emit(self, **event):
+            calls.append("emit")
+            return event
+
+    class Client:
+        def simGetObjectPose(self, name, *, ned):
+            assert name == "alpha"
+            assert ned is True
+            calls.append("position")
+            return SimpleNamespace(
+                position=SimpleNamespace(x_val=1.0, y_val=2.0, z_val=-10.0)
+            )
+
+    def observed_clock() -> int:
+        assert calls == ["position"]
+        calls.append("clock")
+        return 1_234
+
+    event = _emit_vehicle_state(
+        Events(),
+        Client(),
+        "alpha",
+        "READY",
+        clock_ms=observed_clock,
+    )
+
+    assert calls == ["position", "clock", "emit"]
+    assert event["observed_at_ms"] == 1_234
+    assert event["payload"]["position_ned"] == [1.0, 2.0, -10.0]
 
 
 def test_preflight_gate_payload_uses_supplied_measured_separation() -> None:
