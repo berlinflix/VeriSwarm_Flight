@@ -78,6 +78,32 @@ It then runs the unapproved model-hash case and displays the actual receipt hash
 peer decisions, consensus outcome and released HOLD command from retained JSON.
 Every run uses a new create-once evidence filename.
 
+## Rescue Mission State
+
+Start the local rescue collector from `codebase/`:
+
+```bash
+python -m tools.rescue_event_collector serve \
+  --bind 127.0.0.1 --port 8770 \
+  --mission-id OP-VARUNA-001 \
+  --log results/rescue_events.dev.jsonl
+```
+
+Then start Vite with the server-side bridge configured:
+
+```bash
+VERISWARM_RESCUE_URL=http://127.0.0.1:8770 npm run dev -- --port 5175
+```
+
+The browser polls only Vite's `/api/rescue/state`; it never receives the LAN bearer token.
+For a non-loopback collector bind, set the same 32+ character
+`VERISWARM_RESCUE_TOKEN` in the collector and Vite processes. The rescue strip shows only
+collector state—when unavailable, it explicitly says that no rescue state is being
+fabricated.
+
+The producer schema and exact Samik/Pratik handoff are in
+`../docs/RESCUE_DATA_PLANE.md`.
+
 ## Current Scope
 
 - Translucent telemetry deck for Alpha, Bravo and Charlie.
@@ -85,6 +111,8 @@ Every run uses a new create-once evidence filename.
 - Live analytics sourced from retained `results/live_events.jsonl` consensus,
   semantic ACK, pose and reputation events.
 - A functional clean-plus-model-hash control backed by Alpha's Jetson service.
+- Live rescue coverage, person-candidate, mapped-hazard, vehicle and prioritized-alert
+  state backed by the local rescue collector.
 - Other attacks remain visibly disabled until their real delivery and evidence
   paths are qualified; the physical patch remains blocked on Pratik's captures.
 - Evidence strip separating provenance, semantic ACKs, supervisor action and reason code.

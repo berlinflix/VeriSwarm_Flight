@@ -719,6 +719,76 @@ function useLiveTelemetry() {
   return { telemetry, telemetryError };
 }
 
+function useRescueMission() {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch("/api/rescue/state", { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || !payload.state) {
+          throw new Error(payload.error ?? "rescue_state_unavailable");
+        }
+        if (active) {
+          setState(payload.state);
+          setError(null);
+        }
+      } catch (requestError) {
+        if (active) {
+          setState(null);
+          setError(requestError.message);
+        }
+      }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  return { state, error };
+}
+
+function RescueMission({ rescue }) {
+  const state = rescue.state;
+  const alerts = state?.alerts?.slice(0, 3) ?? [];
+  const mappedHazards = state?.hazards?.filter((hazard) => hazard.status === "MAPPED_HAZARD").length ?? 0;
+  const missionOnline = Boolean(state);
+  return (
+    <section className={`rescue-mission ${missionOnline ? "online" : "offline"}`}>
+      <div className="rescue-title">
+        <span>OPERATION VARUNA</span>
+        <b>{state?.mission_status ?? "AWAITING RESCUE EVENTS"}</b>
+        <small>{state?.scenario_id ?? rescue.error ?? "collector not configured"}</small>
+      </div>
+      <div className="rescue-kpis">
+        <div><span>COVERAGE</span><b>{state ? `${Number(state.coverage?.percent ?? 0).toFixed(1)}%` : "—"}</b></div>
+        <div><span>PEOPLE</span><b>{state?.people?.length ?? "—"}</b></div>
+        <div><span>HAZARDS</span><b>{state ? mappedHazards : "—"}</b></div>
+        <div><span>VEHICLES</span><b>{state?.vehicles?.length ?? "—"}</b></div>
+      </div>
+      <div className="rescue-alerts">
+        {alerts.length ? alerts.map((alert) => (
+          <div key={alert.alert_id} className={`rescue-alert priority-${alert.priority.toLowerCase()}`}>
+            <span>{alert.priority}</span>
+            <b>{alert.message}</b>
+          </div>
+        )) : (
+          <div className="rescue-alert empty">
+            <span>{missionOnline ? "CLEAR" : "OFFLINE"}</span>
+            <b>{missionOnline ? "No active rescue alerts" : "No rescue state is being fabricated"}</b>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function chartPath(values, maximum, height = 148) {
   if (!values?.length) return "";
   const points = values.length === 1 ? [values[0], values[0]] : values;
@@ -945,7 +1015,7 @@ function EvidenceStrip({ scenario }) {
   );
 }
 
-function ScrollAnalyticsScene({ scenario, qualification }) {
+function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
   const storyRef = useRef(null);
   const { scrollYProgress } = useScroll({
     target: storyRef,
@@ -1011,6 +1081,8 @@ function ScrollAnalyticsScene({ scenario, qualification }) {
 
           <EvidenceStrip scenario={scenario} />
 
+          <RescueMission rescue={rescue} />
+
           <div className="lower-zone">
             <div className="lower-aurora" aria-hidden="true" />
             <section className="lower-tier">
@@ -1033,6 +1105,7 @@ function ScrollAnalyticsScene({ scenario, qualification }) {
 
 export default function App() {
   const qualification = useModelHashQualification();
+  const rescue = useRescueMission();
   const scenario = useMemo(
     () => qualificationScenario(qualification.proof, qualification.runningStage, qualification.runError),
     [qualification.proof, qualification.runningStage, qualification.runError],
@@ -1068,6 +1141,7 @@ export default function App() {
       <ScrollAnalyticsScene
         scenario={scenario}
         qualification={qualification}
+        rescue={rescue}
       />
     </main>
   );
