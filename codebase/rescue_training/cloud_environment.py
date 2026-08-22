@@ -95,6 +95,18 @@ _FROZEN_PACKAGE_VERSIONS = {
     "torchvision": FROZEN_RUNTIME["torchvision"],
     "ultralytics": FROZEN_RUNTIME["ultralytics"],
 }
+_FROZEN_PACKAGE_DIRECT_REFERENCES = {
+    "torch": (
+        "https://download-r2.pytorch.org/whl/cu130/"
+        "torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl"
+        "#sha256=8db7338e6895c3d4bd89a02ff4209507d1f0cf2ffeb3b898538b5a07d1ea8c1e"
+    ),
+    "torchvision": (
+        "https://download-r2.pytorch.org/whl/cu130/"
+        "torchvision-0.28.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl"
+        "#sha256=8a0008d34ccc4e81066b97ff0ae5a34c676bfdf3464baf40c01b320dc9a45ce0"
+    ),
+}
 _EPHEMERAL_FILESYSTEMS = frozenset(
     {"overlay", "tmpfs", "ramfs", "rootfs", "squashfs"}
 )
@@ -754,12 +766,31 @@ def _pip_freeze(capture: dict[str, Any], python_executable: str) -> None:
     versions: dict[str, str] = {}
     for line in lines:
         match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s]+)", line)
-        if match is None:
+        if match is not None:
+            name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
+            if name in _FROZEN_PACKAGE_DIRECT_REFERENCES:
+                raise CloudEnvironmentError(
+                    f"pip-freeze evidence must bind the frozen direct reference for {name}"
+                )
+            version = match.group(2)
+        else:
+            direct = re.fullmatch(r"([A-Za-z0-9_.-]+) @ ([^\s]+)", line)
+            if direct is None:
+                continue
+            name = re.sub(r"[-_.]+", "-", direct.group(1)).lower()
+            if name not in _FROZEN_PACKAGE_VERSIONS:
+                continue
+            expected_reference = _FROZEN_PACKAGE_DIRECT_REFERENCES.get(name)
+            if direct.group(2) != expected_reference:
+                raise CloudEnvironmentError(
+                    f"pip-freeze evidence has an unexpected direct reference for {name}"
+                )
+            version = _FROZEN_PACKAGE_VERSIONS[name]
+        if name not in _FROZEN_PACKAGE_VERSIONS:
             continue
-        name = re.sub(r"[-_.]+", "-", match.group(1)).lower()
         if name in versions:
             raise CloudEnvironmentError(f"pip-freeze output duplicates package {name!r}")
-        versions[name] = match.group(2)
+        versions[name] = version
     for name, expected in _FROZEN_PACKAGE_VERSIONS.items():
         if versions.get(name) != expected:
             raise CloudEnvironmentError(

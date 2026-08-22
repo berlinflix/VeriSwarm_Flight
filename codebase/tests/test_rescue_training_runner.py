@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import rescue_training.cloud_environment as cloud_environment_module
 import rescue_training.ultralytics_runner as ultralytics_runner_module
 import rescue_training.review_gate as review_gate_module
 
@@ -222,8 +223,13 @@ def _cloud_environment(root: Path) -> dict:
     freeze = capture(
         "pip-freeze.json",
         [python, "-m", "pip", "freeze", "--all"],
-        "torch==2.13.0+cu130\ntorchvision==0.28.0+cu130\n"
-        "ultralytics==8.4.56\npip==26.0\n",
+        "torch @ "
+        + cloud_environment_module._FROZEN_PACKAGE_DIRECT_REFERENCES["torch"]
+        + "\ntorchvision @ "
+        + cloud_environment_module._FROZEN_PACKAGE_DIRECT_REFERENCES[
+            "torchvision"
+        ]
+        + "\nultralytics==8.4.56\npip==26.0\n",
     )
     check = capture(
         "pip-check.json",

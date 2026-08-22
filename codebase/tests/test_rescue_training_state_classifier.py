@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import rescue_training.cloud_environment as cloud_environment_module
 import rescue_training.state_classifier as state_classifier_module
 from rescue_training.cloud_environment import (
     CLOUD_ENVIRONMENT_SCHEMA,
@@ -400,8 +401,14 @@ def _fixture(tmp_path: Path) -> dict:
         [python_executable, "-m", "pip", "freeze", "--all"],
         "\n".join(
             [
-                f"torch=={FROZEN_RUNTIME['torch']}",
-                f"torchvision=={FROZEN_RUNTIME['torchvision']}",
+                "torch @ "
+                + cloud_environment_module._FROZEN_PACKAGE_DIRECT_REFERENCES[
+                    "torch"
+                ],
+                "torchvision @ "
+                + cloud_environment_module._FROZEN_PACKAGE_DIRECT_REFERENCES[
+                    "torchvision"
+                ],
                 f"ultralytics=={FROZEN_RUNTIME['ultralytics']}",
                 "pip==26.0",
             ]

@@ -255,8 +255,12 @@ def _make_evidence(root: Path) -> dict[str, Path]:
         [python, "-m", "pip", "freeze", "--all"],
         "\n".join(
             [
-                f"torch=={FROZEN_RUNTIME['torch']}",
-                f"torchvision=={FROZEN_RUNTIME['torchvision']}",
+                "torch @ "
+                + cloud_environment._FROZEN_PACKAGE_DIRECT_REFERENCES["torch"],
+                "torchvision @ "
+                + cloud_environment._FROZEN_PACKAGE_DIRECT_REFERENCES[
+                    "torchvision"
+                ],
                 f"ultralytics=={FROZEN_RUNTIME['ultralytics']}",
                 "pip==26.0",
             ]
@@ -427,8 +431,14 @@ def _install_fake_production(
             "--all",
         ]:
             stdout = (
-                f"torch=={FROZEN_RUNTIME['torch']}\n"
-                f"torchvision=={FROZEN_RUNTIME['torchvision']}\n"
+                "torch @ "
+                + cloud_environment._FROZEN_PACKAGE_DIRECT_REFERENCES["torch"]
+                + "\n"
+                + "torchvision @ "
+                + cloud_environment._FROZEN_PACKAGE_DIRECT_REFERENCES[
+                    "torchvision"
+                ]
+                + "\n"
                 f"ultralytics=={FROZEN_RUNTIME['ultralytics']}\n"
             )
         elif name == resolved_python_name and arguments == ["-m", "pip", "check"]:
@@ -643,7 +653,7 @@ def test_runtime_and_pip_freeze_must_both_match_frozen_packages(tmp_path: Path):
     payload, paths = _payload(tmp_path / "evidence")
     freeze = json.loads(paths["pip_freeze"].read_text(encoding="utf-8"))
     freeze["stdout"] = freeze["stdout"].replace(
-        f"torch=={FROZEN_RUNTIME['torch']}", "torch==0.0.0"
+        f"ultralytics=={FROZEN_RUNTIME['ultralytics']}", "ultralytics==0.0.0"
     )
     _write_json(paths["pip_freeze"], freeze)
     digest = sha256_file(paths["pip_freeze"])
@@ -651,6 +661,65 @@ def test_runtime_and_pip_freeze_must_both_match_frozen_packages(tmp_path: Path):
     payload["package_integrity"]["pip_freeze_sha256"] = digest
     with pytest.raises(CloudEnvironmentError, match="pip-freeze evidence"):
         validate_cloud_environment(payload)
+
+
+def test_pip_freeze_accepts_only_frozen_publisher_direct_references(
+    tmp_path: Path,
+):
+    payload, paths = _payload(tmp_path / "evidence")
+    freeze = json.loads(paths["pip_freeze"].read_text(encoding="utf-8"))
+    validate_cloud_environment(payload)
+
+    freeze["stdout"] = freeze["stdout"].replace(
+        "8db7338e6895c3d4bd89a02ff4209507d1f0cf2ffeb3b898538b5a07d1ea8c1e",
+        "0" * 64,
+    )
+    _write_json(paths["pip_freeze"], freeze)
+    digest = sha256_file(paths["pip_freeze"])
+    payload["evidence"]["pip_freeze"]["sha256"] = digest
+    payload["package_integrity"]["pip_freeze_sha256"] = digest
+    with pytest.raises(CloudEnvironmentError, match="unexpected direct reference"):
+        validate_cloud_environment(payload)
+
+
+@pytest.mark.parametrize("package", ("torch", "torchvision"))
+def test_pip_freeze_rejects_version_only_pytorch_records(
+    tmp_path: Path, package: str
+):
+    payload, paths = _payload(tmp_path / package)
+    freeze = json.loads(paths["pip_freeze"].read_text(encoding="utf-8"))
+    direct_record = (
+        f"{package} @ "
+        + cloud_environment._FROZEN_PACKAGE_DIRECT_REFERENCES[package]
+    )
+    freeze["stdout"] = freeze["stdout"].replace(
+        direct_record,
+        f"{package}=={FROZEN_RUNTIME[package]}",
+    )
+    _write_json(paths["pip_freeze"], freeze)
+    digest = sha256_file(paths["pip_freeze"])
+    payload["evidence"]["pip_freeze"]["sha256"] = digest
+    payload["package_integrity"]["pip_freeze_sha256"] = digest
+
+    with pytest.raises(CloudEnvironmentError, match="frozen direct reference"):
+        validate_cloud_environment(payload)
+
+
+def test_frozen_publisher_direct_references_match_requirements_file():
+    active_requirements = [
+        line
+        for line in (
+        Path(__file__).parents[1]
+        / "requirements-torch-cu130-linux-x86_64-py312.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    assert active_requirements == [
+        f"{package} @ {reference}"
+        for package, reference in (
+            cloud_environment._FROZEN_PACKAGE_DIRECT_REFERENCES.items()
+        )
+    ]
 
 
 def test_pip_check_must_be_same_python_and_successful(tmp_path: Path):

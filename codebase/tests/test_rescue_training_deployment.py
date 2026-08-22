@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 import rescue_training.review_gate as review_gate_module
 import rescue_training.deployment as deployment_module
+import rescue_training.cloud_environment as cloud_environment_module
 
 from rescue_training.artifact_io import sha256_file
 from rescue_training.artifact_io import canonical_json_bytes
@@ -335,8 +336,14 @@ def _make_cloud_environment(
         [python, "-m", "pip", "freeze", "--all"],
         "\n".join(
             [
-                f"torch=={FROZEN_RUNTIME['torch']}",
-                f"torchvision=={FROZEN_RUNTIME['torchvision']}",
+                "torch @ "
+                + cloud_environment_module._FROZEN_PACKAGE_DIRECT_REFERENCES[
+                    "torch"
+                ],
+                "torchvision @ "
+                + cloud_environment_module._FROZEN_PACKAGE_DIRECT_REFERENCES[
+                    "torchvision"
+                ],
                 f"ultralytics=={FROZEN_RUNTIME['ultralytics']}",
                 "pip==26.0",
             ]
