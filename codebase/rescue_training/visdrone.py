@@ -45,6 +45,7 @@ OFFICIAL_SPLIT_DATASET_KEYS = MappingProxyType(
 )
 PERSON_SOURCE_CATEGORIES = frozenset({1, 2})
 SUPPORTED_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png"})
+_LABEL_PRECISION = 10
 
 
 class VisDroneConversionError(ValueError):
@@ -359,12 +360,44 @@ def _parse_annotation(
         center_y = ((y1 + y2) / 2.0) / image_height
         normalized_width = (x2 - x1) / image_width
         normalized_height = (y2 - y1) / image_height
+        # Centre and extent are written at fixed precision, and each value
+        # rounds independently.  A box flush against an image edge can then
+        # reconstruct to centre +/- extent/2 a few 1e-11 outside the unit
+        # square.  Quantise to the emitted precision first, then shrink the
+        # extent so the written label satisfies the same edge invariant every
+        # downstream consumer enforces.
+        center_x, center_y, normalized_width, normalized_height = (
+            round(value, _LABEL_PRECISION)
+            for value in (
+                center_x,
+                center_y,
+                normalized_width,
+                normalized_height,
+            )
+        )
+        normalized_width = min(
+            normalized_width, 2.0 * center_x, 2.0 * (1.0 - center_x)
+        )
+        normalized_height = min(
+            normalized_height, 2.0 * center_y, 2.0 * (1.0 - center_y)
+        )
         values = (center_x, center_y, normalized_width, normalized_height)
         if not all(0.0 <= value <= 1.0 for value in values):
             raise VisDroneConversionError(
                 f"internal normalized-box error at {annotation_path}:{line_number}"
             )
-        output.append("0 " + " ".join(f"{value:.10f}" for value in values))
+        if (
+            center_x - normalized_width / 2.0 < 0.0
+            or center_y - normalized_height / 2.0 < 0.0
+            or center_x + normalized_width / 2.0 > 1.0
+            or center_y + normalized_height / 2.0 > 1.0
+        ):
+            raise VisDroneConversionError(
+                f"internal box-edge error at {annotation_path}:{line_number}"
+            )
+        output.append(
+            "0 " + " ".join(f"{value:.{_LABEL_PRECISION}f}" for value in values)
+        )
     return output, source_rows, ignored_boxes, clipped_boxes
 
 
