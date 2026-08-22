@@ -383,7 +383,6 @@ class DurableMovementEvents:
                 f"{node}.telemetry" for node in contract["vehicles"]["roster"]
             )]
         }
-        self.sequences = {source: 0 for source in self.outboxes}
         self.enqueue_deadline_ms = enqueue_deadline_ms
         self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
 
@@ -417,12 +416,11 @@ class DurableMovementEvents:
         started = self.clock_ms()
         if observed_at_ms > started:
             raise MovementV2Error("movement_transition_time_in_future")
-        self.sequences[source] += 1
-        seq = self.sequences[source]
+        seq = self.outboxes[source].reserve_source_sequence(source)
         event = {
             "schema": EVENT_SCHEMA,
             "mission_id": self.contract["mission_id"],
-            "event_id": f"{source}:{kind}:{seq}",
+            "event_id": f"{self.contract['mission_id']}:{source}:{kind}:{seq}",
             "source": source,
             "source_seq": seq,
             "observed_at_ms": observed_at_ms,
@@ -534,20 +532,31 @@ class GatedCommandDispatcher:
         self,
         *,
         node: str,
-        authorization: Mapping[str, Any] | None,
+        authorization: (
+            Mapping[str, Any]
+            | None
+            | Callable[[], Mapping[str, Any] | None]
+        ),
         command: Mapping[str, Any],
         now_ms: int,
         in_flight: bool,
         mutate: Callable[[], Any],
         hover: Callable[[], Any] | None = None,
         land: Callable[[], Any] | None = None,
+        clock_ms: Callable[[], int] | None = None,
     ) -> tuple[GateDecision, Any | None]:
+        def latest_authorization() -> Mapping[str, Any] | None:
+            return authorization() if callable(authorization) else authorization
+
+        def decision_time() -> int:
+            return clock_ms() if clock_ms is not None else now_ms
+
         decision = evaluate_movement_command(
             self.contract,
             node=node,
-            authorization=authorization,
+            authorization=latest_authorization(),
             command=command,
-            now_ms=now_ms,
+            now_ms=decision_time(),
             in_flight=in_flight,
         )
         if decision.release_command:
@@ -570,9 +579,9 @@ class GatedCommandDispatcher:
             landing_decision = evaluate_movement_command(
                 self.contract,
                 node=node,
-                authorization=authorization,
+                authorization=latest_authorization(),
                 command=command,
-                now_ms=now_ms,
+                now_ms=decision_time(),
                 in_flight=True,
             )
             if landing_decision.action != "ABORT_HOVER_LAND":

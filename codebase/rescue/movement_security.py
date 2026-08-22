@@ -227,7 +227,7 @@ def evaluate_movement_command(
         return GateDecision(
             decision="QUARANTINE",
             reason=resolution.reason,
-            action="ABORT_HOVER_LAND",
+            action="ABORT_HOVER_LAND" if in_flight else "DO_NOT_DISPATCH",
             release_command=False,
             vehicle_state="QUARANTINED",
         )

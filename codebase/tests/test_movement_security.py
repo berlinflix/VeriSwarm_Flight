@@ -175,6 +175,20 @@ def test_quarantine_aborts_alpha_and_deterministically_reassigns_unfinished_cell
     ]
 
 
+def test_grounded_quarantine_refuses_start_without_hover_or_land(contract):
+    result = evaluate_movement_command(
+        contract,
+        node="alpha",
+        authorization=_authorization("QUARANTINE"),
+        command=_valid_command(),
+        now_ms=NOW_MS,
+        in_flight=False,
+    )
+    assert result.decision == "QUARANTINE"
+    assert result.action == "DO_NOT_DISPATCH"
+    assert result.release_command is False
+
+
 def test_completed_alpha_cell_is_not_reassigned(contract):
     reassignments = reassign_unfinished_cells(
         contract,

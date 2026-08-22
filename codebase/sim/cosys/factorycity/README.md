@@ -48,6 +48,33 @@ the Unreal project, generated settings, raw frames, logs, or development evidenc
     durably publishes exact current-owner reassignment state. It invokes Abhijan's
     authorization/limit gate immediately before a supplied CoSys mutation. The accepted
     straight-route v1 file and evidence are unchanged; this core is not live CoSys proof.
+14. `tools/run_factorycity_movement_v2.py` is the separate live movement-v2 runner. It
+    connects `SensorDrivenMovementSupervisor`, `CellLedger`, `DurableMovementEvents`, and
+    `GatedCommandDispatcher` to real CoSim depth/collision/vehicle reads and gated API,
+    arm, takeoff, hover, velocity, deflection, rejoin, quarantine-land and Point_B descent
+    calls. It never reads evaluator obstacle coordinates or survivor truth. Missing,
+    malformed, stale or HOLD authorization fails closed; QUARANTINE cannot start a
+    grounded vehicle and aborts an in-flight one. Producer sequences persist across
+    process restarts in the per-source outboxes. Start it on Windows with
+    `ops/start_pratik_movement_v2.ps1`.
+
+## Live movement-v2 operating order
+
+1. On Abhijan's Mac, run `./ops/start_abhijan_pratik_mac.sh`.
+2. On Pratik's Windows PC, run `ops/start_pratik_rescue_sender.ps1` in one terminal.
+3. Keep an authorization producer atomically refreshing the configured
+   `authorization_snapshot.json` with one canonical, current event for every drone. A
+   static file becomes stale after the frozen two-second lease and therefore holds the
+   mission; the runner never manufactures `ALLOW`.
+4. Open `FactoryCity_Disaster`, press Play, and run
+   `ops/start_pratik_movement_v2.ps1` in a second Windows terminal.
+5. Retain JSON, SQLite outboxes, captures and video outside Git. The event sender drains
+   the exact per-producer SQLite files to Abhijan's restricted Ethernet ingress.
+
+The committed Ethernet handoff is currently Windows-to-Mac for rescue events. A reviewed
+Mac-to-Windows authorization refresher is still required for a real multi-minute ALLOW /
+HOLD / QUARANTINE demonstration; the local file boundary is deliberately fail-closed
+until that integration exists.
 
 The development weather profile prioritizes demo visibility: light rain and wet roads
 remain enabled, while fog, dust, snow, and airborne-leaf effects are explicitly zeroed.

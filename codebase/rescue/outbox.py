@@ -167,9 +167,39 @@ class RescueOutbox:
                     status_code INTEGER,
                     reason TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS producer_sequence (
+                    source TEXT PRIMARY KEY,
+                    last_sequence INTEGER NOT NULL CHECK(last_sequence >= 0)
+                );
                 """
             )
             connection.execute(f"PRAGMA user_version={OUTBOX_SCHEMA_VERSION}")
+
+    def reserve_source_sequence(self, source: str) -> int:
+        """Atomically reserve the next durable sequence for one exact producer.
+
+        Delivered outbox rows are deleted, so their sequence cannot be recovered by
+        scanning the queue.  This retained counter prevents event-ID and source-sequence
+        reuse when a producer process restarts with the same outbox.
+        """
+
+        if not isinstance(source, str) or not source.strip():
+            raise RescueOutboxError("producer source must be non-empty")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT last_sequence FROM producer_sequence WHERE source = ?",
+                (source,),
+            ).fetchone()
+            next_sequence = 1 if row is None else int(row["last_sequence"]) + 1
+            connection.execute(
+                """
+                INSERT INTO producer_sequence (source, last_sequence) VALUES (?, ?)
+                ON CONFLICT(source) DO UPDATE SET last_sequence = excluded.last_sequence
+                """,
+                (source, next_sequence),
+            )
+        return next_sequence
 
     def enqueue(self, candidate: Mapping[str, Any]) -> EnqueueResult:
         event = validate_rescue_event(candidate, expected_mission_id=self.mission_id)
