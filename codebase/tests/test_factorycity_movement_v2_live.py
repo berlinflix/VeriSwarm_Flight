@@ -19,6 +19,7 @@ from sim.cosys.factorycity.movement_v2 import (
 from sim.cosys.factorycity.tools.run_factorycity_movement_v2 import (
     AuthorizationFileProvider,
     LiveCoSimCommandAdapter,
+    _fail_closed_hover_or_disarm_landed,
     _gate_separation,
     _outbox_factory,
     _preflight_command,
@@ -215,6 +216,36 @@ def test_single_active_vehicle_uses_configured_gate_separation() -> None:
         contract,
         {"alpha": (0.0, 0.0, -10.0), "bravo": (3.0, 4.0, -10.0)},
     ) == 5.0
+
+
+def test_failed_run_hovers_flying_vehicle_and_disarms_only_landed_vehicle() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class CleanupClient:
+        def getMultirotorState(self, *, vehicle_name):
+            landed = (
+                cosysairsim.LandedState.Landed
+                if vehicle_name == "bravo"
+                else cosysairsim.LandedState.Flying
+            )
+            return SimpleNamespace(landed_state=landed)
+
+        def hoverAsync(self, *, vehicle_name):
+            calls.append(("hover", vehicle_name))
+            return _Future()
+
+        def armDisarm(self, armed, *, vehicle_name):
+            assert armed is False
+            calls.append(("disarm", vehicle_name))
+            return True
+
+    failures = _fail_closed_hover_or_disarm_landed(
+        CleanupClient(),
+        ("alpha", "bravo"),
+    )
+
+    assert failures == ()
+    assert calls == [("hover", "alpha"), ("disarm", "bravo")]
 
 
 def test_preflight_gate_payload_uses_supplied_measured_separation() -> None:
