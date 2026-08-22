@@ -4,13 +4,13 @@
 owner: Pratik
 branch: pratik/sih26177-disaster-cosys
 last_suyash_inbox_commit_seen: d0bd417
-last_abhijan_peer_commit_consumed: feb7101bece902a2b1cd78f0c4fa1e986c8975e7
+last_abhijan_peer_commit_consumed: 9d1f03dfe5478a14535431810df88a1c061afef9
 current_nominal_controller_commit: 17c27f3
 current_live_movement_v2_commit: b32f562
 current_integration_merge: 63a1480
-completed: Separate live movement-v2 runner now wires measured CoSim depth/collision/vehicle state, the supervisor, exact cell ledger, durable restart-safe events and fresh authorization gate to actual vehicle commands; nominal-v1 remains unchanged
-next: Integrate Abhijan's reviewed Mac-to-Windows authorization lease refresher, then retain ALLOW, HOLD, QUARANTINE, obstacle/deflection and collision live evidence
-blockers: No local code blocker; current direct Ethernet handoff transports Pratik events Windows-to-Mac, but a reviewed Mac-to-Windows refresher is still required to keep all five two-second authorization leases current during the live run
+completed: Live movement-v2 runner plus Abhijan's restricted Mac-to-Windows five-lease receiver are integrated; nominal-v1 remains unchanged
+next: Retain the live nominal ALLOW, transient single-vehicle HOLD and terminal QUARANTINE FactoryCity runs, then add the Point_B survivor and bounded flood debris visuals
+blockers: NONE for code; both operators and the isolated Ethernet link are required for retained live qualification
 ```
 
 Checkpoint tag:
@@ -86,6 +86,6 @@ Full Windows repository regression:
 558 passed, 3 skipped, 1 pre-existing POSIX owner-mode assertion failed on Windows
 ```
 
-No movement-v2 live PASS is claimed yet. A static authorization file intentionally becomes
-stale after two seconds and causes HOLD. Abhijan must supply a reviewed atomic refresher for
-all five canonical leases before the retained attack/failure demonstrations.
+No movement-v2 live PASS is claimed yet. The reviewed authorization receiver is now
+integrated at `0b2e7ee`; the retained ALLOW, HOLD and QUARANTINE runs remain to be executed
+jointly over the isolated Ethernet link.
