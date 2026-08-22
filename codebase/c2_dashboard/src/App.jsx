@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import flightDrone from "./assets/flight-drone.png";
+import { buildCellMissionView } from "./cellMissionView.js";
 import { isApprovedCleanEvidence } from "./modelHashQualification.js";
 
 const liveFeedUrl = import.meta.env.VITE_DRONE_STREAM_URL;
@@ -226,48 +227,71 @@ const attackControls = [
 
 const baseDrones = [
   {
+    id: "DELTA",
+    serial: "DELTA",
+    role: "rescue observer",
+    endpoint: "cosys://delta",
+    signer: "AWAITING RETAINED EVENT",
+    trust: "—",
+    latency: "—",
+    slot: -2,
+  },
+  {
     id: "ALPHA",
     serial: "ALPHA",
-    alt: 50,
-    spd: 35,
-    bat: 85,
     role: "OP-TEE originator",
     hash: "awaiting receipt",
     endpoint: "192.168.50.10",
     trust: "100%",
     latency: "12.4ms",
     signer: "OP-TEE VERIFIED",
-    x: "-92%",
+    slot: -1,
   },
   {
     id: "BRAVO",
     serial: "BRAVO",
-    alt: 50,
-    spd: 35,
-    bat: 85,
     role: "semantic peer",
     hash: "policy verifier",
     endpoint: "192.168.50.12",
     trust: "98%",
     latency: "14.1ms",
     signer: "MISSION CA VERIFIED",
-    x: "0%",
+    slot: 0,
   },
   {
     id: "CHARLIE",
     serial: "CHARLIE",
-    alt: 49,
-    spd: 33,
-    bat: 81,
     role: "semantic peer",
     hash: "policy verifier",
     endpoint: "192.168.50.13",
     trust: "96%",
     latency: "15.7ms",
     signer: "MISSION CA VERIFIED",
-    x: "92%",
+    slot: 1,
+  },
+  {
+    id: "ECHO",
+    serial: "ECHO",
+    role: "rescue observer",
+    endpoint: "cosys://echo",
+    signer: "AWAITING RETAINED EVENT",
+    trust: "—",
+    latency: "—",
+    slot: 2,
   },
 ];
+
+const deckOffset = {
+  [-2]: "-200%",
+  [-1]: "-100%",
+  0: "0%",
+  1: "100%",
+  2: "200%",
+};
+
+function metricValue(value, suffix = "") {
+  return Number.isFinite(value) ? `${Math.round(value)}${suffix}` : "—";
+}
 
 function toneClass(tone) {
   return {
@@ -518,17 +542,18 @@ function CursorGravity() {
 }
 
 function DroneCard({ drone, index, activeCard, setActiveCard, onSelect }) {
-  const isCenter = index === 1;
+  const isCenter = drone.slot === 0;
   const isActive = activeCard === index;
   const hasActiveCard = activeCard !== null;
+  const depth = 3 - Math.abs(drone.slot);
   return (
     <motion.article
       className={`drone-card ${isActive ? "active" : ""} ${hasActiveCard && !isActive ? "receded" : ""}`}
-      style={{ zIndex: isActive ? 20 : isCenter ? 2 : 1 }}
+      style={{ zIndex: isActive ? 20 : depth }}
       initial={false}
       animate={{
-        x: drone.x,
-        y: isActive ? -18 : isCenter ? -6 : 8,
+        x: deckOffset[drone.slot],
+        y: isActive ? -18 : isCenter ? -7 : -Math.abs(drone.slot) * 2,
         scale: isActive ? 1.055 : hasActiveCard ? 0.985 : 1,
       }}
       transition={{ type: "spring", stiffness: 165, damping: 22, mass: 0.8 }}
@@ -553,12 +578,12 @@ function DroneCard({ drone, index, activeCard, setActiveCard, onSelect }) {
             <span className="node-kicker">TRUSTED NODE</span>
             <h2>{drone.id}</h2>
           </div>
-          <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.online ? "READY" : "UNVERIFIED"}</span>
+          <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.status}</span>
         </div>
         <div className="telemetry-cluster">
-          <div><span>ALTITUDE</span><b><AnimatedMetric value={drone.alt} suffix="m" /></b></div>
-          <div><span>SPEED</span><b><AnimatedMetric value={drone.spd} suffix="kph" /></b></div>
-          <div><span>BATTERY</span><b><AnimatedMetric value={drone.bat} suffix="%" /></b></div>
+          <div><span>ALTITUDE</span><b>{Number.isFinite(drone.alt) ? <AnimatedMetric value={drone.alt} suffix="m" /> : "—"}</b></div>
+          <div><span>STATE</span><b className="state-metric">{drone.vehicleState ?? "—"}</b></div>
+          <div><span>BATTERY</span><b>{Number.isFinite(drone.bat) ? <AnimatedMetric value={drone.bat} suffix="%" /> : "—"}</b></div>
         </div>
         <div className="signal-band" aria-hidden="true">
           {Array.from({ length: 18 }).map((_, bar) => <i key={bar} style={{ height: `${18 + ((bar * 17) % 34)}%` }} />)}
@@ -622,7 +647,7 @@ function DroneDetailsModal({ drone, onClose }) {
             <p>{drone.role} · encrypted Ethernet mesh</p>
           </div>
           <div className="modal-header-actions">
-            <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.online ? "READY" : "UNVERIFIED"}</span>
+            <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.status}</span>
             <button className="modal-close" onClick={onClose} aria-label="Close drone details" autoFocus>
               <X size={19} />
             </button>
@@ -630,9 +655,9 @@ function DroneDetailsModal({ drone, onClose }) {
         </div>
 
         <div className="modal-telemetry">
-          <div><span>ALTITUDE</span><b>{drone.alt}m</b></div>
-          <div><span>GROUND SPEED</span><b>{drone.spd}kph</b></div>
-          <div><span>BATTERY</span><b>{drone.bat}%</b></div>
+          <div><span>ALTITUDE</span><b>{metricValue(drone.alt, "m")}</b></div>
+          <div><span>MISSION STATE</span><b>{drone.vehicleState ?? "—"}</b></div>
+          <div><span>BATTERY</span><b>{metricValue(drone.bat, "%")}</b></div>
         </div>
 
         <div className="modal-detail-grid">
@@ -655,19 +680,34 @@ function DroneDetailsModal({ drone, onClose }) {
   );
 }
 
-function DroneDeck({ proof, backend }) {
+function DroneDeck({ proof, backend, rescue }) {
   const [activeCard, setActiveCard] = useState(null);
   const [selectedDrone, setSelectedDrone] = useState(null);
   const dashboardProof = proof?.attack?.evidence?.dashboard_proof;
-  const drones = baseDrones.map((drone) => ({
-    ...drone,
-    online: backend.ready,
-    hash: dashboardProof
+  const projectedVehicles = new Map(
+    (rescue?.state?.vehicles ?? []).map((vehicle) => [String(vehicle.node).toUpperCase(), vehicle]),
+  );
+  const drones = baseDrones.map((drone) => {
+    const vehicle = projectedVehicles.get(drone.id);
+    const position = vehicle?.position_ned;
+    const altitude = Array.isArray(position) && Number.isFinite(Number(position[2]))
+      ? Math.abs(Number(position[2]))
+      : null;
+    const hash = dashboardProof && ["ALPHA", "BRAVO", "CHARLIE"].includes(drone.id)
       ? drone.id === "ALPHA"
         ? shortHash(dashboardProof.observed_model_sha256)
         : shortHash(dashboardProof.approved_model_sha256)
-      : drone.hash,
-  }));
+      : drone.hash ?? "awaiting evidence";
+    return {
+      ...drone,
+      alt: altitude,
+      bat: Number.isFinite(Number(vehicle?.battery_pct)) ? Number(vehicle.battery_pct) : null,
+      online: Boolean(vehicle) && vehicle.link_state !== "OFFLINE",
+      status: vehicle?.state ?? "AWAITING",
+      vehicleState: vehicle?.state ?? null,
+      hash,
+    };
+  });
   return (
     <>
       <section className="drone-deck">
@@ -685,7 +725,7 @@ function DroneDeck({ proof, backend }) {
           />
         ))}
         <div className="deck-caption">
-          SELECT A NODE · ALPHA / BRAVO / CHARLIE · {backend.ready ? "QUALIFIER READY" : "LINK UNVERIFIED"}
+          FIVE-DRONE RESCUE FLEET · DELTA / ALPHA / BRAVO / CHARLIE / ECHO · {rescue?.state ? "RETAINED STATE LIVE" : backend.ready ? "QUALIFIER READY" : "AWAITING EVENTS"}
         </div>
       </section>
       <AnimatePresence>
@@ -773,6 +813,32 @@ function useLiveTelemetry() {
 function useRescueMission() {
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
+  const [movementConfig, setMovementConfig] = useState(null);
+  const [configError, setConfigError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    const loadConfig = async () => {
+      try {
+        const response = await fetch("/api/rescue/config", { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || !payload.config) {
+          throw new Error(payload.error ?? "movement_config_unavailable");
+        }
+        if (active) {
+          setMovementConfig(payload.config);
+          setConfigError(null);
+        }
+      } catch (requestError) {
+        if (active) {
+          setMovementConfig(null);
+          setConfigError(requestError.message);
+        }
+      }
+    };
+    loadConfig();
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -802,7 +868,7 @@ function useRescueMission() {
     };
   }, []);
 
-  return { state, error };
+  return { state, error, movementConfig, configError };
 }
 
 function RescueMission({ rescue }) {
@@ -846,6 +912,100 @@ function RescueMission({ rescue }) {
             <b>{missionOnline ? "No active rescue alerts" : "No rescue state is being fabricated"}</b>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function CellMovementPanel({ rescue }) {
+  const view = useMemo(
+    () => buildCellMissionView(rescue.state, rescue.movementConfig),
+    [rescue.state, rescue.movementConfig],
+  );
+  const recentMovement = view.movement.slice(-4).reverse();
+  const validationLabel = !view.ready
+    ? "CONFIGURATION HOLD"
+    : view.issues.length
+      ? `VALIDATION HOLD · ${view.issues.length} ISSUE${view.issues.length === 1 ? "" : "S"}`
+      : rescue.state
+        ? "REPLAYABLE CELL STATE"
+        : "WAITING FOR CELL EVENTS";
+  return (
+    <section className={`cell-movement-panel ${view.issues.length ? "has-conflicts" : ""}`}>
+      <div className="cell-panel-heading">
+        <div>
+          <span className="section-kicker">READ-ONLY FACTORYCITY CELL EVIDENCE</span>
+          <div className="panel-title">Coverage Heatmap & Movement Safety</div>
+        </div>
+        <span className={`cell-validation ${view.issues.length ? "invalid" : ""}`}>
+          <i /> {validationLabel}
+        </span>
+      </div>
+
+      <div className="cell-scoreboard" aria-label="Exact cell scoreboard">
+        <div><span>ASSIGNED</span><b>{view.scoreboard.assigned}</b></div>
+        <div><span>IN PROGRESS</span><b>{view.scoreboard.inProgress}</b></div>
+        <div><span>COMPLETED</span><b>{view.scoreboard.completed}</b></div>
+        <div><span>BLOCKED</span><b>{view.scoreboard.blocked}</b></div>
+        <div><span>CONFLICTS</span><b>{view.scoreboard.conflicts}</b></div>
+      </div>
+
+      <div className="cell-content-grid">
+        <div className="cell-heatmap-wrap">
+          <div className="cell-heatmap" role="img" aria-label="Route cells colored only from exact retained cell ID evidence">
+            {view.cells.map((cell) => (
+              <div
+                key={cell.id}
+                className={`route-cell state-${cell.state.toLowerCase()}`}
+                style={{ flexGrow: cell.widthPercent, flexBasis: 0 }}
+                title={`${cell.id} · ${cell.state} · owner ${cell.owner ?? "unknown"}`}
+              >
+                <b>{cell.id.replace("route_cell_", "")}</b>
+                <span>{cell.owner ?? "—"}</span>
+              </div>
+            ))}
+          </div>
+          <div className="cell-legend">
+            <span className="legend-assigned">ASSIGNED</span>
+            <span className="legend-progress">IN PROGRESS</span>
+            <span className="legend-completed">COMPLETED</span>
+            <span className="legend-blocked">BLOCKED</span>
+            <span className="legend-conflict">CONFLICT / UNKNOWN</span>
+          </div>
+          {view.issues.length > 0 && (
+            <div className="cell-issues" aria-live="polite">
+              {view.issues.slice(0, 3).map((issue) => (
+                <span key={`${issue.code}:${issue.cellId ?? "none"}:${issue.detail ?? ""}`}>
+                  {issue.code}{issue.cellId ? ` · ${issue.cellId}` : ""}
+                </span>
+              ))}
+              {view.issues.length > 3 && <span>+{view.issues.length - 3} MORE RETAINED VALIDATION ISSUES</span>}
+            </div>
+          )}
+        </div>
+
+        <div className="movement-ledger">
+          <div className="movement-ledger-title">
+            <span>MOVEMENT-SAFETY EVIDENCE</span>
+            <b>{view.movement.length} TRANSITIONS</b>
+          </div>
+          {recentMovement.length ? recentMovement.map((event) => (
+            <div key={event.event_id} className={`movement-row result-${String(event.result).toLowerCase()}`}>
+              <div>
+                <span>{String(event.node).toUpperCase()} · {event.cell_id}</span>
+                <b>{String(event.event_type).replaceAll("_", " ")}</b>
+              </div>
+              <div>
+                <strong>{event.terminalLabel}</strong>
+                <small>{Number(event.measured_distance_m).toFixed(2)}m · {event.measurement_source}</small>
+              </div>
+            </div>
+          )) : (
+            <div className="movement-empty">
+              Retained obstacle, hold, deflection, rejoin, blockage and collision transitions will appear here.
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -1138,6 +1298,7 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
   const analyticsOpacity = useTransform(progress, [0, 0.34, 0.58, 1], [0, 0, 1, 1]);
   const analyticsY = useTransform(progress, [0.28, 0.6, 1], ["22vh", "0vh", "0vh"]);
   const analyticsScale = useTransform(progress, [0.28, 0.62, 1], [0.94, 1, 1]);
+  const analyticsPointerEvents = useTransform(progress, (value) => (value >= 0.72 ? "auto" : "none"));
   const transitionTitleOpacity = useTransform(progress, [0, 0.16, 0.48, 0.64], [0, 1, 1, 0]);
   const transitionTitleY = useTransform(progress, [0, 0.46, 0.66], [28, 0, -28]);
 
@@ -1169,7 +1330,7 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
 
         <motion.div
           className="analytics-screen"
-          style={{ opacity: analyticsOpacity, y: analyticsY, scale: analyticsScale }}
+          style={{ opacity: analyticsOpacity, y: analyticsY, scale: analyticsScale, pointerEvents: analyticsPointerEvents }}
         >
           <div className="analytics-intro">
             <div>
@@ -1182,6 +1343,8 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
           <EvidenceStrip scenario={scenario} qualification={qualification} />
 
           <RescueMission rescue={rescue} />
+
+          <CellMovementPanel rescue={rescue} />
 
           <div className="lower-zone">
             <div className="lower-aurora" aria-hidden="true" />
@@ -1228,7 +1391,7 @@ export default function App() {
         </header>
 
         <section className="upper-tier">
-          <DroneDeck proof={qualification.proof} backend={qualification.backend} />
+          <DroneDeck proof={qualification.proof} backend={qualification.backend} rescue={rescue} />
           <RealTimeView scenario={scenario} />
         </section>
 
