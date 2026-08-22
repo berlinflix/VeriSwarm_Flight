@@ -47,6 +47,24 @@ A non-loopback bind refuses to start without a 32-character token in
 `VERISWARM_RESCUE_TOKEN`. Clients may send it as `Authorization: Bearer ...` or
 `X-VeriSwarm-Token`.
 
+### Abhijan/Pratik direct Ethernet adapter
+
+The canonical collector rule above is unchanged. For the isolated demo LAN, Abhijan can
+keep the collector tokenless and loopback-only while exposing the separate restricted
+adapter in `tools.rescue_ethernet_ingress` on the Mac Ethernet address. The adapter accepts
+`POST /events` only from Pratik's exact configured source IP and forwards the unchanged
+JSON body to `127.0.0.1:8770`, where this collector performs the authoritative validation,
+ordering, de-duplication, persistence and projection.
+
+No bearer token crosses the Ethernet link in that profile. Source-IP restriction is not
+cryptographic authentication and is approved only for the physically isolated demo LAN.
+Use `ops/start_abhijan_pratik_mac.sh` on the Mac for the simulation-only path and
+`ops/start_pratik_rescue_sender.ps1` on Pratik's Windows simulator PC. The simulation-only
+launcher does not contact the Jetson/model-hash peers. Use
+`ops/start_abhijan_rescue_mac.sh` only when intentionally presenting both independent
+data planes. The exact producer handoff is in
+`docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_DIRECT_ETHERNET_DATA_HANDOFF_2026-08-22.md`.
+
 ## Offline producer outbox
 
 Samik and Pratik must persist an event before attempting the network. Each producer uses
