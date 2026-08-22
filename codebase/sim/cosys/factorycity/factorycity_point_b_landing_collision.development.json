@@ -1,0 +1,14 @@
+{
+  "schema": "veriswarm.factorycity.point_b_landing_collision.v1",
+  "development_only": true,
+  "world": "/Game/VeriSwarm/FactoryCity_Disaster",
+  "point_b_actor": "Point_B",
+  "support_actor": "SM_full_hall",
+  "collision_actor_label": "VS_PointB_LandingCollision",
+  "asset": "/Engine/BasicShapes/Cube.Cube",
+  "platform_size_cm": [550.0, 550.0, 20.0],
+  "collision_profile": "BlockAll",
+  "minimum_support_edge_margin_cm": 50.0,
+  "maximum_marker_above_surface_cm": 50.0,
+  "hidden_in_game": true
+}

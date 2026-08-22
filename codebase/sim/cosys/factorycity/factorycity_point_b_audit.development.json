@@ -1,0 +1,38 @@
+{
+  "schema": "veriswarm.factorycity.point_b_audit.v1",
+  "development_only": true,
+  "world": "/Game/VeriSwarm/FactoryCity_Disaster",
+  "point_a_actor": "Point_A",
+  "point_b_actor": "Point_B",
+  "peak_flood_world_z_cm": 500.0,
+  "formation_offsets_cm": {
+    "alpha": [-200.0, -200.0],
+    "bravo": [200.0, 200.0],
+    "charlie": [-200.0, 200.0],
+    "delta": [200.0, -200.0],
+    "echo": [0.0, 0.0]
+  },
+  "footprint_probe_offsets_cm": [
+    [-250.0, -250.0],
+    [-250.0, 0.0],
+    [-250.0, 250.0],
+    [0.0, -250.0],
+    [0.0, 0.0],
+    [0.0, 250.0],
+    [250.0, -250.0],
+    [250.0, 0.0],
+    [250.0, 250.0]
+  ],
+  "validation": {
+    "minimum_route_distance_m": 50.0,
+    "maximum_route_distance_m": 200.0,
+    "minimum_roof_above_peak_flood_m": 3.0,
+    "trace_start_above_point_m": 10.0,
+    "trace_end_below_point_m": 20.0,
+    "trace_complex": false,
+    "maximum_surface_height_error_m": 0.5,
+    "maximum_surface_variation_m": 0.2,
+    "minimum_surface_normal_z": 0.98,
+    "maximum_marker_pitch_roll_deg": 1.0
+  }
+}
