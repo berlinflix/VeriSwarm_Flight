@@ -3,12 +3,14 @@
 ```text
 owner: Pratik
 branch: pratik/sih26177-disaster-cosys
-last_inbox_commit_seen: 57a62221dafd4d8b1207fc8b8d4a37ee9e87a11d
+last_suyash_inbox_commit_seen: d0bd417
+last_abhijan_peer_commit_consumed: feb7101bece902a2b1cd78f0c4fa1e986c8975e7
 current_nominal_controller_commit: 17c27f3
+current_live_movement_v2_commit: b32f562
 current_integration_merge: 63a1480
-completed: First retained live five-drone Point_A-to-Point_B mission passed, including rising flood, straight-route convergence, monitored rooftop descent, disarm, Landed confirmation and cleanup
-next: Wire the reviewed movement-v2 supervisor, cell ledger, durable events and gated dispatcher into a new live CoSys runner without changing the accepted nominal-v1 runner
-blockers: No code blocker; movement-v2 live scenario evidence and the original no-person CoSys RGB negative-control clip remain open
+completed: Separate live movement-v2 runner now wires measured CoSim depth/collision/vehicle state, the supervisor, exact cell ledger, durable restart-safe events and fresh authorization gate to actual vehicle commands; nominal-v1 remains unchanged
+next: Integrate Abhijan's reviewed Mac-to-Windows authorization lease refresher, then retain ALLOW, HOLD, QUARANTINE, obstacle/deflection and collision live evidence
+blockers: No local code blocker; current direct Ethernet handoff transports Pratik events Windows-to-Mac, but a reviewed Mac-to-Windows refresher is still required to keep all five two-second authorization leases current during the live run
 ```
 
 Checkpoint tag:
@@ -50,3 +52,40 @@ VeriSwarm_FactoryCity_UE5.8.1_Phase3/Run_Five_Drone_A_to_B.cmd
 The result qualifies the accepted nominal-v1 live path only. It is not evidence of live
 sensor-driven obstacle deflection, cell reassignment, authorization HOLD/QUARANTINE or
 collision termination; those remain the next additive movement-v2 acceptance runs.
+
+## Additive live movement-v2 runner — implemented, live evidence pending
+
+Code milestone: `b32f562`
+
+- preserved `run_factorycity_ab_swarm.py` and its nominal-v1 evidence unchanged;
+- connected `SensorDrivenMovementSupervisor`, `CellLedger`,
+  `DurableMovementEvents`, and `GatedCommandDispatcher` to actual CoSim calls;
+- gates API control, arm, takeoff, route/deflection/rejoin, HOLD hover,
+  QUARANTINE hover-land and Point_B descent at command boundaries;
+- reloads authorization between QUARANTINE hover and landing;
+- consumes only measured depth, collision, vehicle state and immutable contracts;
+- publishes ABORTED after an exceptional exit from an announced mission;
+- persists per-source sequence counters so a restarted process cannot reuse event IDs;
+- keeps one SQLite outbox per exact producer for Abhijan's direct Ethernet sender.
+
+Run command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ops\start_pratik_movement_v2.ps1
+```
+
+Focused regression:
+
+```text
+82 passed
+```
+
+Full Windows repository regression:
+
+```text
+558 passed, 3 skipped, 1 pre-existing POSIX owner-mode assertion failed on Windows
+```
+
+No movement-v2 live PASS is claimed yet. A static authorization file intentionally becomes
+stale after two seconds and causes HOLD. Abhijan must supply a reviewed atomic refresher for
+all five canonical leases before the retained attack/failure demonstrations.
