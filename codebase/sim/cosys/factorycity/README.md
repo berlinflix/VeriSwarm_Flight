@@ -43,10 +43,11 @@ the Unreal project, generated settings, raw frames, logs, or development evidenc
     implement the additive post-freeze movement core. The v2 file is hash-bound to the
     accepted v1 movement contract and Suyash's cell-event extension. It derives exact
     assignment/coverage IDs from the loaded cells, reduces measured front depth into
-    left/centre/right clearances, enforces the frozen timing HOLDs, selects only measured
-    deflections, emits the frozen movement-safety mapping through durable outboxes, and
-    invokes Abhijan's authorization/limit gate immediately before a supplied CoSys
-    mutation. The accepted straight-route v1 file and evidence are unchanged.
+    fail-closed left/centre/right/upper clearances, enforces a real hover before any
+    measured left/right/up deflection, keeps blocked/collided states terminal, and
+    durably publishes exact current-owner reassignment state. It invokes Abhijan's
+    authorization/limit gate immediately before a supplied CoSys mutation. The accepted
+    straight-route v1 file and evidence are unchanged; this core is not live CoSys proof.
 
 The development weather profile prioritizes demo visibility: light rain and wet roads
 remain enabled, while fog, dust, snow, and airborne-leaf effects are explicitly zeroed.

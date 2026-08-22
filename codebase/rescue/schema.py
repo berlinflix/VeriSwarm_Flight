@@ -196,7 +196,7 @@ def _validate_mission_started(payload: dict[str, Any]) -> None:
 def _validate_assignment(payload: dict[str, Any]) -> None:
     payload["node"] = _identifier(payload.get("node"), "node")
     payload["sector_id"] = _identifier(payload.get("sector_id"), "sector_id")
-    payload["cells_total"] = _integer(payload.get("cells_total"), "cells_total", minimum=1)
+    payload["cells_total"] = _integer(payload.get("cells_total"), "cells_total")
     if "cell_ids" in payload:
         payload["cell_ids"] = _identifier_list(
             payload["cell_ids"], "cell_ids", maximum=1024
@@ -209,7 +209,7 @@ def _validate_coverage(payload: dict[str, Any]) -> None:
     payload["node"] = _identifier(payload.get("node"), "node")
     payload["sector_id"] = _identifier(payload.get("sector_id"), "sector_id")
     payload["visited_cells"] = _integer(payload.get("visited_cells"), "visited_cells")
-    payload["total_cells"] = _integer(payload.get("total_cells"), "total_cells", minimum=1)
+    payload["total_cells"] = _integer(payload.get("total_cells"), "total_cells")
     if payload["visited_cells"] > payload["total_cells"]:
         raise RescueEventError("visited_cells cannot exceed total_cells")
     cell_fields = (

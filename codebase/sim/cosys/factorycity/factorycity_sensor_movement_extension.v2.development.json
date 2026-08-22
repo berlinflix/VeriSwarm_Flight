@@ -9,7 +9,7 @@
   "cell_event_extension": {
     "file": "../../../config/rescue_cell_movement_event_extension.v1.json",
     "schema": "veriswarm.rescue.event_extension.cell_movement.v1",
-    "sha256": "deb97518aed516d53bc35889a8fd138d9048fa4d14b081664f0136bec7bda752"
+    "sha256": "2ce21cb707efaa4300cb429b32c436c7bf5135c62c446ddbe15351d0a8093d0d"
   },
   "depth_sensor": {
     "camera": "front_depth",
@@ -20,16 +20,25 @@
     "minimum_valid_fraction": 0.5
   },
   "safety": {
-    "obstacle_stopping_boundary_m": 5.0,
-    "clearance_release_boundary_m": 7.0,
-    "side_deflection_clearance_m": 6.0,
+    "maximum_nominal_speed_mps": 4.0,
+    "control_latency_budget_seconds": 0.4,
+    "minimum_braking_deceleration_mps2": 2.0,
+    "clearance_margin_m": 0.5,
+    "stopping_distance_formula": "speed*latency + speed^2/(2*deceleration) + margin",
+    "obstacle_stopping_boundary_m": 6.5,
+    "clearance_release_boundary_m": 8.0,
+    "side_deflection_clearance_m": 7.0,
+    "vertical_deflection_clearance_m": 7.0,
+    "candidate_order": ["LEFT", "RIGHT", "UP"],
     "deflection_velocity_mps": 1.0,
+    "vertical_deflection_velocity_mps": 0.75,
     "deflection_duration_seconds": 0.2,
     "maximum_cross_track_deflection_m": 3.0,
+    "maximum_vertical_deflection_m": 2.0,
     "route_rejoin_lateral_velocity_mps": 1.0,
     "route_rejoin_tolerance_m": 0.5,
     "clear_samples_required": 3,
-    "maximum_deflection_attempts": 2
+    "maximum_deflection_attempts": 3
   },
   "timing_boundaries_ms": {
     "authorization_lease_max_age": 2000,

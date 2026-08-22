@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -36,7 +36,11 @@ class MovementV2Error(RuntimeError):
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Git may materialize tracked JSON as CRLF on Windows and LF on Linux/Jetson.
+    # Hash the canonical LF text bytes so one immutable Git artifact has one
+    # cross-platform authority identity; every other byte remains significant.
+    canonical = path.read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _positive(mapping: Mapping[str, Any], field: str) -> float:
@@ -76,12 +80,19 @@ def load_sensor_movement_extension(
     if timing != frozen:
         raise MovementV2Error("timing_boundaries_not_frozen")
     for field in (
+        "maximum_nominal_speed_mps",
+        "control_latency_budget_seconds",
+        "minimum_braking_deceleration_mps2",
+        "clearance_margin_m",
         "obstacle_stopping_boundary_m",
         "clearance_release_boundary_m",
         "side_deflection_clearance_m",
+        "vertical_deflection_clearance_m",
         "deflection_velocity_mps",
+        "vertical_deflection_velocity_mps",
         "deflection_duration_seconds",
         "maximum_cross_track_deflection_m",
+        "maximum_vertical_deflection_m",
         "route_rejoin_lateral_velocity_mps",
         "route_rejoin_tolerance_m",
         "clear_samples_required",
@@ -92,6 +103,33 @@ def load_sensor_movement_extension(
         "obstacle_stopping_boundary_m"
     ]:
         raise MovementV2Error("clearance_release_must_exceed_stopping_boundary")
+    safety = extension["safety"]
+    candidate_order = safety.get("candidate_order")
+    if (
+        not isinstance(candidate_order, list)
+        or candidate_order != ["LEFT", "RIGHT", "UP"]
+    ):
+        raise MovementV2Error("candidate_order_not_frozen")
+    speed = float(safety["maximum_nominal_speed_mps"])
+    latency = float(safety["control_latency_budget_seconds"])
+    deceleration = float(safety["minimum_braking_deceleration_mps2"])
+    margin = float(safety["clearance_margin_m"])
+    required_stopping_distance = speed * latency + speed**2 / (2 * deceleration) + margin
+    if float(safety["obstacle_stopping_boundary_m"]) < required_stopping_distance:
+        raise MovementV2Error("stopping_boundary_below_configured_braking_distance")
+    depth = extension.get("depth_sensor")
+    if not isinstance(depth, Mapping):
+        raise MovementV2Error("depth_sensor_invalid")
+    if depth.get("camera") != "front_depth" or depth.get("image_type") != "DepthPlanar":
+        raise MovementV2Error("depth_sensor_authority_invalid")
+    minimum = _positive(depth, "minimum_valid_distance_m")
+    maximum = _positive(depth, "maximum_valid_distance_m")
+    if maximum <= minimum:
+        raise MovementV2Error("depth_distance_range_invalid")
+    for field in ("center_band_fraction", "minimum_valid_fraction"):
+        fraction = _positive(depth, field)
+        if fraction > 1.0:
+            raise MovementV2Error(f"{field}_invalid")
     return extension
 
 
@@ -102,6 +140,7 @@ class DepthSample:
     center_m: float
     left_m: float
     right_m: float
+    upper_m: float
     valid_fraction: float
 
     @property
@@ -115,32 +154,53 @@ def depth_sample_from_response(
     decided_at_ms: int,
     config: Mapping[str, Any],
 ) -> DepthSample:
-    """Reduce a measured DepthPlanar frame into left/centre/right clearances."""
-    width, height = int(response.width), int(response.height)
-    values = list(response.image_data_float)
+    """Reduce a measured DepthPlanar frame into fail-closed directional clearances."""
+    if (
+        isinstance(decided_at_ms, bool)
+        or not isinstance(decided_at_ms, int)
+        or decided_at_ms < 0
+    ):
+        raise MovementV2Error("depth_decision_time_invalid")
+    try:
+        width, height = int(response.width), int(response.height)
+        raw_values = list(response.image_data_float)
+        values = [float(value) for value in raw_values]
+        timestamp_ns = int(response.time_stamp)
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise MovementV2Error("front_depth_response_invalid") from exc
+    if timestamp_ns < 0:
+        raise MovementV2Error("front_depth_timestamp_invalid")
     if width <= 2 or height <= 0 or len(values) != width * height:
         raise MovementV2Error("front_depth_shape_invalid")
     minimum = float(config["minimum_valid_distance_m"])
     maximum = float(config["maximum_valid_distance_m"])
-    valid = [minimum <= float(value) <= maximum and math.isfinite(float(value)) for value in values]
+    valid = [minimum <= value <= maximum and math.isfinite(value) for value in values]
     valid_fraction = sum(valid) / len(valid)
-    if valid_fraction < float(config["minimum_valid_fraction"]):
-        raise MovementV2Error("front_depth_valid_fraction_low")
     band = float(config["center_band_fraction"])
     center_width = max(1, min(width - 2, int(round(width * band))))
     center_start = (width - center_width) // 2
     center_end = center_start + center_width
 
-    def region_min(start: int, end: int) -> float:
+    def region_min(
+        column_start: int,
+        column_end: int,
+        row_start: int = 0,
+        row_end: int = height,
+    ) -> float:
+        region_size = (column_end - column_start) * (row_end - row_start)
+        if region_size <= 0:
+            return 0.0
         region = [
-            float(values[row * width + column])
-            for row in range(height)
-            for column in range(start, end)
+            values[row * width + column]
+            for row in range(row_start, row_end)
+            for column in range(column_start, column_end)
             if valid[row * width + column]
         ]
-        return min(region) if region else math.inf
+        if len(region) / region_size < float(config["minimum_valid_fraction"]):
+            # Missing/invalid depth is unknown space, never infinite free space.
+            return 0.0
+        return min(region)
 
-    timestamp_ns = int(response.time_stamp)
     captured_at_ms = timestamp_ns // 1_000_000
     return DepthSample(
         captured_at_ms=captured_at_ms,
@@ -148,6 +208,7 @@ def depth_sample_from_response(
         left_m=region_min(0, center_start),
         center_m=region_min(center_start, center_end),
         right_m=region_min(center_end, width),
+        upper_m=region_min(center_start, center_end, 0, max(1, height // 2)),
         valid_fraction=valid_fraction,
     )
 
@@ -158,8 +219,8 @@ class CellLedger:
     def __init__(self, contract: Mapping[str, Any]):
         self.cells = tuple(contract["search_cells"]["cells"])
         self.known_ids = frozenset(str(cell["id"]) for cell in self.cells)
-        self.assigned = {
-            node: frozenset(str(cell["id"]) for cell in self.cells if cell["owner"] == node)
+        self.assigned: dict[str, set[str]] = {
+            node: set(str(cell["id"]) for cell in self.cells if cell["owner"] == node)
             for node in contract["vehicles"]["roster"]
         }
         self.completed: dict[str, set[str]] = {node: set() for node in self.assigned}
@@ -170,6 +231,11 @@ class CellLedger:
         if cell_id not in self.known_ids:
             raise MovementV2Error(f"unknown_cell_id:{cell_id}")
         return cell_id
+
+    def validate_node(self, node: str) -> str:
+        if node not in self.assigned:
+            raise MovementV2Error(f"unknown_node:{node}")
+        return node
 
     def cell_for_progress(self, progress_fraction: float) -> str:
         if not math.isfinite(progress_fraction) or not 0.0 <= progress_fraction <= 1.0:
@@ -183,18 +249,20 @@ class CellLedger:
         raise MovementV2Error("route_progress_has_no_cell")
 
     def assignment_payload(self, node: str) -> dict[str, Any]:
+        self.validate_node(node)
         cell_ids = sorted(self.assigned[node])
         return {
             "node": node,
-            "sector_id": "factorycity_route",
+            "sector_id": f"factorycity_route:{node}",
             "cells_total": len(cell_ids),
             "cell_ids": cell_ids,
         }
 
     def coverage_payload(self, node: str) -> dict[str, Any]:
+        self.validate_node(node)
         return {
             "node": node,
-            "sector_id": "factorycity_route",
+            "sector_id": f"factorycity_route:{node}",
             "visited_cells": len(self.completed[node]),
             "total_cells": len(self.assigned[node]),
             "in_progress_cell_ids": sorted(self.in_progress[node]),
@@ -203,6 +271,7 @@ class CellLedger:
         }
 
     def mark(self, node: str, cell_id: str, state: str) -> None:
+        self.validate_node(node)
         cell_id = self.validate_cell_id(cell_id)
         if cell_id not in self.assigned[node]:
             raise MovementV2Error(f"cell_not_assigned:{node}:{cell_id}")
@@ -217,6 +286,82 @@ class CellLedger:
             raise MovementV2Error(f"cell_state_invalid:{state}")
         target[node].add(cell_id)
 
+    def plan_reassignment(
+        self,
+        *,
+        from_node: str,
+        to_node: str,
+        cell_ids: Sequence[str],
+        reason: str,
+    ) -> dict[str, Any]:
+        """Validate a transfer without changing ledger state."""
+        self.validate_node(from_node)
+        self.validate_node(to_node)
+        if from_node == to_node:
+            raise MovementV2Error("reassignment_same_node")
+        normalized = tuple(str(cell_id) for cell_id in cell_ids)
+        if not normalized or len(set(normalized)) != len(normalized):
+            raise MovementV2Error("reassignment_cells_invalid")
+        if not isinstance(reason, str) or not reason.strip():
+            raise MovementV2Error("reassignment_reason_invalid")
+        for cell_id in normalized:
+            self.validate_cell_id(cell_id)
+            if cell_id not in self.assigned[from_node]:
+                raise MovementV2Error(
+                    f"cell_not_assigned:{from_node}:{cell_id}"
+                )
+            if cell_id in self.completed[from_node]:
+                raise MovementV2Error(f"completed_cell_cannot_reassign:{cell_id}")
+
+        return {
+            "from_node": from_node,
+            "to_node": to_node,
+            "cells_count": len(normalized),
+            "cell_ids": sorted(normalized),
+            "reason": reason.strip(),
+        }
+
+    def apply_reassignment(self, payload: Mapping[str, Any]) -> None:
+        """Apply a previously validated reassignment payload."""
+        planned = self.plan_reassignment(
+            from_node=str(payload.get("from_node")),
+            to_node=str(payload.get("to_node")),
+            cell_ids=tuple(payload.get("cell_ids", ())),
+            reason=str(payload.get("reason", "")),
+        )
+        cells_count = payload.get("cells_count")
+        if (
+            isinstance(cells_count, bool)
+            or not isinstance(cells_count, int)
+            or cells_count != planned["cells_count"]
+        ):
+            raise MovementV2Error("reassignment_cells_count_mismatch")
+        from_node = planned["from_node"]
+        to_node = planned["to_node"]
+        for cell_id in planned["cell_ids"]:
+            self.assigned[from_node].remove(cell_id)
+            self.assigned[to_node].add(cell_id)
+            for states in (self.in_progress, self.blocked):
+                states[from_node].discard(cell_id)
+            self.completed[from_node].discard(cell_id)
+
+    def reassign(
+        self,
+        *,
+        from_node: str,
+        to_node: str,
+        cell_ids: Sequence[str],
+        reason: str,
+    ) -> dict[str, Any]:
+        payload = self.plan_reassignment(
+            from_node=from_node,
+            to_node=to_node,
+            cell_ids=cell_ids,
+            reason=reason,
+        )
+        self.apply_reassignment(payload)
+        return payload
+
 
 class DurableMovementEvents:
     """Validate cell IDs and durably enqueue frozen rescue events."""
@@ -228,6 +373,7 @@ class DurableMovementEvents:
         ledger: CellLedger,
         outbox_factory: Callable[[str], RescueOutbox],
         enqueue_deadline_ms: int,
+        clock_ms: Callable[[], int] | None = None,
     ):
         self.contract = contract
         self.ledger = ledger
@@ -239,6 +385,7 @@ class DurableMovementEvents:
         }
         self.sequences = {source: 0 for source in self.outboxes}
         self.enqueue_deadline_ms = enqueue_deadline_ms
+        self.clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
 
     def emit(
         self,
@@ -248,6 +395,17 @@ class DurableMovementEvents:
         payload: Mapping[str, Any],
         observed_at_ms: int,
     ) -> dict[str, Any]:
+        if source not in self.outboxes:
+            raise MovementV2Error(f"unknown_event_source:{source}")
+        if (
+            isinstance(observed_at_ms, bool)
+            or not isinstance(observed_at_ms, int)
+            or observed_at_ms < 0
+        ):
+            raise MovementV2Error("observed_at_ms_invalid")
+        singular_cell = payload.get("cell_id")
+        if singular_cell is not None:
+            self.ledger.validate_cell_id(str(singular_cell))
         for field in (
             "cell_ids",
             "in_progress_cell_ids",
@@ -256,7 +414,9 @@ class DurableMovementEvents:
         ):
             for cell_id in payload.get(field, []):
                 self.ledger.validate_cell_id(str(cell_id))
-        started = time.monotonic_ns() // 1_000_000
+        started = self.clock_ms()
+        if observed_at_ms > started:
+            raise MovementV2Error("movement_transition_time_in_future")
         self.sequences[source] += 1
         seq = self.sequences[source]
         event = {
@@ -270,9 +430,65 @@ class DurableMovementEvents:
             "payload": dict(payload),
         }
         self.outboxes[source].enqueue(event)
-        if time.monotonic_ns() // 1_000_000 - started > self.enqueue_deadline_ms:
+        finished = self.clock_ms()
+        if (
+            finished < started
+            or finished - started > self.enqueue_deadline_ms
+            or finished - observed_at_ms > self.enqueue_deadline_ms
+        ):
             raise MovementV2Error("movement_transition_enqueue_deadline_missed")
         return event
+
+    def assignment(self, *, node: str, observed_at_ms: int) -> dict[str, Any]:
+        return self.emit(
+            source="mission.controller",
+            kind="assignment",
+            payload=self.ledger.assignment_payload(node),
+            observed_at_ms=observed_at_ms,
+        )
+
+    def coverage(self, *, node: str, observed_at_ms: int) -> dict[str, Any]:
+        return self.emit(
+            source=f"{node}.telemetry",
+            kind="coverage",
+            payload=self.ledger.coverage_payload(node),
+            observed_at_ms=observed_at_ms,
+        )
+
+    def reassign_cells(
+        self,
+        *,
+        from_node: str,
+        to_node: str,
+        cell_ids: Sequence[str],
+        reason: str,
+        observed_at_ms: int,
+    ) -> tuple[dict[str, Any], ...]:
+        """Durably record a transfer, then publish both resulting ownership states."""
+        payload = self.ledger.plan_reassignment(
+            from_node=from_node,
+            to_node=to_node,
+            cell_ids=cell_ids,
+            reason=reason,
+        )
+        events = [
+            self.emit(
+                source="mission.controller",
+                kind="task_reassigned",
+                payload=payload,
+                observed_at_ms=observed_at_ms,
+            )
+        ]
+        self.ledger.apply_reassignment(payload)
+        events.extend(
+            (
+                self.assignment(node=from_node, observed_at_ms=observed_at_ms),
+                self.assignment(node=to_node, observed_at_ms=observed_at_ms),
+                self.coverage(node=from_node, observed_at_ms=observed_at_ms),
+                self.coverage(node=to_node, observed_at_ms=observed_at_ms),
+            )
+        )
+        return tuple(events)
 
     def movement_safety(
         self,
@@ -286,6 +502,8 @@ class DurableMovementEvents:
         position_ned: Sequence[float] | None = None,
     ) -> dict[str, Any]:
         cell_id = self.ledger.validate_cell_id(cell_id)
+        if event_type not in MOVEMENT_EVENT_MAP:
+            raise MovementV2Error(f"movement_event_type_invalid:{event_type}")
         reason, result = MOVEMENT_EVENT_MAP[event_type]
         payload: dict[str, Any] = {
             "node": node,
@@ -366,9 +584,11 @@ class GatedCommandDispatcher:
 @dataclass
 class NodeAvoidanceState:
     mode: str = "NOMINAL"
-    deflection_side: str | None = None
+    deflection_direction: str | None = None
     deflection_attempts: int = 0
     clear_samples: int = 0
+    obstacle_active: bool = False
+    attempted_directions: set[str] = field(default_factory=set)
 
 
 class SensorDrivenMovementSupervisor:
@@ -386,61 +606,248 @@ class SensorDrivenMovementSupervisor:
         collision_detected: bool,
         cross_track_m: float,
         loop_period_ms: int,
+        vertical_offset_m: float = 0.0,
     ) -> tuple[str, tuple[str, ...]]:
         timing = self.extension["timing_boundaries_ms"]
         safety = self.extension["safety"]
+        if node not in self.states:
+            raise MovementV2Error(f"unknown_node:{node}")
         state = self.states[node]
+
+        # Terminal states are sticky.  A later clean frame cannot resurrect a
+        # collided vehicle or silently resume a cell that was declared blocked.
+        if state.mode == "COLLIDED":
+            return "TERMINATE_VEHICLE", ()
+        if state.mode == "BLOCKED":
+            return "BLOCK_CELL", ()
+
+        if not isinstance(collision_detected, bool):
+            return self._hold_for_invalid_input(state)
         if collision_detected:
             state.mode = "COLLIDED"
             return "TERMINATE_VEHICLE", ("COLLISION_DETECTED",)
+
+        scalars = (
+            cross_track_m,
+            vertical_offset_m,
+            loop_period_ms,
+            depth.center_m,
+            depth.left_m,
+            depth.right_m,
+            depth.upper_m,
+            depth.valid_fraction,
+        )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in scalars
+        ):
+            return self._hold_for_invalid_input(state)
         if (
-            loop_period_ms > int(timing["control_loop_period_max"])
+            loop_period_ms < 0
+            or loop_period_ms > int(timing["control_loop_period_max"])
             or depth.age_ms < 0
             or depth.age_ms > int(timing["depth_sample_max_age_at_decision"])
+            or any(
+                value < 0.0
+                for value in (
+                    depth.center_m,
+                    depth.left_m,
+                    depth.right_m,
+                    depth.upper_m,
+                    depth.valid_fraction,
+                )
+            )
+            or depth.valid_fraction > 1.0
         ):
+            return self._hold_for_invalid_input(state)
+        if (
+            abs(cross_track_m)
+            > float(safety["maximum_cross_track_deflection_m"])
+            or abs(vertical_offset_m)
+            > float(safety["maximum_vertical_deflection_m"])
+        ):
+            return self._hold_for_invalid_input(state)
+
+        obstacle = depth.center_m < float(
+            safety["obstacle_stopping_boundary_m"]
+        )
+        released = depth.center_m >= float(
+            safety["clearance_release_boundary_m"]
+        )
+
+        if state.mode == "NOMINAL":
+            if not obstacle:
+                return "CONTINUE_ROUTE", ()
             state.mode = "HOLD"
-            return "HOVER", ("SAFETY_HOLD",)
-        if depth.center_m < float(safety["obstacle_stopping_boundary_m"]):
-            state.mode = "HOLD"
-            choices = {
-                "LEFT": depth.left_m,
-                "RIGHT": depth.right_m,
-            }
-            permitted = [
-                (distance, side)
-                for side, distance in choices.items()
-                if distance >= float(safety["side_deflection_clearance_m"])
-            ]
-            if permitted and state.deflection_attempts < int(safety["maximum_deflection_attempts"]):
-                _, state.deflection_side = max(permitted)
+            state.obstacle_active = True
+            state.clear_samples = 0
+            state.deflection_attempts = 0
+            state.attempted_directions.clear()
+            state.deflection_direction = None
+            # This cycle genuinely hovers. Deflection may only be released by
+            # a subsequent measured decision while the hold remains valid.
+            return "HOVER", ("OBSTACLE_DETECTED", "SAFETY_HOLD")
+
+        if state.mode == "REJOIN":
+            if obstacle:
+                state.mode = "HOLD"
+                state.obstacle_active = True
+                state.clear_samples = 0
+                state.deflection_direction = None
+                state.deflection_attempts = 0
+                state.attempted_directions.clear()
+                return "HOVER", ("OBSTACLE_DETECTED", "SAFETY_HOLD")
+            if released and self._within_rejoin_limits(
+                cross_track_m, vertical_offset_m
+            ):
+                self._reset_nominal(state)
+                return "RESUME_ROUTE", ("ROUTE_REJOINED",)
+            return "REJOIN_ROUTE", ()
+
+        if state.mode == "DEFLECT":
+            direction = state.deflection_direction
+            if obstacle and direction and self._direction_is_permitted(
+                direction,
+                depth,
+                cross_track_m,
+                vertical_offset_m,
+            ):
+                return f"DEFLECT_{direction}", ()
+            if obstacle:
+                state.mode = "HOLD"
+                state.deflection_direction = None
+                state.clear_samples = 0
+                return "HOVER", ("SAFETY_HOLD",)
+            state.clear_samples = state.clear_samples + 1 if released else 0
+            if state.clear_samples < int(safety["clear_samples_required"]):
+                return "HOVER", ()
+            if self._within_rejoin_limits(cross_track_m, vertical_offset_m):
+                self._reset_nominal(state)
+                return "RESUME_ROUTE", ("ROUTE_REJOINED",)
+            state.mode = "REJOIN"
+            state.deflection_direction = None
+            return "REJOIN_ROUTE", ()
+
+        if state.mode == "HOLD":
+            if obstacle:
+                if not state.obstacle_active:
+                    state.obstacle_active = True
+                    state.clear_samples = 0
+                    state.deflection_attempts = 0
+                    state.attempted_directions.clear()
+                    return "HOVER", (
+                        "OBSTACLE_DETECTED",
+                        "SAFETY_HOLD",
+                    )
+                direction = self._select_direction(
+                    state,
+                    depth,
+                    cross_track_m,
+                    vertical_offset_m,
+                )
+                if direction is None:
+                    state.mode = "BLOCKED"
+                    return "BLOCK_CELL", ("CELL_BLOCKED",)
+                state.deflection_direction = direction
+                state.attempted_directions.add(direction)
                 state.deflection_attempts += 1
                 state.mode = "DEFLECT"
-                return f"DEFLECT_{state.deflection_side}", (
-                    "OBSTACLE_DETECTED",
-                    "SAFETY_HOLD",
-                    "DEFLECTION_SELECTED",
-                )
-            state.mode = "BLOCKED"
-            return "BLOCK_CELL", (
-                "OBSTACLE_DETECTED",
-                "SAFETY_HOLD",
-                "CELL_BLOCKED",
+                return f"DEFLECT_{direction}", ("DEFLECTION_SELECTED",)
+            state.clear_samples = state.clear_samples + 1 if released else 0
+            if state.clear_samples < int(safety["clear_samples_required"]):
+                return "HOVER", ()
+            if self._within_rejoin_limits(cross_track_m, vertical_offset_m):
+                self._reset_nominal(state)
+                return "RESUME_ROUTE", ("ROUTE_REJOINED",)
+            state.mode = "REJOIN"
+            return "REJOIN_ROUTE", ()
+
+        raise MovementV2Error(f"avoidance_state_invalid:{state.mode}")
+
+    def _hold_for_invalid_input(
+        self, state: NodeAvoidanceState
+    ) -> tuple[str, tuple[str, ...]]:
+        transitioned = state.mode != "HOLD"
+        state.mode = "HOLD"
+        state.clear_samples = 0
+        state.deflection_direction = None
+        return "HOVER", (("SAFETY_HOLD",) if transitioned else ())
+
+    def _within_rejoin_limits(
+        self, cross_track_m: float, vertical_offset_m: float
+    ) -> bool:
+        safety = self.extension["safety"]
+        tolerance = float(safety["route_rejoin_tolerance_m"])
+        return abs(cross_track_m) <= tolerance and abs(vertical_offset_m) <= tolerance
+
+    def _direction_is_permitted(
+        self,
+        direction: str,
+        depth: DepthSample,
+        cross_track_m: float,
+        vertical_offset_m: float,
+    ) -> bool:
+        safety = self.extension["safety"]
+        if direction in {"LEFT", "RIGHT"}:
+            clearance = depth.left_m if direction == "LEFT" else depth.right_m
+            projected = abs(cross_track_m) + (
+                float(safety["deflection_velocity_mps"])
+                * float(safety["deflection_duration_seconds"])
             )
-        if state.mode in {"HOLD", "DEFLECT", "REJOIN"}:
-            if depth.center_m >= float(safety["clearance_release_boundary_m"]):
-                state.clear_samples += 1
-            else:
-                state.clear_samples = 0
-            if state.clear_samples >= int(safety["clear_samples_required"]):
-                if abs(cross_track_m) <= float(safety["route_rejoin_tolerance_m"]):
-                    state.mode = "NOMINAL"
-                    state.deflection_side = None
-                    state.clear_samples = 0
-                    return "RESUME_ROUTE", ("ROUTE_REJOINED",)
-                state.mode = "REJOIN"
-                return "REJOIN_ROUTE", ()
-            return "HOVER", ()
-        if abs(cross_track_m) > float(safety["maximum_cross_track_deflection_m"]):
-            state.mode = "HOLD"
-            return "HOVER", ("SAFETY_HOLD",)
-        return "CONTINUE_ROUTE", ()
+            return (
+                clearance >= float(safety["side_deflection_clearance_m"])
+                and projected
+                <= float(safety["maximum_cross_track_deflection_m"])
+            )
+        if direction == "UP":
+            projected = abs(vertical_offset_m) + (
+                float(safety["vertical_deflection_velocity_mps"])
+                * float(safety["deflection_duration_seconds"])
+            )
+            return (
+                depth.upper_m
+                >= float(safety["vertical_deflection_clearance_m"])
+                and projected
+                <= float(safety["maximum_vertical_deflection_m"])
+            )
+        return False
+
+    def _select_direction(
+        self,
+        state: NodeAvoidanceState,
+        depth: DepthSample,
+        cross_track_m: float,
+        vertical_offset_m: float,
+    ) -> str | None:
+        safety = self.extension["safety"]
+        if state.deflection_attempts >= int(safety["maximum_deflection_attempts"]):
+            return None
+        clearances = {
+            "LEFT": depth.left_m,
+            "RIGHT": depth.right_m,
+            "UP": depth.upper_m,
+        }
+        permitted = [
+            direction
+            for direction in safety["candidate_order"]
+            if direction not in state.attempted_directions
+            and self._direction_is_permitted(
+                direction,
+                depth,
+                cross_track_m,
+                vertical_offset_m,
+            )
+        ]
+        # max returns the first item on ties, preserving the frozen order.
+        return max(permitted, key=clearances.__getitem__) if permitted else None
+
+    @staticmethod
+    def _reset_nominal(state: NodeAvoidanceState) -> None:
+        state.mode = "NOMINAL"
+        state.deflection_direction = None
+        state.deflection_attempts = 0
+        state.clear_samples = 0
+        state.obstacle_active = False
+        state.attempted_directions.clear()

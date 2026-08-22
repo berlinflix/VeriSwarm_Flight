@@ -67,7 +67,7 @@ test("reassignment transitions must originate from the current configured owner"
   assert.equal(view.cells[0].state, "CONFLICT");
 });
 
-test("a valid reassignment preserves earlier coverage and reconstructs the current owner", () => {
+test("a valid reassignment requires current assignment and coverage ownership", () => {
   const reassigned = structuredClone(state);
   reassigned.reassignments = [{
     event_id: "valid-transfer",
@@ -75,9 +75,75 @@ test("a valid reassignment preserves earlier coverage and reconstructs the curre
     to_node: "bravo",
     cell_ids: ["route_cell_05"],
   }];
+  reassigned.assignments[0].cell_ids = ["route_cell_00"];
+  reassigned.assignments[1].cell_ids.push("route_cell_05");
+  reassigned.coverage.in_progress_cell_ids = [];
+  reassigned.coverage_by_sector[0].in_progress_cell_ids = [];
+  reassigned.coverage_by_sector.push({
+    node: "bravo",
+    sector_id: "sector-bravo",
+    in_progress_cell_ids: ["route_cell_05"],
+    completed_cell_ids: [],
+    blocked_cell_ids: [],
+  });
   const view = buildCellMissionView(reassigned, contract);
   assert.equal(view.cells.find((cell) => cell.id === "route_cell_05").owner, "bravo");
   assert.ok(!view.issues.some((issue) => issue.cellId === "route_cell_05"));
+});
+
+test("stale assignment from a previous owner fails after reassignment", () => {
+  const stale = structuredClone(state);
+  stale.reassignments = [{
+    event_id: "valid-transfer",
+    from_node: "alpha",
+    to_node: "bravo",
+    cell_ids: ["route_cell_05"],
+  }];
+  const view = buildCellMissionView(stale, contract);
+  assert.ok(view.issues.some((issue) => (
+    issue.code === "assignment_owner_mismatch" && issue.cellId === "route_cell_05"
+  )));
+  assert.equal(view.cells.find((cell) => cell.id === "route_cell_05").state, "CONFLICT");
+});
+
+test("stale coverage from a previous owner fails after reassignment", () => {
+  const stale = structuredClone(state);
+  stale.reassignments = [{
+    event_id: "valid-transfer",
+    from_node: "alpha",
+    to_node: "bravo",
+    cell_ids: ["route_cell_05"],
+  }];
+  stale.assignments[0].cell_ids = ["route_cell_00"];
+  stale.assignments[1].cell_ids.push("route_cell_05");
+  const view = buildCellMissionView(stale, contract);
+  assert.ok(view.issues.some((issue) => (
+    issue.code === "coverage_not_owned" && issue.cellId === "route_cell_05"
+  )));
+  assert.equal(view.cells.find((cell) => cell.id === "route_cell_05").state, "CONFLICT");
+});
+
+test("unknown drone identities cannot acquire cells or publish coverage", () => {
+  const rogue = structuredClone(state);
+  rogue.reassignments = [{
+    event_id: "rogue-transfer",
+    from_node: "alpha",
+    to_node: "rogue",
+    cell_ids: ["route_cell_05"],
+  }];
+  rogue.assignments.push({ node: "rogue", sector_id: "rogue", cell_ids: ["route_cell_05"] });
+  rogue.coverage_by_sector.push({
+    node: "rogue",
+    sector_id: "rogue",
+    in_progress_cell_ids: ["route_cell_05"],
+    completed_cell_ids: [],
+    blocked_cell_ids: [],
+  });
+  const view = buildCellMissionView(rogue, contract);
+  assert.ok(view.issues.some((issue) => issue.code === "invalid_reassignment_node"));
+  assert.ok(view.issues.some((issue) => issue.code === "invalid_assignment_node"));
+  assert.ok(view.issues.some((issue) => issue.code === "invalid_coverage_node"));
+  assert.equal(view.cells.find((cell) => cell.id === "route_cell_05").owner, "alpha");
 });
 
 test("movement evidence distinguishes blocked cells from vehicle collisions", () => {

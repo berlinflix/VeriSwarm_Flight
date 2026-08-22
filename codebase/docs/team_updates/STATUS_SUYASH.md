@@ -4,7 +4,7 @@ Updated: 2026-08-22 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
-Latest reviewed integration parent: `f610667`
+Latest reviewed integration parent: `bad1acc` plus `f7db83a`
 
 ## Completed since the previous update
 
@@ -58,12 +58,26 @@ Latest reviewed integration parent: `f610667`
   authorization, control, sensing or enqueue deadlines fail closed to `HOLD`.
 - Preserved backward replay compatibility for old count-only evidence while requiring new
   FactoryCity producers to emit exact cell IDs.
+- Integrated Pratik's sensor-driven movement v2 (`bad1acc`) and Abhijan's retained
+  five-drone cell-mission dashboard (`f7db83a`).
+- Corrected hover-before-deflect sequencing, sticky blocked/collision states, fail-closed
+  directional depth, deterministic upward escape, projected deflection bounds and the
+  measured braking-distance floor.
+- Added unique per-drone sector IDs and durable unfinished-cell reassignment with current
+  assignment/coverage publication for both source and destination drones.
+- Corrected the dashboard to reject stale historical ownership after reassignment and to
+  show partial/inconsistent replay as conflict rather than valid coverage.
+- Corrected stale authority hashes in the movement extension and added end-to-end
+  transition/enqueue deadline checks.
+- Verified the integrated result at `546 passed, 3 skipped, 1 deselected` on Windows,
+  with the deselected test being the existing POSIX-only owner-mode assertion; dashboard
+  tests and its production build also pass.
 
 ## In progress now
 
-- Integrating the new detector and CoSys producers as their branches publish.
-- Waiting for Pratik's new sensor-driven controller revision and Abhijan's deterministic
-  heatmap/replay consumer of the frozen additive event interface.
+- Integrating the new detector and live CoSys producers as their branches publish.
+- Pratik's movement core and Abhijan's heatmap/replay consumer are integrated for
+  development; live CoSys command wiring and retained scenario evidence remain next.
 
 ## Outputs available
 
@@ -95,10 +109,9 @@ Latest reviewed integration parent: `f610667`
 - Point B, the straight A-to-B route, roster, route cells and joint movement/security
   contract are now frozen for development. The first retained live five-drone A-to-B
   run is still missing.
-- The nominal controller does not yet consume live `ALLOW`/`HOLD`/`QUARANTINE` decisions
-  at every command boundary or perform sensor-driven obstacle deflection. Durable
-  cell-level event production and live unfinished-cell reassignment remain joint
-  Pratik/Abhijan work.
+- The reviewed core consumes `ALLOW`/`HOLD`/`QUARANTINE`, measured depth and collision
+  state in software, but actual CoSys command wiring and retained live proof for every
+  returned action are still missing.
 - The required original 10-second no-person CoSys RGB negative-control recording is
   still missing and must remain outside Git.
 - The physical rig demonstrates common planar overlap; it cannot claim real 3-D location
@@ -125,10 +138,10 @@ Latest reviewed integration parent: `f610667`
 
 ## Next checkpoint
 
-- Review Pratik's command-boundary gate, measured obstacle deflection and exact cell-event
-  producer against the frozen additive contract.
-- Review Abhijan's heatmap and replay-equivalence proof against the same retained event
-  log.
+- Review Pratik's first retained live run through the integrated command-boundary gate,
+  measured left/right/up deflection and exact cell-event producer.
+- Review Abhijan's screenshot/video replay of the integrated current-owner heatmap,
+  including a deliberately partial reassignment that must show conflict.
 - Review Pratik's first retained live A-to-B run, durable rescue-event producer and
   original no-person CoSys RGB control when published.
 - Accept the first real detector-derived multi-view observation from Samik and the first

@@ -31,6 +31,11 @@ export function buildCellMissionView(state, movementConfig) {
   }
 
   const geometry = new Map();
+  const roster = movementConfig?.vehicles?.roster;
+  const validNodes = new Set(Array.isArray(roster) ? roster.filter((node) => typeof node === "string") : []);
+  if (validNodes.size === 0) {
+    addIssue("movement_roster_unavailable", null, "immutable vehicle roster missing");
+  }
   for (const row of geometryRows) {
     const id = row?.id;
     const start = Number(row?.start_fraction);
@@ -39,18 +44,23 @@ export function buildCellMissionView(state, movementConfig) {
       addIssue("invalid_cell_geometry", typeof id === "string" ? id : null, "invalid or duplicate immutable geometry row");
       continue;
     }
+    if (!validNodes.has(row.owner)) {
+      addIssue("invalid_cell_owner", id, `configured owner ${row.owner ?? "missing"}`);
+      continue;
+    }
     geometry.set(id, { id, start, end, configuredOwner: row.owner });
   }
 
   const known = new Set(geometry.keys());
   const ownerByCell = new Map([...geometry.values()].map((cell) => [cell.id, cell.configuredOwner]));
-  const validOwnersByCell = new Map(
-    [...geometry.values()].map((cell) => [cell.id, new Set([cell.configuredOwner])]),
-  );
   for (const reassignment of state?.reassignments ?? []) {
     const reassigned = cellIds(reassignment?.cell_ids);
     if (!reassigned.length) {
       addIssue("reassignment_missing_cell_ids", null, reassignment?.event_id ?? "legacy count-only reassignment");
+      continue;
+    }
+    if (!validNodes.has(reassignment.from_node) || !validNodes.has(reassignment.to_node)) {
+      addIssue("invalid_reassignment_node", null, `${reassignment.from_node}->${reassignment.to_node}`);
       continue;
     }
     for (const id of reassigned) {
@@ -63,17 +73,20 @@ export function buildCellMissionView(state, movementConfig) {
         continue;
       }
       ownerByCell.set(id, reassignment.to_node);
-      validOwnersByCell.get(id).add(reassignment.to_node);
     }
   }
 
   const emittedOwners = new Map();
   for (const assignment of state?.assignments ?? []) {
-    const assigned = cellIds(assignment?.cell_ids);
-    if (!assigned.length) {
+    if (!validNodes.has(assignment?.node)) {
+      addIssue("invalid_assignment_node", null, assignment?.node ?? "missing node");
+      continue;
+    }
+    if (!Array.isArray(assignment?.cell_ids)) {
       addIssue("assignment_missing_cell_ids", null, assignment?.node ?? "unknown node");
       continue;
     }
+    const assigned = cellIds(assignment?.cell_ids);
     for (const id of assigned) {
       if (!known.has(id)) {
         addIssue("unknown_assignment_cell", id, assignment.node);
@@ -88,8 +101,8 @@ export function buildCellMissionView(state, movementConfig) {
   for (const [id, owners] of emittedOwners) {
     if (owners.size > 1) {
       addIssue("assignment_conflict", id, [...owners].sort().join(","));
-    } else if (!validOwnersByCell.get(id)?.has([...owners][0])) {
-      addIssue("assignment_owner_mismatch", id, `ownership chain excludes ${[...owners][0]}`);
+    } else if (ownerByCell.get(id) !== [...owners][0]) {
+      addIssue("assignment_owner_mismatch", id, `current owner is ${ownerByCell.get(id)}, not ${[...owners][0]}`);
     }
   }
   for (const conflict of state?.assignment_conflicts ?? []) {
@@ -118,9 +131,13 @@ export function buildCellMissionView(state, movementConfig) {
   }
 
   for (const record of state?.coverage_by_sector ?? []) {
+    if (!validNodes.has(record?.node)) {
+      addIssue("invalid_coverage_node", null, record?.node ?? "missing node");
+      continue;
+    }
     for (const [field] of CELL_STATE_FIELDS) {
       for (const id of cellIds(record[field])) {
-        if (known.has(id) && !validOwnersByCell.get(id)?.has(record.node)) {
+        if (known.has(id) && ownerByCell.get(id) !== record.node) {
           addIssue("coverage_not_owned", id, `${record.node}:${field}`);
           stateByCell.set(id, "CONFLICT");
         }
