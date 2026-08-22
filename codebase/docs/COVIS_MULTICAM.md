@@ -98,6 +98,14 @@ objects; do not edit Python or the shortcut when the source count changes. The
 launcher rejects placeholder, empty, duplicate or unsupported sources before it
 opens any camera.
 
+On Windows, numeric DirectShow indices are not stable when a device is unplugged.
+For each numeric `dshow` entry, set `expected_device_name` to the exact DirectShow
+friendly name. The launcher resolves the current index by that name and refuses
+to start if the expected device is missing or ambiguous. This prevents a phone
+camera from inheriting a disconnected USB webcam's index and appearing under the
+wrong label. The `source` remains a numeric compatibility value; the resolved
+index is printed during validation.
+
 From `codebase`, validate the local configuration and frozen semantic runtime:
 
 ```powershell

@@ -59,6 +59,87 @@ function Convert-Invariant {
     return $Value.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Get-DirectShowVideoDeviceNames {
+    if (-not ("VeriSwarm.DirectShow.VideoDevices" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+
+namespace VeriSwarm.DirectShow {
+    [ComImport, Guid("62BE5D10-60EB-11D0-BD3B-00A0C911CE86")]
+    internal class SystemDeviceEnum { }
+
+    [ComImport, Guid("29840822-5B84-11D0-BD3B-00A0C911CE86"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface ICreateDevEnum {
+        [PreserveSig]
+        int CreateClassEnumerator([In] ref Guid type, out IEnumMoniker enumerator, int flags);
+    }
+
+    [ComImport, Guid("55272A00-42CB-11CE-8135-00AA004BB851"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IPropertyBag {
+        [PreserveSig]
+        int Read([MarshalAs(UnmanagedType.LPWStr)] string name, [MarshalAs(UnmanagedType.Struct)] out object value, IntPtr errorLog);
+
+        [PreserveSig]
+        int Write([MarshalAs(UnmanagedType.LPWStr)] string name, [In, MarshalAs(UnmanagedType.Struct)] ref object value);
+    }
+
+    public static class VideoDevices {
+        private static readonly Guid VideoInputDeviceCategory = new Guid("860BB310-5D01-11D0-BD3B-00A0C911CE86");
+        private static readonly Guid PropertyBagId = new Guid("55272A00-42CB-11CE-8135-00AA004BB851");
+
+        public static string[] Names() {
+            var names = new List<string>();
+            object deviceEnumeratorObject = null;
+            IEnumMoniker enumerator = null;
+            try {
+                deviceEnumeratorObject = new SystemDeviceEnum();
+                var deviceEnumerator = (ICreateDevEnum)deviceEnumeratorObject;
+                Guid category = VideoInputDeviceCategory;
+                int result = deviceEnumerator.CreateClassEnumerator(ref category, out enumerator, 0);
+                if (result != 0 || enumerator == null) return names.ToArray();
+
+                var monikers = new IMoniker[1];
+                IntPtr fetched = Marshal.AllocCoTaskMem(sizeof(int));
+                try {
+                    while (enumerator.Next(1, monikers, fetched) == 0) {
+                        IMoniker moniker = monikers[0];
+                        object bagObject = null;
+                        try {
+                            Guid bagId = PropertyBagId;
+                            moniker.BindToStorage(null, null, ref bagId, out bagObject);
+                            var bag = (IPropertyBag)bagObject;
+                            object value;
+                            if (bag.Read("FriendlyName", out value, IntPtr.Zero) == 0 && value != null) {
+                                names.Add(value.ToString());
+                            }
+                        }
+                        finally {
+                            if (bagObject != null && Marshal.IsComObject(bagObject)) Marshal.ReleaseComObject(bagObject);
+                            if (moniker != null && Marshal.IsComObject(moniker)) Marshal.ReleaseComObject(moniker);
+                        }
+                    }
+                }
+                finally {
+                    Marshal.FreeCoTaskMem(fetched);
+                }
+            }
+            finally {
+                if (enumerator != null && Marshal.IsComObject(enumerator)) Marshal.ReleaseComObject(enumerator);
+                if (deviceEnumeratorObject != null && Marshal.IsComObject(deviceEnumeratorObject)) Marshal.ReleaseComObject(deviceEnumeratorObject);
+            }
+            return names.ToArray();
+        }
+    }
+}
+'@
+    }
+
+    return @([VeriSwarm.DirectShow.VideoDevices]::Names())
+}
+
 $PythonPath = Resolve-PythonPath -RequestedPath $PythonPath
 $CameraConfigPath = (Resolve-Path -LiteralPath $CameraConfigPath -ErrorAction Stop).Path
 if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
@@ -90,6 +171,12 @@ foreach ($camera in $cameraValues) {
     $name = [string]$camera.name
     $source = [string]$camera.source
     $backend = ([string]$camera.backend).ToLowerInvariant()
+    $expectedDeviceName = if ($null -eq $camera.expected_device_name) {
+        $null
+    }
+    else {
+        [string]$camera.expected_device_name
+    }
     if ($name -notmatch '^[A-Za-z0-9._-]+$') {
         throw "Invalid camera name '$name'. Use letters, digits, dot, dash or underscore."
     }
@@ -101,6 +188,14 @@ foreach ($camera in $cameraValues) {
     }
     if ($backend -notin $allowedBackends) {
         throw "Camera $name uses unsupported backend '$backend'."
+    }
+    if ($null -ne $expectedDeviceName) {
+        if ([string]::IsNullOrWhiteSpace($expectedDeviceName)) {
+            throw "Camera $name has an empty expected_device_name."
+        }
+        if ($backend -ne "dshow" -or $source -notmatch '^\d+$') {
+            throw "Camera $name may use expected_device_name only with a numeric DirectShow source."
+        }
     }
     if ($names.ContainsKey($name)) {
         throw "Duplicate camera name: $name"
@@ -120,6 +215,44 @@ foreach ($camera in $cameraValues) {
         Name = $name
         Source = $source
         Backend = $backend
+        ExpectedDeviceName = $expectedDeviceName
+        ResolvedDeviceName = $null
+    }
+}
+
+$deviceBoundSpecs = @($cameraSpecs | Where-Object {
+    -not [string]::IsNullOrWhiteSpace($_.ExpectedDeviceName)
+})
+if ($deviceBoundSpecs.Count -gt 0) {
+    if ($env:OS -ne "Windows_NT") {
+        throw "expected_device_name requires Windows DirectShow enumeration."
+    }
+    $directShowNames = @(Get-DirectShowVideoDeviceNames)
+    if ($directShowNames.Count -eq 0) {
+        throw "No Windows DirectShow video devices were enumerated."
+    }
+
+    $claimedDeviceNames = @{}
+    foreach ($camera in $deviceBoundSpecs) {
+        $expectedName = [string]$camera.ExpectedDeviceName
+        $matches = @()
+        for ($index = 0; $index -lt $directShowNames.Count; $index++) {
+            if ($directShowNames[$index] -ceq $expectedName) {
+                $matches += $index
+            }
+        }
+        if ($matches.Count -eq 0) {
+            throw "Camera $($camera.Name) requires DirectShow device '$expectedName', but it is disconnected or unavailable. Enumerated devices: $($directShowNames -join ', ')"
+        }
+        if ($matches.Count -ne 1) {
+            throw "Camera $($camera.Name) expected one DirectShow device named '$expectedName', but found $($matches.Count)."
+        }
+        if ($claimedDeviceNames.ContainsKey($expectedName)) {
+            throw "DirectShow device '$expectedName' is assigned to more than one camera."
+        }
+        $claimedDeviceNames[$expectedName] = $true
+        $camera.Source = [string]$matches[0]
+        $camera.ResolvedDeviceName = $expectedName
     }
 }
 
@@ -183,7 +316,13 @@ if ($ValidateOnly) {
     Write-Host "Appearance assumption threshold: $(Convert-Invariant $appearanceThreshold)"
     Write-Host "YOLO confidence threshold: $(Convert-Invariant $confidence)"
     foreach ($camera in $cameraSpecs) {
-        Write-Host "  $($camera.Name): $($camera.Source) [$($camera.Backend)]"
+        $identity = if ($null -eq $camera.ResolvedDeviceName) {
+            ""
+        }
+        else {
+            " => $($camera.ResolvedDeviceName)"
+        }
+        Write-Host "  $($camera.Name): $($camera.Source) [$($camera.Backend)]$identity"
     }
     if ($FeatureOnly) {
         Write-Host "Mode: feature-only"

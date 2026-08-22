@@ -78,6 +78,19 @@ def test_camera_parser_accepts_two_to_five_distinct_sources():
     assert specs[1].source == "http://10.0.0.2/video"
 
 
+def test_windows_launcher_resolves_directshow_sources_by_expected_device_name():
+    launcher = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "tools"
+        / "launch_covis_multicam_demo.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "Get-DirectShowVideoDeviceNames" in launcher
+    assert "expected_device_name" in launcher
+    assert "$camera.Source = [string]$matches[0]" in launcher
+    assert "disconnected or unavailable" in launcher
+
+
 @pytest.mark.parametrize(
     "values, message",
     [
