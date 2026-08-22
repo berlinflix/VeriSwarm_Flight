@@ -4,7 +4,7 @@ Updated: 2026-08-22 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
-Latest work commit: `30736f3`
+Latest work commit: `78d5df0`
 
 ## Completed since the previous update
 
@@ -13,17 +13,20 @@ Latest work commit: `30736f3`
 - Verified the integration with 434 passing tests, 3 expected skips, a production
   dashboard build and a live visual dashboard check.
 - Reviewed Samik's adapter candidate `15d1af6` as a suitable development starting point.
+- Added a durable SQLite producer outbox with FIFO replay, bounded idempotent retry,
+  dead-letter retention and offline recovery for Samik and Pratik producer events.
 
 ## In progress now
 
-- Receiving producer events from perception and CoSys without blocking independent work.
-- Moving team coordination to branch-owned Git status commits.
+- Publishing the producer-outbox interface to Samik and Pratik for independent adoption.
 
 ## Outputs available
 
 - `codebase/docs/RESCUE_DATA_PLANE.md`
 - `codebase/examples/rescue_event_sample.jsonl`
 - `codebase/tools/rescue_event_collector.py`
+- `codebase/tools/rescue_event_sender.py`
+- `codebase/rescue/outbox.py`
 
 ## Blockers
 
@@ -39,5 +42,5 @@ Latest work commit: `30736f3`
 
 ## Next checkpoint
 
-- Review Samik's committed dataset/cloud-training status and Pratik's first valid mission
-  events when their branches publish them.
+- Accept the first collector-delivered inference event from Samik and the first mission
+  telemetry sequence from Pratik when their branches publish them.
