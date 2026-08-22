@@ -119,14 +119,33 @@ Suyash.
 
 ## Rules while running
 
-- **Do not double-click** the run button, and do not refresh mid-run.
+- **Do not double-click** the run button. After a proof is retained, the button changes to
+  `RESULT RETAINED · RESET TO RERUN` and stays disabled until you deliberately choose
+  **Reset view**.
+- A completed qualification is retained in the current browser tab across refreshes. Opening
+  a different tab starts a fresh local presentation view; it does not delete evidence.
 - The UI runs CLEAN first and **refuses to continue** if it does not reach two
   semantic ACKs. That is correct behaviour, not a bug — a clean case that passes
   with zero semantic acknowledgements has proven nothing.
-- You may re-run as many times as you like. Each run gets a fresh sequence and a
-  fresh create-once evidence file; nothing is overwritten.
+- Re-run only when you intentionally need a new qualification. Select **Reset view** first;
+  every new run gets a fresh sequence and create-once evidence file, so nothing is overwritten.
 - **Never edit, rename, delete or recolour an evidence file.** A failed run is
   evidence too.
+
+## How to read the reviewer strip
+
+After the model-hash proof completes, read the five values from left to right:
+
+1. `CLEAN BASELINE — 2/2 ACK`
+2. `MODEL-HASH ATTACK — 0/2 ACK`
+3. `PEER VERDICT — 2/2 DISPUTE`
+4. `SAFETY RESPONSE — HOLD + QUARANTINE`
+5. `RETAINED PROOF — VERIFIED · UNAPPROVED HASH`
+
+The clean and attack acknowledgement counts describe different phases. Zero attack ACKs is
+the expected success condition because both independent peers rejected the unapproved claim.
+Use `ops/ABHIJAN_REVIEWER_DEMO_SCRIPT.md` for the four-minute reviewer narration and the exact
+claims that are safe to make.
 
 ---
 

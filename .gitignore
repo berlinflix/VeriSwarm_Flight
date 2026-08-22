@@ -18,6 +18,10 @@ nodes/
 # Runtime artifacts
 results/live_events.jsonl
 results/*.jsonl.lock
+codebase/results/rescue_events*.jsonl
+codebase/results/rescue_events*.jsonl.lock
+codebase/results/abhijan_authorization_state.json
+deliverables/
 *.log
 
 # Captured frames — these grow fast. Keep them local.

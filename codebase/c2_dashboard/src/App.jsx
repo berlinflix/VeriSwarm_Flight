@@ -20,6 +20,7 @@ import {
 import flightDrone from "./assets/flight-drone.png";
 
 const liveFeedUrl = import.meta.env.VITE_DRONE_STREAM_URL;
+const QUALIFICATION_VIEW_KEY = "veriswarm.qualification.proof.v1";
 
 const scenarios = {
   honest: {
@@ -344,7 +345,14 @@ function qualificationScenario(proof, runningStage, error) {
 
 function useModelHashQualification() {
   const [backend, setBackend] = useState({ ready: false, loading: true, error: null, details: null });
-  const [proof, setProof] = useState(null);
+  const [proof, setProof] = useState(() => {
+    try {
+      const restored = JSON.parse(window.sessionStorage.getItem(QUALIFICATION_VIEW_KEY) ?? "null");
+      return restored?.clean?.evidence && restored?.attack?.evidence ? restored : null;
+    } catch {
+      return null;
+    }
+  });
   const [runningStage, setRunningStage] = useState(null);
   const [runError, setRunError] = useState(null);
 
@@ -364,6 +372,14 @@ function useModelHashQualification() {
     const timer = window.setInterval(refreshBackend, 5000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (proof) {
+      window.sessionStorage.setItem(QUALIFICATION_VIEW_KEY, JSON.stringify(proof));
+    } else {
+      window.sessionStorage.removeItem(QUALIFICATION_VIEW_KEY);
+    }
+  }, [proof]);
 
   const runCase = async (caseName) => {
     const response = await fetch("/api/qualification/run", {
@@ -759,16 +775,27 @@ function RescueMission({ rescue }) {
   const alerts = state?.alerts?.slice(0, 3) ?? [];
   const mappedHazards = state?.hazards?.filter((hazard) => hazard.status === "MAPPED_HAZARD").length ?? 0;
   const missionOnline = Boolean(state);
+  const eventCount = Number(state?.events_applied ?? 0);
+  const rescueDetail = state?.scenario_id
+    ?? (missionOnline
+      ? `CONNECTED · ${eventCount} VERIFIED EVENT${eventCount === 1 ? "" : "S"} · WAITING FOR MISSION`
+      : rescue.error ?? "RESCUE COLLECTOR OFFLINE");
+  const alertMessage = (alert) => {
+    if (alert.kind === "AUTHORIZATION" && alert.target_id && alert.message?.includes("model_hash_not_approved")) {
+      return `${String(alert.target_id).toUpperCase()} QUARANTINED — UNAPPROVED MODEL HASH`;
+    }
+    return String(alert.message ?? "Responder review required").replaceAll("_", " ");
+  };
   return (
     <section className={`rescue-mission ${missionOnline ? "online" : "offline"}`}>
       <div className="rescue-title">
         <span>OPERATION VARUNA</span>
         <b>{state?.mission_status ?? "AWAITING RESCUE EVENTS"}</b>
-        <small>{state?.scenario_id ?? rescue.error ?? "collector not configured"}</small>
+        <small>{rescueDetail}</small>
       </div>
       <div className="rescue-kpis">
         <div><span>COVERAGE</span><b>{state ? `${Number(state.coverage?.percent ?? 0).toFixed(1)}%` : "—"}</b></div>
-        <div><span>PEOPLE</span><b>{state?.people?.length ?? "—"}</b></div>
+        <div><span>PERSON CANDIDATES</span><b>{state?.people?.length ?? "—"}</b></div>
         <div><span>HAZARDS</span><b>{state ? mappedHazards : "—"}</b></div>
         <div><span>VEHICLES</span><b>{state?.vehicles?.length ?? "—"}</b></div>
       </div>
@@ -776,7 +803,7 @@ function RescueMission({ rescue }) {
         {alerts.length ? alerts.map((alert) => (
           <div key={alert.alert_id} className={`rescue-alert priority-${alert.priority.toLowerCase()}`}>
             <span>{alert.priority}</span>
-            <b>{alert.message}</b>
+            <b>{alertMessage(alert)}</b>
           </div>
         )) : (
           <div className="rescue-alert empty">
@@ -938,30 +965,30 @@ function AttackSystems({ qualification }) {
       </div>
       <div className="qualification-proof">
         <div>
-          <span>CLEAN GATE</span>
+          <span>CLEAN BASELINE</span>
           <b>{cleanEvidence?.actual?.outcome ?? "NOT RUN"}</b>
           <small>semantic ACKs {cleanEvidence?.actual?.semantic_acks ?? "—"}/2</small>
         </div>
         <div>
-          <span>MODEL HASH</span>
+          <span>MODEL-HASH ATTACK</span>
           <b>{attackEvidence?.actual?.outcome ?? "NOT RUN"}</b>
-          <small>disputes {attackEvidence?.actual?.disputes ?? "—"}/2</small>
+          <small>peer disputes {attackEvidence?.actual?.disputes ?? "—"}/2</small>
         </div>
         <div>
           <span>RELEASED COMMAND</span>
-          <b>{attackEvidence?.authorization?.allowed ? "EXECUTE" : attackEvidence ? "HOLD" : "—"}</b>
+          <b>{attackEvidence?.authorization?.allowed ? "EXECUTE" : attackEvidence ? "HOLD · NO MOTION" : "—"}</b>
           <small>{attackEvidence ? JSON.stringify(attackEvidence.authorization?.released ?? []) : "waiting for evidence"}</small>
         </div>
       </div>
       <div className="hash-comparison">
-        <div><span>APPROVED</span><b>{shortHash(dashboardProof?.approved_model_sha256, 20)}</b></div>
+        <div><span>ALLOWLIST MODEL HASH</span><b>{shortHash(dashboardProof?.approved_model_sha256, 20)}</b></div>
         <i aria-hidden="true" />
-        <div><span>OBSERVED ON ALPHA</span><b>{shortHash(dashboardProof?.observed_model_sha256, 20)}</b></div>
+        <div><span>CLAIMED HASH ON ALPHA</span><b>{shortHash(dashboardProof?.observed_model_sha256, 20)}</b></div>
       </div>
       <div className="attack-status">
         <span className={status.tone} aria-live="polite"><i /> {status.message}</span>
-        <button onClick={runProof} disabled={pending || !backend.ready}>
-          {pending ? "RUNNING…" : "RUN CLEAN + MODEL HASH"}
+        <button onClick={runProof} disabled={pending || !backend.ready || Boolean(dashboardProof)}>
+          {pending ? "RUNNING…" : dashboardProof ? "RESULT RETAINED · RESET TO RERUN" : "RUN CLEAN + MODEL HASH"}
         </button>
       </div>
       <div className="control-summary">
@@ -994,8 +1021,18 @@ function TerminalFeed({ scenario }) {
   );
 }
 
-function EvidenceStrip({ scenario }) {
-  const items = [
+function EvidenceStrip({ scenario, qualification }) {
+  const cleanEvidence = qualification?.proof?.clean?.evidence;
+  const attackEvidence = qualification?.proof?.attack?.evidence;
+  const dashboardProof = attackEvidence?.dashboard_proof;
+  const proofActive = Boolean(dashboardProof);
+  const items = proofActive ? [
+    ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
+    ["Attack ACKs", `${attackEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, Binary],
+    ["Peer verdict", `${attackEvidence?.actual?.disputes ?? 0}/2 DISPUTE`, ShieldX],
+    ["Safety response", attackEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD + QUARANTINE", ShieldCheck],
+    ["Retained proof", dashboardProof.proof_valid ? "VERIFIED · UNAPPROVED HASH" : "VERIFICATION FAILED", Fingerprint],
+  ] : [
     ["Provenance", scenario.provenance, Fingerprint],
     ["Semantic ACK", String(scenario.semanticAcks), Binary],
     ["Supervisor", scenario.supervisor, ShieldCheck],
@@ -1079,7 +1116,7 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
             <p>One presentation-ready view for retained evidence, live telemetry, attack controls, and cryptographic status.</p>
           </div>
 
-          <EvidenceStrip scenario={scenario} />
+          <EvidenceStrip scenario={scenario} qualification={qualification} />
 
           <RescueMission rescue={rescue} />
 
