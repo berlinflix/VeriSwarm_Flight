@@ -197,7 +197,7 @@ def _join_if_future(value: Any) -> Any:
 def _fail_closed_hover_or_disarm_landed(
     client: object,
     nodes: Sequence[str],
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], frozenset[str]]:
     """Leave airborne vehicles hovering; disarm only confirmed landed vehicles.
 
     A movement-v2 exception can occur after takeoff.  Unconditionally disarming in
@@ -208,6 +208,7 @@ def _fail_closed_hover_or_disarm_landed(
     """
 
     failures: list[str] = []
+    airborne_holds: set[str] = set()
     for node in tuple(sorted(nodes)):
         try:
             state = client.getMultirotorState(vehicle_name=node)
@@ -216,9 +217,10 @@ def _fail_closed_hover_or_disarm_landed(
                     failures.append(f"{node}:disarm_failed")
                 continue
             _join_if_future(client.hoverAsync(vehicle_name=node))
+            airborne_holds.add(node)
         except Exception as error:
             failures.append(f"{node}:{type(error).__name__}:{error}")
-    return tuple(failures)
+    return tuple(failures), frozenset(airborne_holds)
 
 
 class LiveCoSimCommandAdapter:
@@ -399,7 +401,8 @@ def _capture_depth(
     client: object,
     node: str,
     extension: Mapping[str, Any],
-    decided_at_ms: int,
+    *,
+    clock_ms: Callable[[], int] = _now_ms,
 ) -> Any:
     response = client.simGetImages(
         [
@@ -414,6 +417,11 @@ def _capture_depth(
     )
     if len(response) != 1:
         raise MovementV2Error(f"front_depth_response_count_invalid:{node}")
+    # The decision boundary begins after CoSim has returned the image.  Taking this
+    # timestamp before simGetImages can make a freshly captured AirSim frame appear to
+    # come from the future, which correctly forces the frozen supervisor to HOLD and
+    # prevents the A-to-B route from ever starting.
+    decided_at_ms = clock_ms()
     return depth_sample_from_response(
         response[0],
         decided_at_ms=decided_at_ms,
@@ -873,8 +881,8 @@ def main() -> None:
             futures = []
             terminal_nodes: list[tuple[str, str]] = []
             for node in tuple(sorted(active)):
-                decided_at_ms = _now_ms()
-                depth = _capture_depth(client, node, extension, decided_at_ms)
+                depth = _capture_depth(client, node, extension)
+                decided_at_ms = depth.decided_at_ms
                 local = _local_position(client, node)
                 progress, cross_track = _route_metrics(local, dx, dy, distance)
                 completed_progress[node] = progress
@@ -1035,8 +1043,11 @@ def main() -> None:
                 )
         raise
     finally:
+        airborne_hold_nodes: frozenset[str] = frozenset()
         if failure is not None:
-            cleanup_failures = _fail_closed_hover_or_disarm_landed(client, armed)
+            cleanup_failures, airborne_hold_nodes = (
+                _fail_closed_hover_or_disarm_landed(client, armed)
+            )
             if cleanup_failures:
                 failure += "; fail_closed_cleanup=" + "|".join(cleanup_failures)
         else:
@@ -1046,6 +1057,12 @@ def main() -> None:
                 except Exception:
                     pass
         for node in tuple(sorted(api_enabled)):
+            # Releasing API control after an aborted airborne run discards the explicit
+            # fail-closed hover and can let the simulated vehicle descend into the flood.
+            # Keep control only for confirmed airborne HOLD nodes; stopping/resetting
+            # Unreal Play mode remains the deliberate operator recovery boundary.
+            if node in airborne_hold_nodes:
+                continue
             try:
                 client.enableApiControl(False, vehicle_name=node)
             except Exception:
@@ -1069,6 +1086,7 @@ def main() -> None:
             ),
             "states": states,
             "collided": sorted(collided),
+            "airborne_hold_nodes": sorted(airborne_hold_nodes),
             "outbox_directory": str(args.outbox_directory),
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)

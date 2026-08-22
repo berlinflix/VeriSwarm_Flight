@@ -19,6 +19,7 @@ from sim.cosys.factorycity.movement_v2 import (
 from sim.cosys.factorycity.tools.run_factorycity_movement_v2 import (
     AuthorizationFileProvider,
     LiveCoSimCommandAdapter,
+    _capture_depth,
     _emit_vehicle_state,
     _fail_closed_hover_or_disarm_landed,
     _gate_separation,
@@ -240,13 +241,50 @@ def test_failed_run_hovers_flying_vehicle_and_disarms_only_landed_vehicle() -> N
             calls.append(("disarm", vehicle_name))
             return True
 
-    failures = _fail_closed_hover_or_disarm_landed(
+    failures, airborne_holds = _fail_closed_hover_or_disarm_landed(
         CleanupClient(),
         ("alpha", "bravo"),
     )
 
     assert failures == ()
+    assert airborne_holds == frozenset({"alpha"})
     assert calls == [("hover", "alpha"), ("disarm", "bravo")]
+
+
+def test_depth_decision_timestamp_is_taken_after_cosim_capture() -> None:
+    calls: list[str] = []
+
+    class Client:
+        def simGetImages(self, requests, *, vehicle_name):
+            assert len(requests) == 1
+            assert vehicle_name == "alpha"
+            calls.append("capture")
+            return [
+                SimpleNamespace(
+                    width=3,
+                    height=1,
+                    image_data_float=[20.0, 20.0, 20.0],
+                    time_stamp=1_200_000_000,
+                )
+            ]
+
+    def decision_clock() -> int:
+        assert calls == ["capture"]
+        calls.append("decision")
+        return 1_234
+
+    _, extension = _loaded()
+    depth = _capture_depth(
+        Client(),
+        "alpha",
+        extension,
+        clock_ms=decision_clock,
+    )
+
+    assert calls == ["capture", "decision"]
+    assert depth.captured_at_ms == 1_200
+    assert depth.decided_at_ms == 1_234
+    assert depth.age_ms == 34
 
 
 def test_vehicle_state_enqueue_budget_starts_after_position_observation() -> None:
