@@ -21,6 +21,7 @@ results/*.jsonl.lock
 codebase/results/rescue_events*.jsonl
 codebase/results/rescue_events*.jsonl.lock
 codebase/results/abhijan_authorization_state.json
+codebase/results/*.sqlite3*
 deliverables/
 *.log
 

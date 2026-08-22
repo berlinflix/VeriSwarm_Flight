@@ -33,6 +33,23 @@ frames as a browser-readable stream because the browser cannot consume the RPC
 camera API directly. Until configured, the viewport stays in an explicit
 `AWAITING FEED` state and does not show fabricated drone footage.
 
+## Live Samik Multi-Camera Evidence
+
+Samik's annotated 2--5 camera grid is separate from Pratik's simulation viewport.
+Start `tools.covis_multicam` with its default read-only bridge (`127.0.0.1:8780`),
+then configure the Vite server—not the browser—with:
+
+```bash
+VERISWARM_MULTICAM_URL=http://127.0.0.1:8780 npm run dev -- --port 5175
+```
+
+For a separate camera host, set the same 32+ character
+`VERISWARM_MULTICAM_TOKEN` on the camera process and Vite server. Never use a
+`VITE_*` variable for that token. The dashboard proxies `/status` and the MJPEG
+stream, keeps the panel visible while offline, rejects malformed/stale status and
+does not disturb Pratik's collector path. See
+`../docs/MULTICAM_DASHBOARD_INTEGRATION.md` for the combined run.
+
 ## Build Check
 
 ```bash

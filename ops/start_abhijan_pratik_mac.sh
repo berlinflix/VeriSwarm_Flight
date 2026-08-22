@@ -8,6 +8,7 @@ PYTHON="${VERISWARM_PYTHON:-/Volumes/HyperDrive/Development/VERISWARM_SIH/.venv/
 MISSION_ID=OP-VARUNA-001
 RESCUE_PORT=8770
 PRATIK_INGRESS_PORT=8771
+SAMIK_INGRESS_PORT=8772
 DASHBOARD_PORT=5175
 RESCUE_LOG="${VERISWARM_RESCUE_LOG:-$REPO/codebase/results/rescue_events.integration.jsonl}"
 MOVEMENT_AUTH_TARGET_URL="${VERISWARM_MOVEMENT_AUTH_TARGET_URL:-}"
@@ -15,9 +16,12 @@ MOVEMENT_AUTH_URL="${VERISWARM_MOVEMENT_AUTH_URL:-http://127.0.0.1:8773}"
 MOVEMENT_AUTH_POLICY="${VERISWARM_MOVEMENT_AUTH_POLICY:-$REPO/codebase/results/pratik_movement_authorization_policy.json}"
 MOVEMENT_AUTH_STATE="${VERISWARM_MOVEMENT_AUTH_STATE:-$REPO/codebase/results/pratik_movement_authorization_publisher_state.json}"
 PRATIK_IP="${VERISWARM_PRATIK_IP:-}"
+SAMIK_IP="${VERISWARM_SAMIK_IP:-}"
+MULTICAM_URL="${VERISWARM_MULTICAM_URL:-}"
 MAC_ETHERNET_IP="${VERISWARM_MAC_ETHERNET_IP:-}"
 COLLECTOR_PID=""
 INGRESS_PID=""
+SAMIK_INGRESS_PID=""
 AUTHORIZATION_PID=""
 
 RED=$'\e[31m'; GRN=$'\e[32m'; CYN=$'\e[36m'; OFF=$'\e[0m'
@@ -32,6 +36,10 @@ cleanup() {
   if [ -n "$INGRESS_PID" ]; then
     kill -TERM "$INGRESS_PID" 2>/dev/null || true
     wait "$INGRESS_PID" 2>/dev/null || true
+  fi
+  if [ -n "$SAMIK_INGRESS_PID" ]; then
+    kill -TERM "$SAMIK_INGRESS_PID" 2>/dev/null || true
+    wait "$SAMIK_INGRESS_PID" 2>/dev/null || true
   fi
   if [ -n "$COLLECTOR_PID" ]; then
     kill -TERM "$COLLECTOR_PID" 2>/dev/null || true
@@ -71,6 +79,9 @@ fi
 ok "direct route $PRATIK_IP -> $MAC_ETHERNET_IP"
 
 PORTS=("$RESCUE_PORT" "$PRATIK_INGRESS_PORT" "$DASHBOARD_PORT")
+if [ -n "$SAMIK_IP" ]; then
+  PORTS+=("$SAMIK_INGRESS_PORT")
+fi
 if [ -n "$MOVEMENT_AUTH_TARGET_URL" ]; then
   PORTS+=(8773)
 fi
@@ -108,6 +119,21 @@ curl -fsS "http://$MAC_ETHERNET_IP:$PRATIK_INGRESS_PORT/health" >/dev/null \
   && ok "ingress $MAC_ETHERNET_IP:$PRATIK_INGRESS_PORT accepts only $PRATIK_IP" \
   || die "Ethernet ingress failed to start"
 
+if [ -n "$SAMIK_IP" ]; then
+  echo "=== 4b. Source-locked Samik perception ingress ==="
+  "$PYTHON" -m tools.rescue_ethernet_ingress serve \
+    --bind "$MAC_ETHERNET_IP" --port "$SAMIK_INGRESS_PORT" \
+    --peer-ip "$SAMIK_IP" --collector-url "http://127.0.0.1:$RESCUE_PORT" &
+  SAMIK_INGRESS_PID=$!
+  for _ in 1 2 3 4 5; do
+    curl -fsS "http://$MAC_ETHERNET_IP:$SAMIK_INGRESS_PORT/health" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  curl -fsS "http://$MAC_ETHERNET_IP:$SAMIK_INGRESS_PORT/health" >/dev/null \
+    && ok "perception ingress $MAC_ETHERNET_IP:$SAMIK_INGRESS_PORT accepts only $SAMIK_IP" \
+    || die "Samik perception ingress failed to start"
+fi
+
 if [ -n "$MOVEMENT_AUTH_TARGET_URL" ]; then
   echo "=== 5. Reverse movement authorization link ==="
   [ -f "$MOVEMENT_AUTH_POLICY" ] || die "movement policy missing: $MOVEMENT_AUTH_POLICY"
@@ -134,10 +160,23 @@ fi
 echo "=== 6. Dashboard ==="
 export VERISWARM_RESCUE_URL="http://127.0.0.1:$RESCUE_PORT"
 export VITE_RESCUE_DATA_MODE="${VITE_RESCUE_DATA_MODE:-LIVE_PRATIK}"
+if [ -n "$MULTICAM_URL" ]; then
+  export VERISWARM_MULTICAM_URL="$MULTICAM_URL"
+else
+  unset VERISWARM_MULTICAM_URL
+fi
 unset VERISWARM_RESCUE_TOKEN VERISWARM_QUALIFIER_URL VERISWARM_QUALIFIER_TOKEN
 echo
 echo "${GRN}Ready.${OFF} Open ${CYN}http://127.0.0.1:$DASHBOARD_PORT${OFF}"
 echo "Pratik sender endpoint: ${CYN}http://$MAC_ETHERNET_IP:$PRATIK_INGRESS_PORT${OFF}"
+if [ -n "$SAMIK_IP" ]; then
+  echo "Samik perception endpoint: ${CYN}http://$MAC_ETHERNET_IP:$SAMIK_INGRESS_PORT${OFF}"
+fi
+if [ -n "$MULTICAM_URL" ]; then
+  echo "Samik annotated camera bridge: ${CYN}$MULTICAM_URL${OFF}"
+else
+  echo "Samik annotated camera bridge: ${CYN}not configured; panel remains OFFLINE${OFF}"
+fi
 if [ -n "$MOVEMENT_AUTH_TARGET_URL" ]; then
   echo "Movement authorization: ${CYN}$MOVEMENT_AUTH_URL -> $MOVEMENT_AUTH_TARGET_URL${OFF}"
 else

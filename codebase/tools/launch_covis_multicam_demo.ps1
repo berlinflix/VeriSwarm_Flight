@@ -158,6 +158,7 @@ catch {
 if ($config.schema -ne $expectedSchema) {
     throw "Camera configuration schema must be exactly $expectedSchema."
 }
+$allowDegradedStartup = $config.allow_degraded_startup -eq $true
 
 $cameraValues = @($config.cameras)
 if ($cameraValues.Count -lt 2 -or $cameraValues.Count -gt 5) {
@@ -217,6 +218,8 @@ foreach ($camera in $cameraValues) {
         Backend = $backend
         ExpectedDeviceName = $expectedDeviceName
         ResolvedDeviceName = $null
+        Node = if ($null -eq $camera.node) { $null } else { [string]$camera.node }
+        CalibrationId = if ($null -eq $camera.calibration_id) { $null } else { [string]$camera.calibration_id }
     }
 }
 
@@ -242,7 +245,12 @@ if ($deviceBoundSpecs.Count -gt 0) {
             }
         }
         if ($matches.Count -eq 0) {
-            throw "Camera $($camera.Name) requires DirectShow device '$expectedName', but it is disconnected or unavailable. Enumerated devices: $($directShowNames -join ', ')"
+            if (-not $allowDegradedStartup) {
+                throw "Camera $($camera.Name) requires DirectShow device '$expectedName', but it is disconnected or unavailable. Enumerated devices: $($directShowNames -join ', ')"
+            }
+            $camera.Source = "__offline_camera_$($camera.Name)__"
+            Write-Warning "Camera $($camera.Name) is disconnected; retaining an explicit offline tile."
+            continue
         }
         if ($matches.Count -ne 1) {
             throw "Camera $($camera.Name) expected one DirectShow device named '$expectedName', but found $($matches.Count)."
@@ -288,6 +296,31 @@ if ($videoCodec.Length -ne 4 -or $videoCodec -notmatch '^[\x20-\x7E]{4}$') {
 $runIdPrefix = if ($null -eq $config.run_id_prefix) { "DEMO-MULTICAM-P2" } else { [string]$config.run_id_prefix }
 if ($runIdPrefix -notmatch '^[A-Za-z0-9._-]+$') {
     throw "run_id_prefix contains unsupported characters."
+}
+$dashboardBind = if ($null -eq $config.dashboard_bind) { "127.0.0.1" } else { [string]$config.dashboard_bind }
+$dashboardPort = [int](Get-NumberSetting $config "dashboard_port" 8780 1)
+if ($dashboardPort -gt 65535) {
+    throw "dashboard_port must not exceed 65535."
+}
+if ($dashboardBind -notin @("127.0.0.1", "localhost", "::1") -and [string]::IsNullOrWhiteSpace($env:VERISWARM_MULTICAM_TOKEN)) {
+    throw "A non-loopback dashboard_bind requires VERISWARM_MULTICAM_TOKEN."
+}
+$rescueEnabled = $null -ne $config.rescue -and $config.rescue.enabled -eq $true
+if ($rescueEnabled) {
+    foreach ($property in @("mission_id", "endpoint", "outbox_path", "model_id")) {
+        if ([string]::IsNullOrWhiteSpace([string]$config.rescue.$property)) {
+            throw "rescue.$property is required when rescue integration is enabled."
+        }
+    }
+    $rescuePublishHz = Get-NumberSetting $config.rescue "publish_hz" 2 0.01
+    if ($rescuePublishHz -gt 3) {
+        throw "rescue.publish_hz must not exceed 3."
+    }
+    foreach ($camera in $cameraSpecs) {
+        if ([string]::IsNullOrWhiteSpace($camera.Node)) {
+            throw "Camera $($camera.Name) requires node when rescue integration is enabled."
+        }
+    }
 }
 
 $actualModelSha256 = $null
@@ -360,7 +393,9 @@ $runnerArguments += @(
     "--release-timeout", (Convert-Invariant $releaseTimeout),
     "--display-width", $displayWidth.ToString(),
     "--display-height", $displayHeight.ToString(),
-    "--run-id", $runId
+    "--run-id", $runId,
+    "--dashboard-bind", $dashboardBind,
+    "--dashboard-port", $dashboardPort.ToString()
 )
 if ($null -ne $captureFourcc) {
     $runnerArguments += @("--capture-fourcc", $captureFourcc)
@@ -379,11 +414,28 @@ if (-not $FeatureOnly) {
         "--confidence", (Convert-Invariant $confidence)
     )
 }
+if ($rescueEnabled) {
+    $runnerArguments += @(
+        "--rescue-mission-id", [string]$config.rescue.mission_id,
+        "--rescue-endpoint", [string]$config.rescue.endpoint,
+        "--rescue-outbox", [string]$config.rescue.outbox_path,
+        "--rescue-model-id", [string]$config.rescue.model_id,
+        "--rescue-publish-hz", (Convert-Invariant $rescuePublishHz)
+    )
+    foreach ($camera in $cameraSpecs) {
+        $runnerArguments += @("--camera-node", $camera.Name, $camera.Node)
+        if (-not [string]::IsNullOrWhiteSpace($camera.CalibrationId)) {
+            $runnerArguments += @("--camera-calibration", $camera.Name, $camera.CalibrationId)
+        }
+    }
+}
 
 Write-Host "Starting VeriSwarm multi-camera dashboard" -ForegroundColor Cyan
 Write-Host "Run ID: $runId"
 Write-Host "Cameras: $($cameraSpecs.Count); pairs: $(($cameraSpecs.Count * ($cameraSpecs.Count - 1)) / 2)"
 Write-Host "Controls: s = save dashboard, q = quit and release every source"
+Write-Host "Browser bridge: http://$dashboardBind`:$dashboardPort/status and /stream.mjpg"
+Write-Host "Rescue observations: $(if ($rescueEnabled) { 'enabled through dedicated durable outbox' } else { 'disabled' })"
 Write-Host "This is an experimental demonstration, not accepted qualification evidence." -ForegroundColor Yellow
 
 Push-Location $codebase

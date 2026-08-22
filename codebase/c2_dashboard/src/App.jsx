@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useMotionValue, useScroll, useSpring, useTransform } from "framer-motion";
 import {
   Activity,
@@ -7,6 +8,7 @@ import {
   Cpu,
   Download,
   Fingerprint,
+  Maximize2,
   RadioTower,
   RotateCcw,
   Server,
@@ -25,6 +27,7 @@ import {
   normalizeDataMode,
 } from "./missionPresentation.js";
 import { isApprovedCleanEvidence } from "./modelHashQualification.js";
+import { formatMultiCameraAge, presentMultiCameraStatus } from "./multiCameraPresentation.js";
 
 const pratikTopViewUrl = import.meta.env.VITE_PRATIK_TOP_VIEW_URL;
 const rescueDataMode = normalizeDataMode(import.meta.env.VITE_RESCUE_DATA_MODE);
@@ -32,6 +35,10 @@ const configuredStaleAfterMs = Number(import.meta.env.VITE_RESCUE_STALE_AFTER_MS
 const rescueStaleAfterMs = Number.isFinite(configuredStaleAfterMs) && configuredStaleAfterMs > 0
   ? configuredStaleAfterMs
   : 8_000;
+const configuredMultiCameraStaleAfterMs = Number(import.meta.env.VITE_MULTICAM_STALE_AFTER_MS);
+const multiCameraStaleAfterMs = Number.isFinite(configuredMultiCameraStaleAfterMs) && configuredMultiCameraStaleAfterMs > 0
+  ? configuredMultiCameraStaleAfterMs
+  : 4_000;
 const QUALIFICATION_VIEW_KEY = "veriswarm.qualification.proof.v1";
 
 const scenarios = {
@@ -992,6 +999,50 @@ function useRescueMission() {
   return { state, error, movementConfig, configError };
 }
 
+function useMultiCameraEvidence() {
+  const [rawStatus, setRawStatus] = useState(null);
+  const [error, setError] = useState(null);
+  const [generation, setGeneration] = useState(0);
+  const connectedRef = useRef(false);
+  const nowMs = useClock(500);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch("/api/multicam/status", { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || !payload.status) {
+          throw new Error(payload.error ?? "multicamera_status_unavailable");
+        }
+        if (active) {
+          if (!connectedRef.current) setGeneration((value) => value + 1);
+          connectedRef.current = true;
+          setRawStatus(payload.status);
+          setError(null);
+        }
+      } catch (requestError) {
+        if (active) {
+          connectedRef.current = false;
+          setError(requestError.message);
+        }
+      }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 1_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const presentation = useMemo(
+    () => presentMultiCameraStatus(rawStatus ?? { error }, nowMs, multiCameraStaleAfterMs),
+    [rawStatus, error, nowMs],
+  );
+  return { ...presentation, error, generation };
+}
+
 function useMovementAuthorization() {
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
@@ -1136,6 +1187,130 @@ function RescueMission({ rescue }) {
         )}
       </div>
     </section>
+  );
+}
+
+function MultiCameraEvidencePanel({ multiCamera }) {
+  const [expanded, setExpanded] = useState(false);
+  const [streamFailed, setStreamFailed] = useState(false);
+  const expandedScrollY = useRef(0);
+  const streamUrl = `/api/multicam/stream.mjpg?generation=${multiCamera.generation}`;
+  const streamVisible = multiCamera.streamVisible && !streamFailed;
+  const visibleState = streamFailed && multiCamera.streamVisible ? "DEGRADED" : multiCamera.feedState;
+
+  useEffect(() => {
+    setStreamFailed(false);
+  }, [multiCamera.generation]);
+
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setExpanded(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+      window.requestAnimationFrame(() => window.scrollTo({ top: expandedScrollY.current, behavior: "instant" }));
+    };
+  }, [expanded]);
+
+  const openExpanded = () => {
+    expandedScrollY.current = window.scrollY;
+    setExpanded(true);
+  };
+
+  const composite = (expandedView = false) => (
+    <div className={`multicam-composite ${expandedView ? "expanded" : ""}`}>
+      {streamVisible ? (
+        <img
+          src={streamUrl}
+          alt="Live annotated multi-camera candidate and pairwise overlap evidence"
+          onError={() => setStreamFailed(true)}
+        />
+      ) : (
+        <div className="multicam-offline" role="status">
+          <b>{multiCamera.feedState === "STALE" ? "MULTI-CAMERA FEED STALE" : "MULTI-CAMERA FEED OFFLINE"}</b>
+          <span>Connected cameras: {multiCamera.feedState === "STALE" ? `${multiCamera.connectedCameras}/${multiCamera.expectedCameras}` : `0/${multiCamera.expectedCameras}`}</span>
+          <span>Intersections: unavailable</span>
+          <span>Reason: {streamFailed ? "annotated stream unavailable" : multiCamera.reason.replaceAll("_", " ")}</span>
+        </div>
+      )}
+      <div className="multicam-safety-label">2-D EVIDENCE · PERSON CANDIDATES REQUIRE RESPONDER CONFIRMATION</div>
+    </div>
+  );
+
+  return (
+    <>
+      <section className={`multicam-panel state-${visibleState.toLowerCase()}`}>
+        <div className="multicam-heading">
+          <div>
+            <span className="section-kicker">SAMIK PERCEPTION · READ-ONLY CAMERA EVIDENCE</span>
+            <div className="panel-title">Multi-Camera Evidence</div>
+          </div>
+          <div className="multicam-heading-actions">
+            <span className={`multicam-feed-state state-${visibleState.toLowerCase()}`}><i /> FEED: {visibleState}</span>
+            <button type="button" onClick={openExpanded}>
+              <Maximize2 size={13} /> EXPAND MULTI-CAMERA VIEW
+            </button>
+          </div>
+        </div>
+        <div className="multicam-layout">
+          {composite()}
+          <aside className="multicam-sidebar" aria-label="Multi-camera evidence status">
+            <div className="multicam-stat primary"><span>CAMERAS</span><b>{multiCamera.connectedCameras}/{multiCamera.expectedCameras}</b></div>
+            <div className="multicam-stat"><span>VALID PAIRS</span><b>{multiCamera.validPairs}/{multiCamera.totalPairs}</b></div>
+            <div className="multicam-stat"><span>PERSON CANDIDATES</span><b>{multiCamera.personCandidates}</b></div>
+            <div className="multicam-stat"><span>DISPUTES</span><b>{multiCamera.disputes}</b></div>
+            <div className="multicam-stat"><span>ABSTAIN / REVIEW</span><b>{multiCamera.abstained} / {multiCamera.reviews}</b></div>
+            <div className="multicam-stat"><span>LAST UPDATE</span><b>{formatMultiCameraAge(multiCamera.ageMs)}</b></div>
+            <div className="multicam-camera-list">
+              {multiCamera.cameras.length ? multiCamera.cameras.map((camera) => (
+                <div key={camera.name} className={`camera-${camera.status.toLowerCase()}`}>
+                  <span><i /> {camera.name}</span><b>{camera.status} · {camera.detections} BOXES</b>
+                </div>
+              )) : (
+                <div className="camera-offline"><span><i /> SAMIK PRODUCER</span><b>WAITING</b></div>
+              )}
+            </div>
+            <div className="multicam-model">
+              <span>MODEL</span>
+              <b>{multiCamera.modelId ?? "UNAVAILABLE"}</b>
+              <small>{multiCamera.modelSha256 ? shortHash(multiCamera.modelSha256, 16) : "hash unavailable"}</small>
+            </div>
+          </aside>
+        </div>
+      </section>
+      {createPortal(
+        <AnimatePresence>
+          {expanded && (
+          <motion.div
+            className="multicam-modal-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Expanded multi-camera evidence"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setExpanded(false);
+            }}
+          >
+            <motion.div className="multicam-modal" initial={{ scale: 0.96, y: 14 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.97, y: 10 }}>
+              <div className="multicam-modal-heading">
+                <div><span>SAMIK LIVE COMPOSITE</span><b>{visibleState} · {multiCamera.connectedCameras}/{multiCamera.expectedCameras} CAMERAS</b></div>
+                <button type="button" onClick={() => setExpanded(false)} aria-label="Close expanded multi-camera view"><X size={18} /></button>
+              </div>
+              {composite(true)}
+            </motion.div>
+          </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -1595,7 +1770,7 @@ function EvidenceStrip({ scenario, qualification }) {
   );
 }
 
-function ScrollAnalyticsScene({ scenario, qualification, rescue, movementAuthorization }) {
+function ScrollAnalyticsScene({ scenario, qualification, rescue, movementAuthorization, multiCamera }) {
   const storyRef = useRef(null);
   const { scrollYProgress } = useScroll({
     target: storyRef,
@@ -1664,6 +1839,8 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue, movementAuthori
 
           <RescueMission rescue={rescue} />
 
+          <MultiCameraEvidencePanel multiCamera={multiCamera} />
+
           <CellMovementPanel rescue={rescue} movementAuthorization={movementAuthorization} />
 
           <div className="lower-zone">
@@ -1690,6 +1867,7 @@ export default function App() {
   const qualification = useModelHashQualification();
   const rescue = useRescueMission();
   const movementAuthorization = useMovementAuthorization();
+  const multiCamera = useMultiCameraEvidence();
   const scenario = useMemo(
     () => qualificationScenario(qualification.proof, qualification.runningStage, qualification.runError),
     [qualification.proof, qualification.runningStage, qualification.runError],
@@ -1733,6 +1911,7 @@ export default function App() {
         qualification={qualification}
         rescue={rescue}
         movementAuthorization={movementAuthorization}
+        multiCamera={multiCamera}
       />
     </main>
   );

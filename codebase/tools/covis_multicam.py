@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -38,6 +39,12 @@ from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+from tools.covis_multicam_bridge import MultiCameraBridgeError, MultiCameraDashboardServer
+from tools.covis_multicam_rescue_adapter import (
+    MultiCameraAdapterError,
+    MultiCameraObservationAdapter,
+)
 
 from tools.covis_live import (
     CAPTURE_BACKENDS,
@@ -168,6 +175,33 @@ def wait_new_frames(
     raise LiveDemoError(
         "timed out waiting for fresh frames from: " + ", ".join(missing)
     )
+
+
+def wait_available_frames(
+    workers: Mapping[str, CaptureWorker],
+    after: Mapping[str, int],
+    timeout: float,
+) -> dict[str, FramePacket]:
+    """Return fresh frames from every currently healthy source.
+
+    A failed camera is excluded rather than terminating the remaining visualizer.
+    This is used only by the multi-camera presentation path; pair assessment still
+    requires two measured frames and never invents an unavailable view.
+    """
+    deadline = time.monotonic() + timeout
+    newest: dict[str, FramePacket] = {}
+    while time.monotonic() < deadline:
+        healthy = [name for name, worker in workers.items() if not worker.error]
+        newest = {
+            name: packet
+            for name in healthy
+            if (packet := workers[name].latest()) is not None
+            and packet.sequence > after.get(name, 0)
+        }
+        if newest and len(newest) == len(healthy):
+            return newest
+        time.sleep(0.005)
+    return newest
 
 
 def observe_once_per_camera(
@@ -710,25 +744,38 @@ def render_dashboard(
     observation_map = observations or {}
     for index, spec in enumerate(specs):
         x = gap + index * (source_width + gap)
-        tile = _source_tile(
-            spec,
-            packets[spec.name],
-            observation_map.get(spec.name),
-            source_width,
-            source_height,
-            cv2_module,
-        )
+        if spec.name in packets:
+            tile = _source_tile(
+                spec,
+                packets[spec.name],
+                observation_map.get(spec.name),
+                source_width,
+                source_height,
+                cv2_module,
+            )
+        else:
+            tile = np.zeros((source_height, source_width, 3), dtype=np.uint8)
+            _put_lines(
+                tile,
+                (spec.name, "CAMERA OFFLINE", "No measured frame available"),
+                (12, 28),
+                (80, 80, 255),
+                cv2_module,
+                scale=0.44,
+                thickness=1,
+                spacing=24,
+            )
         canvas[title_height : title_height + source_height, x : x + source_width] = tile
 
     pair_count = len(pairs)
     columns = {1: 1, 3: 2, 6: 3, 10: 4}.get(
         pair_count, max(1, math.ceil(math.sqrt(pair_count)))
     )
-    rows = math.ceil(pair_count / columns)
+    rows = math.ceil(pair_count / columns) if pair_count else 0
     grid_top = title_height + source_height + gap
     grid_height = height - grid_top - gap
     cell_width = (width - gap * (columns + 1)) // columns
-    cell_height = (grid_height - gap * (rows + 1)) // rows
+    cell_height = (grid_height - gap * (rows + 1)) // rows if rows else grid_height
     for index, pair in enumerate(pairs):
         row, column = divmod(index, columns)
         x = gap + column * (cell_width + gap)
@@ -742,6 +789,20 @@ def render_dashboard(
             cv2_module,
         )
         canvas[y : y + cell_height, x : x + cell_width] = tile
+    if not pairs:
+        _put_lines(
+            canvas,
+            (
+                "PAIRWISE INTERSECTIONS UNAVAILABLE",
+                "At least two live measured camera frames are required",
+            ),
+            (24, grid_top + 54),
+            (0, 180, 255),
+            cv2_module,
+            scale=0.72,
+            thickness=2,
+            spacing=38,
+        )
 
     valid = sum(pair.overlap_available for pair in pairs)
     rejected_appearance_only = sum(
@@ -793,15 +854,17 @@ def event_record(
     observations: Mapping[str, DetectorObservation | Exception] | None,
     pairs: Sequence[PairResult],
     model_sha256: str | None,
+    run_id: str | None = None,
+    model_id: str | None = None,
 ) -> dict[str, Any]:
     observation_map = observations or {}
     cameras: dict[str, Any] = {}
     for spec in specs:
-        packet = packets[spec.name]
+        packet = packets.get(spec.name)
         observation = observation_map.get(spec.name)
         cameras[spec.name] = {
-            "frame_sequence": packet.sequence,
-            "received_wall_ns": packet.received_wall_ns,
+            "frame_sequence": None if packet is None else packet.sequence,
+            "received_wall_ns": None if packet is None else packet.received_wall_ns,
             "claim": (
                 asdict(observation.claim)
                 if isinstance(observation, DetectorObservation)
@@ -812,16 +875,23 @@ def event_record(
                 if isinstance(observation, DetectorObservation)
                 else []
             ),
+            "class_names": (
+                [list(item) for item in observation.class_names]
+                if isinstance(observation, DetectorObservation)
+                else []
+            ),
             "detector_error": (
                 f"{type(observation).__name__}: {observation}"
                 if isinstance(observation, Exception)
-                else None
+                else "camera_offline" if packet is None else None
             ),
         }
     return {
         "schema": SCHEMA,
+        "run_id": run_id,
         "event_sequence": sequence,
         "recorded_at_utc": _utc_now(),
+        "model_id": model_id,
         "model_sha256": model_sha256,
         "cameras": cameras,
         "pairs": [_pair_json(pair) for pair in pairs],
@@ -886,7 +956,38 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--video-fps", type=float)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--no-release-probe", action="store_true")
+    parser.add_argument("--dashboard-bind", default="127.0.0.1")
+    parser.add_argument("--dashboard-port", type=int, default=8780)
+    parser.add_argument("--no-dashboard-bridge", action="store_true")
+    parser.add_argument("--rescue-mission-id")
+    parser.add_argument("--rescue-endpoint")
+    parser.add_argument("--rescue-outbox", type=Path)
+    parser.add_argument("--rescue-model-id", default="covis-yolo")
+    parser.add_argument("--rescue-publish-hz", type=float, default=2.0)
+    parser.add_argument(
+        "--camera-node",
+        action="append",
+        nargs=2,
+        metavar=("CAMERA", "NODE"),
+        default=[],
+    )
+    parser.add_argument(
+        "--camera-calibration",
+        action="append",
+        nargs=2,
+        metavar=("CAMERA", "CALIBRATION"),
+        default=[],
+    )
     return parser
+
+
+def _mapping(values: Sequence[Sequence[str]], label: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for camera, value in values:
+        if camera in result:
+            raise ValueError(f"duplicate {label} mapping for {camera}")
+        result[camera] = value
+    return result
 
 
 def _validate_args(args: argparse.Namespace) -> tuple[CameraSpec, ...]:
@@ -942,6 +1043,20 @@ def _validate_args(args: argparse.Namespace) -> tuple[CameraSpec, ...]:
         r"[0-9a-fA-F]{64}", args.expected_model_sha256
     ):
         raise ValueError("expected-model-sha256 must contain exactly 64 hex digits")
+    if not args.no_dashboard_bridge and not 1 <= args.dashboard_port <= 65535:
+        raise ValueError("dashboard-port must be inside 1..65535")
+    rescue_values = (args.rescue_mission_id, args.rescue_endpoint, args.rescue_outbox)
+    if any(value is not None for value in rescue_values) and not all(value is not None for value in rescue_values):
+        raise ValueError("rescue integration requires mission-id, endpoint and outbox together")
+    if args.rescue_mission_id:
+        nodes = _mapping(args.camera_node, "camera-node")
+        if set(nodes) != {spec.name for spec in specs}:
+            raise ValueError("rescue integration requires exactly one camera-node mapping per configured camera")
+        calibrations = _mapping(args.camera_calibration, "camera-calibration")
+        if set(calibrations) - set(nodes):
+            raise ValueError("camera-calibration references an unconfigured camera")
+        if not 0 < args.rescue_publish_hz <= 3:
+            raise ValueError("rescue-publish-hz must be inside (0, 3]")
     return specs
 
 
@@ -1011,6 +1126,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         "analysis_fps": args.analysis_fps,
         "model_sha256": weights_hash,
+        "dashboard_bridge": {
+            "enabled": not args.no_dashboard_bridge,
+            "bind": args.dashboard_bind,
+            "port": args.dashboard_port,
+            "read_only": True,
+        },
+        "rescue_observations": {
+            "enabled": bool(args.rescue_mission_id),
+            "mission_id": args.rescue_mission_id,
+            "model_id": args.rescue_model_id if args.rescue_mission_id else None,
+            "publish_hz": args.rescue_publish_hz if args.rescue_mission_id else None,
+        },
         "thresholds": {
             "max_receive_skew_ms": args.max_receive_skew_ms,
             "max_frame_age_ms": args.max_frame_age_ms,
@@ -1037,6 +1164,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
     }
     _atomic_json(run_dir / "run_config.json", config)
+
+    dashboard_server: MultiCameraDashboardServer | None = None
+    observation_adapter: MultiCameraObservationAdapter | None = None
+    try:
+        if not args.no_dashboard_bridge:
+            dashboard_server = MultiCameraDashboardServer(
+                args.dashboard_bind,
+                args.dashboard_port,
+                [spec.name for spec in specs],
+            )
+            dashboard_server.start()
+        if args.rescue_mission_id:
+            observation_adapter = MultiCameraObservationAdapter(
+                mission_id=args.rescue_mission_id,
+                outbox_path=args.rescue_outbox,
+                camera_nodes=_mapping(args.camera_node, "camera-node"),
+                camera_calibrations=_mapping(args.camera_calibration, "camera-calibration"),
+                model_id=args.rescue_model_id,
+                publish_hz=args.rescue_publish_hz,
+            )
+    except (OSError, MultiCameraBridgeError, MultiCameraAdapterError, ValueError) as exc:
+        if dashboard_server is not None:
+            dashboard_server.close()
+        print(f"ERROR: live integration could not start: {exc}")
+        return 2
 
     workers = {
         spec.name: CaptureWorker(
@@ -1066,6 +1218,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     release_probe: dict[str, Any] = {}
     worker_shutdown: dict[str, Any] = {}
     errors: list[str] = []
+    rescue_delivery: dict[str, Any] = {"enabled": observation_adapter is not None}
     event_count = 0
     saved_dashboards: list[dict[str, Any]] = []
     events_path = run_dir / "events.jsonl"
@@ -1081,36 +1234,53 @@ def main(argv: Sequence[str] | None = None) -> int:
         for worker in workers.values():
             worker.start()
         ready_deadline = time.monotonic() + args.open_timeout
-        for worker in workers.values():
-            worker.wait_ready(max(0.001, ready_deadline - time.monotonic()))
+        while time.monotonic() < ready_deadline:
+            if all(worker.latest() is not None or worker.error for worker in workers.values()):
+                break
+            time.sleep(0.02)
+        available_at_start = sum(worker.latest() is not None for worker in workers.values())
+        if available_at_start == 0:
+            detail = ", ".join(f"{name}={worker.error or 'no frame'}" for name, worker in workers.items())
+            raise LiveDemoError(f"no configured camera produced a usable frame: {detail}")
         print(
             "READY "
             + " ".join(
-                f"{name}={worker.actual_backend}" for name, worker in workers.items()
+                f"{name}={worker.actual_backend or 'OFFLINE'}" for name, worker in workers.items()
             )
         )
         after = {name: 0 for name in workers}
         frame_period = 1.0 / args.analysis_fps
         while True:
             loop_started = time.monotonic()
-            packets = wait_new_frames(workers, after, args.frame_set_timeout)
-            after = {name: packet.sequence for name, packet in packets.items()}
+            packets = wait_available_frames(workers, after, args.frame_set_timeout)
+            if not packets:
+                if all(worker.error for worker in workers.values()):
+                    raise LiveDemoError("every configured camera is offline")
+                if args.duration_seconds is not None and time.monotonic() - started >= args.duration_seconds:
+                    break
+                continue
+            after.update({name: packet.sequence for name, packet in packets.items()})
+            active_specs = tuple(spec for spec in specs if spec.name in packets)
             observations = observe_once_per_camera(packets, detector)
-            pairs = assess_all_pairs(
-                specs,
-                packets,
-                observations,
-                cv2_module=cv2,
-                now_monotonic_ns=time.monotonic_ns(),
-                max_receive_skew_ms=args.max_receive_skew_ms,
-                max_age_ms=args.max_frame_age_ms,
-                min_focus=args.min_focus,
-                min_luma=args.min_luma,
-                max_luma=args.max_luma,
-                m_min=args.m_min,
-                min_intersection_pixels=args.min_intersection_pixels,
-                appearance_threshold=args.appearance_threshold,
-                person_colour_threshold=args.person_colour_threshold,
+            pairs = (
+                assess_all_pairs(
+                    active_specs,
+                    packets,
+                    observations,
+                    cv2_module=cv2,
+                    now_monotonic_ns=time.monotonic_ns(),
+                    max_receive_skew_ms=args.max_receive_skew_ms,
+                    max_age_ms=args.max_frame_age_ms,
+                    min_focus=args.min_focus,
+                    min_luma=args.min_luma,
+                    max_luma=args.max_luma,
+                    m_min=args.m_min,
+                    min_intersection_pixels=args.min_intersection_pixels,
+                    appearance_threshold=args.appearance_threshold,
+                    person_colour_threshold=args.person_colour_threshold,
+                )
+                if len(active_specs) >= 2
+                else ()
             )
             dashboard = render_dashboard(
                 specs,
@@ -1125,12 +1295,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                 recorder.write(dashboard)
             event_count += 1
             event = event_record(
-                event_count, specs, packets, observations, pairs, weights_hash
+                event_count,
+                specs,
+                packets,
+                observations,
+                pairs,
+                weights_hash,
+                run_id,
+                args.rescue_model_id if detector is not None else "FEATURE_ONLY",
             )
             events_handle.write(
                 json.dumps(event, sort_keys=True, allow_nan=False) + "\n"
             )
             events_handle.flush()
+            if dashboard_server is not None:
+                dashboard_server.publish(dashboard, event, cv2)
+            if observation_adapter is not None:
+                emitted = observation_adapter.enqueue(event)
+                if emitted:
+                    rescue_delivery = {
+                        "enabled": True,
+                        "emitted": rescue_delivery.get("emitted", 0) + len(emitted),
+                        "last_flush": observation_adapter.flush(
+                            args.rescue_endpoint,
+                            token=os.environ.get("VERISWARM_RESCUE_TOKEN", ""),
+                        ),
+                    }
 
             key = -1
             if not args.headless:
@@ -1164,6 +1354,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         errors.append(f"{type(exc).__name__}: {exc}")
     finally:
         events_handle.close()
+        if dashboard_server is not None:
+            dashboard_server.close()
         if recorder is not None:
             try:
                 video_summary = recorder.finalize()
@@ -1207,6 +1399,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "worker_shutdown": worker_shutdown,
         "release_probe": release_probe,
         "release_verified": release_verified,
+        "rescue_delivery": rescue_delivery,
         "errors": errors,
     }
     _atomic_json(run_dir / "summary.json", summary)

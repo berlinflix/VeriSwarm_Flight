@@ -1,16 +1,23 @@
 {
   "schema": "veriswarm.covis_multicam.launch.v1",
+  "allow_degraded_startup": true,
+  "dashboard_bind": "127.0.0.1",
+  "dashboard_port": 8780,
   "cameras": [
     {
       "name": "cam1",
       "source": "0",
       "backend": "dshow",
-      "expected_device_name": "REPLACE_WITH_EXACT_DIRECTSHOW_FRIENDLY_NAME"
+      "expected_device_name": "REPLACE_WITH_EXACT_DIRECTSHOW_FRIENDLY_NAME",
+      "node": "alpha",
+      "calibration_id": "lab-cam1-v1"
     },
     {
       "name": "cam2",
       "source": "REPLACE_WITH_PHONE_1_LOCAL_VIDEO_URL",
-      "backend": "ffmpeg"
+      "backend": "ffmpeg",
+      "node": "bravo",
+      "calibration_id": "lab-cam2-v1"
     }
   ],
   "width": 640,
@@ -25,5 +32,13 @@
   "record_video": true,
   "video_codec": "MJPG",
   "video_fps": 3,
-  "run_id_prefix": "DEMO-MULTICAM-P2"
+  "run_id_prefix": "DEMO-MULTICAM-P2",
+  "rescue": {
+    "enabled": false,
+    "mission_id": "OP-VARUNA-001",
+    "endpoint": "http://REPLACE_WITH_ABHIJAN_IP:8772",
+    "outbox_path": "results/samik-multicam-rescue-outbox.sqlite3",
+    "model_id": "sar-yolo-v1",
+    "publish_hz": 2
+  }
 }

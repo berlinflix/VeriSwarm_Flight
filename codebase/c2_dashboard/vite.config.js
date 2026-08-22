@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
@@ -20,6 +21,8 @@ const qualifierToken = process.env.VERISWARM_QUALIFIER_TOKEN ?? "";
 const rescueUrl = (process.env.VERISWARM_RESCUE_URL ?? "").replace(/\/$/, "");
 const rescueToken = process.env.VERISWARM_RESCUE_TOKEN ?? "";
 const movementAuthorizationUrl = (process.env.VERISWARM_MOVEMENT_AUTH_URL ?? "").replace(/\/$/, "");
+const multiCameraUrl = (process.env.VERISWARM_MULTICAM_URL ?? "").replace(/\/$/, "");
+const multiCameraToken = process.env.VERISWARM_MULTICAM_TOKEN ?? "";
 
 const clearedAttacks = {
   model_swap: [],
@@ -119,6 +122,62 @@ async function callMovementAuthorization(path, options = {}) {
     });
     const payload = await response.json().catch(() => ({ ok: false, error: "invalid_backend_response" }));
     return { status: response.status, payload };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function callMultiCamera(path) {
+  if (!multiCameraUrl) {
+    const error = new Error("multi-camera backend is not configured");
+    error.code = "multicamera_not_configured";
+    throw error;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const headers = multiCameraToken ? { "X-VeriSwarm-Token": multiCameraToken } : {};
+    const response = await fetch(`${multiCameraUrl}${path}`, {
+      headers,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({ ok: false, error: "invalid_backend_response" }));
+    return { status: response.status, payload };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function proxyMultiCameraStream(request, response) {
+  if (!multiCameraUrl) {
+    sendJson(response, 503, { ok: false, error: "multicamera_not_configured" });
+    return;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3_000);
+  const close = () => controller.abort();
+  response.once("close", close);
+  try {
+    const headers = multiCameraToken ? { "X-VeriSwarm-Token": multiCameraToken } : {};
+    const upstream = await fetch(`${multiCameraUrl}/stream.mjpg`, { headers, cache: "no-store", signal: controller.signal });
+    clearTimeout(timer);
+    if (!upstream.ok || !upstream.body) {
+      sendJson(response, upstream.status || 503, { ok: false, error: "multicamera_stream_unavailable" });
+      return;
+    }
+    response.statusCode = upstream.status;
+    response.setHeader("Content-Type", upstream.headers.get("content-type") ?? "multipart/x-mixed-replace");
+    response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    const stream = Readable.fromWeb(upstream.body);
+    stream.on("error", (error) => response.destroy(error));
+    stream.pipe(response);
+  } catch (error) {
+    if (!response.headersSent) {
+      sendJson(response, 503, { ok: false, error: error.name === "AbortError" ? "multicamera_timeout" : "multicamera_stream_unavailable" });
+    } else {
+      response.destroy(error);
+    }
   } finally {
     clearTimeout(timer);
   }
@@ -319,6 +378,28 @@ function dashboardApi() {
           const message = error.name === "AbortError"
             ? "rescue_timeout"
             : error.code ?? error.message;
+          sendJson(response, 503, { ok: false, error: message });
+        }
+      });
+
+      server.middlewares.use("/api/multicam", async (request, response) => {
+        if (request.method !== "GET") {
+          sendJson(response, 405, { ok: false, error: "method_not_allowed" });
+          return;
+        }
+        if (request.url?.startsWith("/stream.mjpg")) {
+          await proxyMultiCameraStream(request, response);
+          return;
+        }
+        if (request.url !== "/status") {
+          sendJson(response, 404, { ok: false, error: "not_found" });
+          return;
+        }
+        try {
+          const result = await callMultiCamera("/status");
+          sendJson(response, result.status, result.payload);
+        } catch (error) {
+          const message = error.name === "AbortError" ? "multicamera_timeout" : error.code ?? error.message;
           sendJson(response, 503, { ok: false, error: message });
         }
       });
