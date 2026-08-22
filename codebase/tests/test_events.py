@@ -17,7 +17,13 @@ import pytest
 
 from node import events as ev
 from node.events import EventLog, follow, read_events, verify_event_chain
-from node.frame_source import FileSource, StaticSource, frame_bytes, frame_hash
+from node.frame_source import (
+    FileSource,
+    StaticSource,
+    VideoFileSource,
+    frame_bytes,
+    frame_hash,
+)
 from protocol.geometry import Pose
 
 np = pytest.importorskip("numpy")
@@ -293,6 +299,119 @@ def test_missing_depth_returns_none_not_an_error(tmp_path):
     source = FileSource(_write_frames(tmp_path), depth_directory=tmp_path / "absent")
     source.read()
     assert source.depth() is None
+
+
+def test_video_file_source_preserves_media_metadata(monkeypatch, tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    video = tmp_path / "drone-pov.mp4"
+    video.write_bytes(b"test fixture; decoder is replaced")
+    frames = [
+        np.full((8, 12, 3), 10, dtype=np.uint8),
+        np.full((8, 12, 3), 20, dtype=np.uint8),
+    ]
+
+    class FakeCapture:
+        def __init__(self):
+            self.index = 0
+            self.released = False
+
+        def isOpened(self):
+            return True
+
+        def read(self):
+            if self.index >= len(frames):
+                return False, None
+            frame = frames[self.index]
+            self.index += 1
+            return True, frame
+
+        def get(self, prop):
+            if prop == cv2.CAP_PROP_FPS:
+                return 24.0
+            if prop == cv2.CAP_PROP_FRAME_COUNT:
+                return 2.0
+            if prop == cv2.CAP_PROP_POS_FRAMES:
+                return float(self.index)
+            if prop == cv2.CAP_PROP_POS_MSEC:
+                return max(0.0, (self.index - 1) * 1000.0 / 24.0)
+            return 0.0
+
+        def set(self, prop, value):
+            if prop != cv2.CAP_PROP_POS_FRAMES or value != 0:
+                return False
+            self.index = 0
+            return True
+
+        def release(self):
+            self.released = True
+
+    capture = FakeCapture()
+    monkeypatch.setattr(cv2, "VideoCapture", lambda path: capture)
+
+    source = VideoFileSource(video, loop=False, fixed_pose=Pose(1, 2, 3))
+    assert source.source_fps == 24.0
+    assert source.frame_count == 2
+    assert np.array_equal(source.read(), frames[0])
+    assert source.frame_index == 0
+    assert source.timestamp_ms == pytest.approx(0.0)
+    assert np.array_equal(source.read(), frames[1])
+    assert source.frame_index == 1
+    assert source.timestamp_ms == pytest.approx(1000.0 / 24.0)
+    assert source.pose() == Pose(1, 2, 3)
+    assert source.read() is None
+    source.close()
+    assert capture.released is True
+
+
+def test_video_file_source_loops_without_inventing_pose(monkeypatch, tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    video = tmp_path / "loop.mp4"
+    video.write_bytes(b"test fixture; decoder is replaced")
+    frame = np.full((4, 6, 3), 9, dtype=np.uint8)
+
+    class FakeCapture:
+        def __init__(self):
+            self.at_end = False
+
+        def isOpened(self):
+            return True
+
+        def read(self):
+            if self.at_end:
+                return False, None
+            self.at_end = True
+            return True, frame
+
+        def get(self, prop):
+            if prop == cv2.CAP_PROP_FPS:
+                return 24.0
+            if prop == cv2.CAP_PROP_FRAME_COUNT:
+                return 1.0
+            if prop == cv2.CAP_PROP_POS_FRAMES:
+                return 1.0
+            if prop == cv2.CAP_PROP_POS_MSEC:
+                return 0.0
+            return 0.0
+
+        def set(self, prop, value):
+            if prop == cv2.CAP_PROP_POS_FRAMES and value == 0:
+                self.at_end = False
+                return True
+            return False
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda path: FakeCapture())
+    source = VideoFileSource(video, loop=True)
+    assert source.pose() is None
+    assert source.read() is not None
+    assert source.read() is not None
+
+
+def test_video_file_source_rejects_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError, match="video file not found"):
+        VideoFileSource(tmp_path / "missing.mp4")
 
 
 def test_every_mock_scenario_respects_verdict_invariants(tmp_path):
