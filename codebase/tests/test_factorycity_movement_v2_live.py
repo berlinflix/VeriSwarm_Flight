@@ -9,6 +9,7 @@ import cosysairsim
 import pytest
 
 from rescue.movement_security import load_movement_contract
+from tools.movement_authorization_link import ROSTER, build_snapshot
 from sim.cosys.factorycity.movement_v2 import (
     CellLedger,
     DurableMovementEvents,
@@ -165,6 +166,30 @@ def test_authorization_provider_accepts_canonical_event_and_snapshot(tmp_path: P
     assert provider.latest("alpha") is None
     path.write_text("not-json", encoding="utf-8")
     assert provider.latest("alpha") is None
+
+
+def test_abhijan_five_lease_snapshot_is_consumed_by_live_runner(tmp_path: Path) -> None:
+    policy = {
+        "schema": "veriswarm.factorycity.authorization_policy.v1",
+        "decisions": {
+            node: {"decision": "ALLOW", "reason": "reviewer_nominal_release"}
+            for node in ROSTER
+        },
+    }
+    snapshot = build_snapshot(
+        policy,
+        mission_id="OP-VARUNA-001",
+        sequences=tuple(range(1, len(ROSTER) + 1)),
+        observed_at_ms=time.time_ns() // 1_000_000,
+    )
+    path = tmp_path / "authorization_snapshot.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    provider = AuthorizationFileProvider(path)
+    for node in ROSTER:
+        lease = provider.latest(node)
+        assert lease is not None
+        assert lease["node"] == node
+        assert lease["decision"] == "ALLOW"
 
 
 def test_live_adapter_releases_actual_velocity_and_directional_commands(tmp_path: Path) -> None:
