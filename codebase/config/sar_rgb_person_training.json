@@ -1,0 +1,65 @@
+{
+  "schema": "veriswarm.rescue.training_plan.v1",
+  "model_id": "sar-rgb-person-v1",
+  "class_map": {
+    "0": "person_candidate"
+  },
+  "runtime": {
+    "python": "3.12.13",
+    "torch": "2.13.0+cu130",
+    "torchvision": "0.28.0+cu130",
+    "ultralytics": "8.4.56",
+    "required_gpu_substring": "RTX 5090"
+  },
+  "workspace_root": "/workspace/samik-rescue-person-model-20260822",
+  "candidates": {
+    "yolov8n-640-smoke": {
+      "name": "yolov8n-640-smoke",
+      "architecture": "yolov8n.pt",
+      "imgsz": 640,
+      "epochs": 5,
+      "batch": 0.7,
+      "required": true,
+      "stage": "smoke"
+    },
+    "yolov8n-640": {
+      "name": "yolov8n-640",
+      "architecture": "yolov8n.pt",
+      "imgsz": 640,
+      "epochs": 40,
+      "batch": null,
+      "required": true,
+      "stage": "full"
+    },
+    "yolov8n-960": {
+      "name": "yolov8n-960",
+      "architecture": "yolov8n.pt",
+      "imgsz": 960,
+      "epochs": 40,
+      "batch": null,
+      "required": true,
+      "stage": "full"
+    },
+    "yolov8s-640": {
+      "name": "yolov8s-640",
+      "architecture": "yolov8s.pt",
+      "imgsz": 640,
+      "epochs": 40,
+      "batch": null,
+      "required": false,
+      "stage": "full"
+    }
+  },
+  "gates": {
+    "official_train_images": 6471,
+    "official_val_images": 548,
+    "label_audit_images": 100,
+    "seed": 0,
+    "deterministic": true,
+    "cache": false,
+    "save": true,
+    "save_period": 1,
+    "smoke_batch_fraction": 0.7,
+    "jetson_benchmark_minutes": 15
+  }
+}

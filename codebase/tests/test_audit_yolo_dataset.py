@@ -16,6 +16,8 @@ from tools.audit_yolo_dataset import (  # noqa: E402
     SplitSpec,
     audit_dataset,
     load_class_map,
+    montage_membership,
+    montage_membership_sha256,
     parse_yolo_label,
     render_montage,
     select_montage_samples,
@@ -76,6 +78,8 @@ def test_audit_accepts_valid_positive_and_negative_samples(tmp_path):
     assert report["passed"] is True
     assert report["totals"]["valid_samples"] == 2
     assert report["totals"]["boxes"] == 1
+    assert report["splits"]["train"]["boxes"] == 1
+    assert report["splits"]["train"]["class_box_counts"] == {"0": 1}
     assert report["splits"]["train"]["empty_label_samples"] == 1
     assert len(samples) == 2
 
@@ -136,6 +140,12 @@ def test_stratified_montage_is_deterministic_and_renders(tmp_path):
     assert [(item.split, item.stem) for item in first] == [
         (item.split, item.stem) for item in second
     ]
+    first_members = montage_membership(first)
+    second_members = montage_membership(second)
+    assert first_members == second_members
+    assert montage_membership_sha256(first_members) == montage_membership_sha256(
+        second_members
+    )
     output = tmp_path / "montage.jpg"
     render_montage(first, {0: "person_candidate", 1: "fire"}, output, cv2)
 
@@ -143,6 +153,19 @@ def test_stratified_montage_is_deterministic_and_renders(tmp_path):
     assert rendered is not None
     assert rendered.shape[1] == 5 * 320
     assert np.count_nonzero(rendered) > 0
+
+
+def test_unexpected_or_symlinked_dataset_entries_fail_closed(tmp_path):
+    train = _split(tmp_path, "train")
+    _sample(train, "person")
+    (train.images / "unexpected.bin").write_bytes(b"not an image")
+
+    report, _ = audit_dataset((train,), {0: "person_candidate"}, cv2)
+
+    assert report["passed"] is False
+    assert any(
+        "unexpected file extension" in item["reason"] for item in report["errors"]
+    )
 
 
 def test_report_is_json_serializable_without_nonfinite_values(tmp_path):

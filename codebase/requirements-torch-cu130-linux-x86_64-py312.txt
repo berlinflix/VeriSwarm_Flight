@@ -1,0 +1,5 @@
+# Exact official CPython 3.12 / Linux x86_64 CUDA 13.0 wheel artifacts.
+# The URL fragments are publisher-provided SHA-256 hashes from the PyTorch
+# cu130 package index.  Do not use this file on Windows or Jetson aarch64.
+torch @ https://download-r2.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=8db7338e6895c3d4bd89a02ff4209507d1f0cf2ffeb3b898538b5a07d1ea8c1e
+torchvision @ https://download-r2.pytorch.org/whl/cu130/torchvision-0.28.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=8a0008d34ccc4e81066b97ff0ae5a34c676bfdf3464baf40c01b320dc9a45ce0

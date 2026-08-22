@@ -24,6 +24,11 @@ htmlcov/
 data/
 *.pt
 *.onnx
+*.engine
+*.plan
+datasets/
+weights/
+runs/
 sim/logs/
 sim/annotated/
 eval/results/

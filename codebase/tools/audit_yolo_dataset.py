@@ -1,8 +1,9 @@
 """Independent, fail-closed audit for YOLO object-detection datasets.
 
-The tool never edits source data. It validates image/label pairing and normalized
-boxes, detects byte-identical images within and across splits, and writes a
-create-once JSON report plus a deterministic, stratified label montage.
+The tool never edits source data. It decodes every image, validates image/label
+pairing and normalized boxes, records per-split class counts, detects
+byte-identical images within and across splits, and writes a create-once JSON
+report plus a deterministic, hash-bound stratified label montage.
 
 Example, from ``codebase``::
 
@@ -23,7 +24,7 @@ import os
 import re
 import sys
 from collections import Counter, defaultdict, deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -60,6 +61,7 @@ class Sample:
     image_path: Path
     label_path: Path
     image_sha256: str
+    label_sha256: str
     width: int
     height: int
     boxes: tuple[YoloBox, ...]
@@ -173,8 +175,23 @@ def parse_yolo_label(path: Path, class_map: Mapping[int, str]) -> tuple[YoloBox,
 def _indexed_files(root: Path, extensions: set[str]) -> tuple[dict[str, Path], list[str]]:
     indexed: dict[str, Path] = {}
     errors: list[str] = []
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    if root.is_symlink() or not root.is_dir():
+        return indexed, [f"unsafe or missing data root: {root}"]
+    try:
+        entries = sorted(root.rglob("*"))
+    except OSError as exc:
+        return indexed, [f"cannot enumerate data root {root}: {exc}"]
+    for path in entries:
+        if path.is_symlink():
+            errors.append(f"unsafe symbolic link: {path}")
+            continue
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            errors.append(f"unsafe non-file entry: {path}")
+            continue
         if path.suffix.lower() not in extensions:
+            errors.append(f"unexpected file extension: {path}")
             continue
         relative_stem = path.relative_to(root).with_suffix("").as_posix()
         if relative_stem in indexed:
@@ -212,6 +229,7 @@ def audit_dataset(
 
         valid_count = 0
         empty_count = 0
+        split_class_counts: Counter[int] = Counter()
         for stem in sorted(set(images) & set(labels)):
             image_path = images[stem]
             label_path = labels[stem]
@@ -230,20 +248,48 @@ def audit_dataset(
                 continue
             digest = _sha256(image_path)
             samples.append(
-                Sample(spec.name, stem, image_path, label_path, digest, width, height, boxes)
+                Sample(
+                    spec.name,
+                    stem,
+                    image_path,
+                    label_path,
+                    digest,
+                    _sha256(label_path),
+                    width,
+                    height,
+                    boxes,
+                )
             )
             valid_count += 1
             if not boxes:
                 empty_count += 1
             class_counts.update(box.class_id for box in boxes)
+            split_class_counts.update(box.class_id for box in boxes)
+        split_samples = sorted(
+            (sample for sample in samples if sample.split == spec.name),
+            key=lambda sample: sample.stem,
+        )
+        sample_set_digest = hashlib.sha256()
+        for sample in split_samples:
+            for value in (sample.stem, sample.image_sha256, sample.label_sha256):
+                sample_set_digest.update(value.encode("utf-8"))
+                sample_set_digest.update(b"\x00")
         split_summary[spec.name] = {
+            "image_root": str(spec.images),
+            "label_root": str(spec.labels),
             "images": len(images),
             "labels": len(labels),
             "paired": len(set(images) & set(labels)),
             "valid_samples": valid_count,
+            "boxes": sum(split_class_counts.values()),
+            "class_box_counts": {
+                str(key): split_class_counts.get(key, 0)
+                for key in sorted(class_map)
+            },
             "empty_label_samples": empty_count,
             "missing_labels": len(missing_labels),
             "orphan_labels": len(orphan_labels),
+            "sample_set_sha256": sample_set_digest.hexdigest(),
         }
 
     by_hash: dict[str, list[Sample]] = defaultdict(list)
@@ -325,6 +371,33 @@ def select_montage_samples(samples: Sequence[Sample], limit: int) -> tuple[Sampl
                 next_keys.append(key)
         keys = next_keys
     return tuple(selected)
+
+
+def montage_membership(samples: Sequence[Sample]) -> list[dict[str, str]]:
+    """Return the exact deterministic sample identities rendered in a montage."""
+
+    return [
+        {
+            "split": sample.split,
+            "stem": sample.stem,
+            "image_sha256": sample.image_sha256,
+            "label_sha256": sample.label_sha256,
+        }
+        for sample in samples
+    ]
+
+
+def montage_membership_sha256(members: Sequence[Mapping[str, str]]) -> str:
+    """Hash montage membership independently of JPEG encoder metadata."""
+
+    payload = json.dumps(
+        list(members),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def render_montage(
@@ -422,11 +495,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         report, samples = audit_dataset(specs, class_map, cv2)
         selected = select_montage_samples(samples, min(args.montage_size, len(samples)))
+        members = montage_membership(selected)
         if selected:
             render_montage(selected, class_map, output_dir / "label_montage.jpg", cv2)
         report["montage"] = {
             "requested_samples": args.montage_size,
             "rendered_samples": len(selected),
+            "samples": members,
+            "sample_set_sha256": montage_membership_sha256(members),
             "path": "label_montage.jpg" if selected else None,
             "sha256": _sha256(output_dir / "label_montage.jpg") if selected else None,
         }

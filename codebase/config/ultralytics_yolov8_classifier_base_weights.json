@@ -1,0 +1,13 @@
+{
+  "schema": "veriswarm.rescue.classifier_base_weights.v1",
+  "publisher": "Ultralytics",
+  "repository": "https://github.com/ultralytics/assets",
+  "release_tag": "v8.4.0",
+  "entries": {
+    "yolov8n-cls.pt": {
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n-cls.pt",
+      "bytes": 5563076,
+      "sha256": "11fa19f2aea79bc960d680a13f82f22105982b325eb9e17a4a5e1a9f8245980a"
+    }
+  }
+}
