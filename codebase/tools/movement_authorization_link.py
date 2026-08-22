@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -328,8 +328,16 @@ class ReceiverConfig:
 
 
 class SnapshotReceiverState:
-    def __init__(self, config: ReceiverConfig):
+    def __init__(
+        self,
+        config: ReceiverConfig,
+        *,
+        clock_ms: Callable[[], int] = _now_ms,
+        sleeper: Callable[[float], None] = time.sleep,
+    ):
         self.config = config
+        self._clock_ms = clock_ms
+        self._sleeper = sleeper
         self._lock = threading.Lock()
         self.last_source_seq = 0
         self.last_received_at_ms: int | None = None
@@ -346,20 +354,39 @@ class SnapshotReceiverState:
             pass
 
     def accept(self, candidate: object) -> dict[str, Any]:
-        snapshot = validate_snapshot(
-            candidate,
-            expected_mission_id=self.config.mission_id,
-            max_age_ms=self.config.max_age_ms,
-        )
-        newest_sequence = max(
-            event["source_seq"] for event in snapshot["authorizations"].values()
-        )
         with self._lock:
+            snapshot = validate_snapshot(
+                candidate,
+                expected_mission_id=self.config.mission_id,
+                now_ms=self._clock_ms(),
+                max_age_ms=self.config.max_age_ms,
+            )
+            newest_sequence = max(
+                event["source_seq"]
+                for event in snapshot["authorizations"].values()
+            )
             if newest_sequence <= self.last_source_seq:
                 raise AuthorizationLinkError("authorization snapshot is replayed or out of order")
+
+            # The Ethernet ingress permits at most 250 ms of positive clock skew so
+            # independently synchronized Mac and Windows hosts do not flap offline.
+            # The frozen movement gate is stricter: any future-dated authorization
+            # must HOLD.  Preserve the canonical event timestamp and defer the atomic
+            # projection until the Windows clock has reached it.  This prevents a
+            # receiver-accepted lease from becoming malformed at a command boundary.
+            wait_ms = snapshot["generated_at_ms"] - self._clock_ms()
+            if wait_ms > 0:
+                self._sleeper(wait_ms / 1000.0)
+            snapshot = validate_snapshot(
+                snapshot,
+                expected_mission_id=self.config.mission_id,
+                now_ms=self._clock_ms(),
+                max_age_ms=self.config.max_age_ms,
+                max_future_ms=0,
+            )
             _atomic_write_json(self.config.output, snapshot)
             self.last_source_seq = newest_sequence
-            self.last_received_at_ms = _now_ms()
+            self.last_received_at_ms = self._clock_ms()
         return snapshot
 
 

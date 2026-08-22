@@ -206,6 +206,41 @@ def test_windows_receiver_atomically_accepts_and_rejects_replay(tmp_path: Path) 
         worker.join(timeout=2)
 
 
+def test_windows_receiver_defers_future_lease_until_safe_for_strict_gate(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "authorization_snapshot.json"
+    current_ms = [1_787_436_310_000]
+    sleeps: list[float] = []
+
+    def advance_clock(seconds: float) -> None:
+        sleeps.append(seconds)
+        current_ms[0] += round(seconds * 1000)
+
+    state = SnapshotReceiverState(
+        ReceiverConfig(
+            bind="127.0.0.1",
+            port=0,
+            peer_ip="127.0.0.1",
+            output=output,
+            mission_id=MISSION_ID,
+        ),
+        clock_ms=lambda: current_ms[0],
+        sleeper=advance_clock,
+    )
+    snapshot = _snapshot(tmp_path, observed_at_ms=current_ms[0] + 40)
+
+    accepted = state.accept(snapshot)
+
+    assert sleeps == [0.04]
+    assert current_ms[0] == accepted["generated_at_ms"]
+    assert json.loads(output.read_text(encoding="utf-8")) == accepted
+    assert all(
+        event["observed_at_ms"] == current_ms[0]
+        for event in accepted["authorizations"].values()
+    )
+
+
 def test_mac_publisher_delivers_to_receiver_and_control_updates_policy(tmp_path: Path) -> None:
     output = tmp_path / "authorization_snapshot.json"
     receiver_config = ReceiverConfig(
