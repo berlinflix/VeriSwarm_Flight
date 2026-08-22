@@ -4,7 +4,7 @@ Updated: 2026-08-22 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
-Latest work commit: `78d5df0`
+Latest work commit: `e208551`
 
 ## Completed since the previous update
 
@@ -15,10 +15,19 @@ Latest work commit: `78d5df0`
 - Reviewed Samik's adapter candidate `15d1af6` as a suitable development starting point.
 - Added a durable SQLite producer outbox with FIFO replay, bounded idempotent retry,
   dead-letter retention and offline recovery for Samik and Pratik producer events.
+- Implemented calibrated multi-view person localization using metric range or two
+  synchronized positive bearing rays, with uncertainty and strict geometry checks.
+- Added survivor-first fusion: one detector-thresholded positive always creates a high
+  responder alert; an occluded/missing/disputed view cannot veto it.
+- Added a fail-closed bridge from the real VeriSwarm `ConsensusResult` plus receipt,
+  model and runtime verification into `VERIFIED`/`UNVERIFIED`/`DISPUTED` evidence.
+- Kept PBFT-style control authorization independent: a security `HOLD` remains visible
+  and can stop motion without erasing a person candidate.
+- Verified the complete repository at 463 passed and 3 dependency-gated skips.
 
 ## In progress now
 
-- Publishing the producer-outbox interface to Samik and Pratik for independent adoption.
+- Integrating the new detector and CoSys calibration producers as their branches publish.
 
 ## Outputs available
 
@@ -27,20 +36,31 @@ Latest work commit: `78d5df0`
 - `codebase/tools/rescue_event_collector.py`
 - `codebase/tools/rescue_event_sender.py`
 - `codebase/rescue/outbox.py`
+- `codebase/rescue/multiview.py`
+- `codebase/rescue/security_bridge.py`
+- `codebase/tools/rescue_multiview_fusion.py`
+- `codebase/docs/MULTIVIEW_SURVIVOR_FUSION.md`
+- `codebase/examples/rescue_multiview_person_sample.json`
 
 ## Blockers
 
 - NONE for RGB dataset work, cloud training or unlocated rescue observations.
-- Simulator-derived localization and mission coverage depend on Pratik's producer
-  handoff, but do not block Samik.
+- No code blocker for detector training, person alerts or bearing-only observations.
+- Metric map localization still needs Pratik's calibrated camera pose/depth producer.
+- The physical rig demonstrates common planar overlap; it cannot claim real 3-D location
+  until its cameras are calibrated into a shared metric frame.
 
 ## Shared-interface changes
 
 - Rescue producers use `veriswarm.rescue.event.v1` as documented in
   `codebase/docs/RESCUE_DATA_PLANE.md`.
 - Team status and direct coordination now live under `codebase/docs/team_updates/`.
+- Person evidence must follow the survivor-first policy in
+  `codebase/docs/MULTIVIEW_SURVIVOR_FUSION.md`; semantic consensus is a security label
+  and control gate, never a negative vote on survivor existence.
 
 ## Next checkpoint
 
-- Accept the first collector-delivered inference event from Samik and the first mission
-  telemetry sequence from Pratik when their branches publish them.
+- Accept the first real detector-derived multi-view observation from Samik and the first
+  calibrated RGB/depth/pose capture group from Pratik, then run the one-view-occluded
+  broken-building scenario through the collector and dashboard.
