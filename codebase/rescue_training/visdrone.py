@@ -295,6 +295,11 @@ def _parse_annotation(
                 f"blank annotation row at {annotation_path}:{line_number}"
             )
         fields = [field.strip() for field in line.split(",")]
+        # Official VisDrone rows sometimes carry one trailing comma, which
+        # yields an empty ninth field.  Drop exactly that empty trailing field
+        # so the published corpus parses; any other field count still fails.
+        if len(fields) == 9 and fields[8] == "":
+            del fields[8]
         if len(fields) != 8:
             raise VisDroneConversionError(
                 f"expected 8 VisDrone fields at {annotation_path}:{line_number}"
