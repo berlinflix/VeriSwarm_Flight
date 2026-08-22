@@ -88,7 +88,9 @@ def _load_config(path: Path, map_file: Path) -> dict[str, object]:
     ):
         _positive(flood, field)
     for field in (
-        "command_timeout_seconds",
+        "controlled_descent_velocity_mps",
+        "controlled_descent_timeout_seconds",
+        "descent_target_below_surface_m",
         "confirmation_timeout_seconds",
         "confirmation_poll_seconds",
         "contact_settle_seconds",
@@ -773,14 +775,30 @@ def main() -> None:
                 vehicle: int(_collision_record(client, vehicle)["timestamp"])
                 for vehicle in survivors
             }
+            descent_target_z_ned_m = landing_surface_z_ned_m + float(
+                landing["descent_target_below_surface_m"]
+            )
             _join_all(
                 [
-                    client.landAsync(
-                        timeout_sec=float(landing["command_timeout_seconds"]),
+                    client.moveToZAsync(
+                        descent_target_z_ned_m,
+                        float(landing["controlled_descent_velocity_mps"]),
+                        timeout_sec=float(landing["controlled_descent_timeout_seconds"]),
                         vehicle_name=vehicle,
                     )
                     for vehicle in survivors
                 ]
+            )
+            events.append(
+                {
+                    "state": "CONTROLLED_DESCENT_COMMANDED",
+                    "landing_surface_z_ned_m": landing_surface_z_ned_m,
+                    "descent_target_z_ned_m": descent_target_z_ned_m,
+                    "descent_velocity_mps": float(
+                        landing["controlled_descent_velocity_mps"]
+                    ),
+                    "collision_baselines": landing_collision_baseline,
+                }
             )
             pending_landing = set(survivors)
             contact_started: dict[str, float] = {}
