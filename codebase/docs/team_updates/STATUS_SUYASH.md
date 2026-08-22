@@ -4,7 +4,7 @@ Updated: 2026-08-22 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
-Latest reviewed integration parent: `e432f42`
+Latest reviewed integration parent: `f610667`
 
 ## Completed since the previous update
 
@@ -49,12 +49,21 @@ Latest reviewed integration parent: `e432f42`
   the clean-stage transition must also require
   `cleanEvidence.dashboard_proof.proof_valid === true` before the UI may claim an
   approved baseline or enable the model-hash attack stage.
+- Integrated Abhijan's corrected proof gate and fail-closed movement-security policy
+  through `f610667`.
+- Frozen an additive cell/coverage/reassignment interface and measured
+  `movement_safety` event so a heatmap can be reconstructed from retained evidence rather
+  than inferred from counts or animation.
+- Frozen simulation timing boundaries and exact movement reason/result codes. Missed
+  authorization, control, sensing or enqueue deadlines fail closed to `HOLD`.
+- Preserved backward replay compatibility for old count-only evidence while requiring new
+  FactoryCity producers to emit exact cell IDs.
 
 ## In progress now
 
 - Integrating the new detector and CoSys producers as their branches publish.
-- Waiting for Abhijan's configuration-driven `HOLD`/`QUARANTINE`/reassignment tests and
-  the staged-dashboard proof-gate correction.
+- Waiting for Pratik's new sensor-driven controller revision and Abhijan's deterministic
+  heatmap/replay consumer of the frozen additive event interface.
 
 ## Outputs available
 
@@ -75,6 +84,8 @@ Latest reviewed integration parent: `e432f42`
 - `codebase/sim/cosys/factorycity/factorycity_joint_movement_contract.development.json`
 - `codebase/sim/cosys/factorycity/factorycity_ab_mission.development.json`
 - `codebase/sim/cosys/factorycity/tools/run_factorycity_ab_swarm.py`
+- `codebase/config/rescue_cell_movement_event_extension.v1.json`
+- `codebase/docs/RESCUE_CELL_MOVEMENT_EVENT_EXTENSION.md`
 
 ## Blockers
 
@@ -84,9 +95,10 @@ Latest reviewed integration parent: `e432f42`
 - Point B, the straight A-to-B route, roster, route cells and joint movement/security
   contract are now frozen for development. The first retained live five-drone A-to-B
   run is still missing.
-- The nominal controller does not yet consume live `ALLOW`/`HOLD`/`QUARANTINE` decisions;
-  geofence/acceleration enforcement, durable rescue-event production and deterministic
-  unfinished-cell reassignment remain joint Pratik/Abhijan work.
+- The nominal controller does not yet consume live `ALLOW`/`HOLD`/`QUARANTINE` decisions
+  at every command boundary or perform sensor-driven obstacle deflection. Durable
+  cell-level event production and live unfinished-cell reassignment remain joint
+  Pratik/Abhijan work.
 - The required original 10-second no-person CoSys RGB negative-control recording is
   still missing and must remain outside Git.
 - The physical rig demonstrates common planar overlap; it cannot claim real 3-D location
@@ -107,12 +119,16 @@ Latest reviewed integration parent: `e432f42`
   producer.
 - The final model allowlist binds the actually executed TensorRT engine and runtime
   lineage. A source `.pt` hash alone is insufficient when deployment executes `.engine`.
+- New FactoryCity producers must follow
+  `veriswarm.rescue.event_extension.cell_movement.v1`. It is additive to the existing v1
+  event envelope and forbids controller access to evaluation-only Unreal truth.
 
 ## Next checkpoint
 
-- Accept Abhijan's proof-gate correction and movement-security tests against Pratik's
-  published contract, including preservation of positive survivor observations after a
-  drone is held or quarantined.
+- Review Pratik's command-boundary gate, measured obstacle deflection and exact cell-event
+  producer against the frozen additive contract.
+- Review Abhijan's heatmap and replay-equivalence proof against the same retained event
+  log.
 - Review Pratik's first retained live A-to-B run, durable rescue-event producer and
   original no-person CoSys RGB control when published.
 - Accept the first real detector-derived multi-view observation from Samik and the first

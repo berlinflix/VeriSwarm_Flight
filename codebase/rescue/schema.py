@@ -27,8 +27,45 @@ EVENT_KINDS = frozenset({
     "authorization",
     "task_reassigned",
     "link_state",
+    "movement_safety",
     "mission_completed",
 })
+
+MOVEMENT_SAFETY_EVENTS = frozenset({
+    "OBSTACLE_DETECTED",
+    "SAFETY_HOLD",
+    "DEFLECTION_SELECTED",
+    "ROUTE_REJOINED",
+    "CELL_BLOCKED",
+    "COLLISION_DETECTED",
+})
+MOVEMENT_SAFETY_RESULTS = frozenset({
+    "NON_TERMINAL",
+    "TERMINAL_CELL",
+    "TERMINAL_VEHICLE",
+})
+MOVEMENT_MEASUREMENT_SOURCES = frozenset({
+    "front_depth",
+    "front_depth_and_vehicle_state",
+    "simGetCollisionInfo",
+    "simGetCollisionInfo_and_vehicle_state",
+})
+MOVEMENT_REASON_BY_EVENT = {
+    "OBSTACLE_DETECTED": "depth_below_stopping_boundary",
+    "SAFETY_HOLD": "obstacle_safety_hold",
+    "DEFLECTION_SELECTED": "safe_deflection_selected",
+    "ROUTE_REJOINED": "nominal_route_rejoined",
+    "CELL_BLOCKED": "no_safe_deflection",
+    "COLLISION_DETECTED": "cosys_collision_detected",
+}
+MOVEMENT_RESULT_BY_EVENT = {
+    "OBSTACLE_DETECTED": "NON_TERMINAL",
+    "SAFETY_HOLD": "NON_TERMINAL",
+    "DEFLECTION_SELECTED": "NON_TERMINAL",
+    "ROUTE_REJOINED": "NON_TERMINAL",
+    "CELL_BLOCKED": "TERMINAL_CELL",
+    "COLLISION_DETECTED": "TERMINAL_VEHICLE",
+}
 
 PERSON_CLASS = "person_candidate"
 HAZARD_CLASSES = frozenset({
@@ -57,6 +94,7 @@ NODE_STREAM_ROLES = {
     "observation": frozenset({"perception"}),
     "hazard": frozenset({"fusion"}),
     "link_state": frozenset({"telemetry"}),
+    "movement_safety": frozenset({"telemetry"}),
 }
 
 
@@ -159,6 +197,12 @@ def _validate_assignment(payload: dict[str, Any]) -> None:
     payload["node"] = _identifier(payload.get("node"), "node")
     payload["sector_id"] = _identifier(payload.get("sector_id"), "sector_id")
     payload["cells_total"] = _integer(payload.get("cells_total"), "cells_total", minimum=1)
+    if "cell_ids" in payload:
+        payload["cell_ids"] = _identifier_list(
+            payload["cell_ids"], "cell_ids", maximum=1024
+        )
+        if len(payload["cell_ids"]) != payload["cells_total"]:
+            raise RescueEventError("cell_ids count must equal cells_total")
 
 
 def _validate_coverage(payload: dict[str, Any]) -> None:
@@ -168,6 +212,30 @@ def _validate_coverage(payload: dict[str, Any]) -> None:
     payload["total_cells"] = _integer(payload.get("total_cells"), "total_cells", minimum=1)
     if payload["visited_cells"] > payload["total_cells"]:
         raise RescueEventError("visited_cells cannot exceed total_cells")
+    cell_fields = (
+        "in_progress_cell_ids",
+        "completed_cell_ids",
+        "blocked_cell_ids",
+    )
+    supplied = [field in payload for field in cell_fields]
+    if any(supplied) and not all(supplied):
+        raise RescueEventError(
+            "cell-level coverage requires in_progress, completed and blocked cell IDs"
+        )
+    if all(supplied):
+        for field in cell_fields:
+            payload[field] = _identifier_list(payload[field], field, maximum=1024)
+        in_progress = set(payload["in_progress_cell_ids"])
+        completed = set(payload["completed_cell_ids"])
+        blocked = set(payload["blocked_cell_ids"])
+        if in_progress & completed or in_progress & blocked or completed & blocked:
+            raise RescueEventError("coverage cell-state lists must be disjoint")
+        if len(completed) != payload["visited_cells"]:
+            raise RescueEventError(
+                "completed_cell_ids count must equal visited_cells"
+            )
+        if len(in_progress | completed | blocked) > payload["total_cells"]:
+            raise RescueEventError("coverage cell-state count exceeds total_cells")
 
 
 def _validate_vehicle_state(payload: dict[str, Any]) -> None:
@@ -300,12 +368,51 @@ def _validate_task_reassigned(payload: dict[str, Any]) -> None:
         raise RescueEventError("task reassignment requires different nodes")
     payload["cells_count"] = _integer(payload.get("cells_count"), "cells_count", minimum=1)
     payload["reason"] = _text(payload.get("reason"), "reason", maximum=256)
+    if "cell_ids" in payload:
+        payload["cell_ids"] = _identifier_list(
+            payload["cell_ids"], "cell_ids", maximum=1024
+        )
+        if len(payload["cell_ids"]) != payload["cells_count"]:
+            raise RescueEventError("cell_ids count must equal cells_count")
 
 
 def _validate_link_state(payload: dict[str, Any]) -> None:
     payload["node"] = _identifier(payload.get("node"), "node")
     if payload.get("state") not in {"ONLINE", "DEGRADED", "OFFLINE"}:
         raise RescueEventError("link state must be ONLINE, DEGRADED or OFFLINE")
+
+
+def _validate_movement_safety(payload: dict[str, Any]) -> None:
+    payload["node"] = _identifier(payload.get("node"), "node")
+    payload["cell_id"] = _identifier(payload.get("cell_id"), "cell_id")
+    payload["measurement_source"] = _identifier(
+        payload.get("measurement_source"), "measurement_source"
+    )
+    if payload["measurement_source"] not in MOVEMENT_MEASUREMENT_SOURCES:
+        raise RescueEventError("unsupported movement measurement_source")
+    payload["measured_distance_m"] = _number(
+        payload.get("measured_distance_m"),
+        "measured_distance_m",
+        minimum=0.0,
+    )
+    event_type = payload.get("event_type")
+    if event_type not in MOVEMENT_SAFETY_EVENTS:
+        raise RescueEventError("unsupported movement safety event_type")
+    result = payload.get("result")
+    if result not in MOVEMENT_SAFETY_RESULTS:
+        raise RescueEventError("unsupported movement safety result")
+    reason_code = payload.get("reason_code")
+    expected_reason = MOVEMENT_REASON_BY_EVENT[event_type]
+    expected_result = MOVEMENT_RESULT_BY_EVENT[event_type]
+    if reason_code != expected_reason:
+        raise RescueEventError(
+            f"reason_code for {event_type} must be {expected_reason}"
+        )
+    if result != expected_result:
+        raise RescueEventError(
+            f"result for {event_type} must be {expected_result}"
+        )
+    _optional_position(payload)
 
 
 def _validate_mission_completed(payload: dict[str, Any]) -> None:
@@ -327,6 +434,7 @@ _PAYLOAD_VALIDATORS = {
     "authorization": _validate_authorization,
     "task_reassigned": _validate_task_reassigned,
     "link_state": _validate_link_state,
+    "movement_safety": _validate_movement_safety,
     "mission_completed": _validate_mission_completed,
 }
 
