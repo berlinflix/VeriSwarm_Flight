@@ -20,6 +20,7 @@ import {
 import flightDrone from "./assets/flight-drone.png";
 
 const liveFeedUrl = import.meta.env.VITE_DRONE_STREAM_URL;
+const QUALIFICATION_VIEW_KEY = "veriswarm.qualification.proof.v1";
 
 const scenarios = {
   honest: {
@@ -313,6 +314,34 @@ function qualificationScenario(proof, runningStage, error) {
       ],
     };
   }
+  if (proof?.clean?.evidence && !proof?.attack?.evidence) {
+    const clean = proof.clean.evidence;
+    const actual = clean.actual ?? {};
+    const authorization = clean.authorization ?? {};
+    const dashboardProof = clean.dashboard_proof ?? {};
+    const valid = dashboardProof.proof_valid === true
+      && actual.outcome === "ACCEPTED"
+      && Number(actual.semantic_acks ?? 0) >= 2;
+    const voterLines = (clean.peer_votes ?? []).map(
+      (vote) => `${vote.voter} ${vote.decision} target=${shortHash(clean.consensus_target_receipt_hash)}`,
+    );
+    return {
+      label: "Approved Baseline",
+      banner: valid ? "APPROVED HASH · 2/2 ACK" : "BASELINE FAILED",
+      tone: valid ? "green" : "amber",
+      semanticAcks: Number(actual.semantic_acks ?? 0),
+      supervisor: authorization.allowed ? "EXECUTE" : "HOLD",
+      provenance: valid ? "APPROVED HASH" : "UNVERIFIED",
+      evidence: valid ? "PASS" : "FAIL",
+      reason: dashboardProof.policy_reason ?? actual.reason ?? "clean_baseline_failed",
+      terminal: [
+        `alpha model=${shortHash(dashboardProof.observed_model_sha256, 16)} matches approved=${shortHash(dashboardProof.approved_model_sha256, 16)}`,
+        ...voterLines.slice(0, 2),
+        `clean consensus ${actual.outcome ?? "UNKNOWN"}; semantic_acks=${actual.semantic_acks ?? 0}/2`,
+        "model-hash attack NOT RUN; waiting for reviewer",
+      ].slice(0, 5),
+    };
+  }
   if (!proof?.attack?.evidence) return scenarios.modelIdle;
 
   const clean = proof.clean.evidence;
@@ -344,7 +373,14 @@ function qualificationScenario(proof, runningStage, error) {
 
 function useModelHashQualification() {
   const [backend, setBackend] = useState({ ready: false, loading: true, error: null, details: null });
-  const [proof, setProof] = useState(null);
+  const [proof, setProof] = useState(() => {
+    try {
+      const restored = JSON.parse(window.sessionStorage.getItem(QUALIFICATION_VIEW_KEY) ?? "null");
+      return restored?.clean?.evidence ? restored : null;
+    } catch {
+      return null;
+    }
+  });
   const [runningStage, setRunningStage] = useState(null);
   const [runError, setRunError] = useState(null);
 
@@ -365,6 +401,18 @@ function useModelHashQualification() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    try {
+      if (proof) {
+        window.sessionStorage.setItem(QUALIFICATION_VIEW_KEY, JSON.stringify(proof));
+      } else {
+        window.sessionStorage.removeItem(QUALIFICATION_VIEW_KEY);
+      }
+    } catch {
+      // Qualification remains usable when browser storage is unavailable.
+    }
+  }, [proof]);
+
   const runCase = async (caseName) => {
     const response = await fetch("/api/qualification/run", {
       method: "POST",
@@ -380,21 +428,27 @@ function useModelHashQualification() {
 
   const runProof = async () => {
     if (runningStage || !backend.ready) return;
-    setProof(null);
     setRunError(null);
     try {
-      setRunningStage("clean");
-      const clean = await runCase("clean");
-      const cleanEvidence = clean.evidence;
-      if (
-        cleanEvidence.actual?.outcome !== "ACCEPTED"
-        || Number(cleanEvidence.actual?.semantic_acks ?? 0) < 2
-      ) {
-        throw new Error("clean_baseline_gate_failed");
+      const cleanEvidence = proof?.clean?.evidence;
+      const cleanPassed = cleanEvidence?.actual?.outcome === "ACCEPTED"
+        && Number(cleanEvidence?.actual?.semantic_acks ?? 0) >= 2;
+      if (!cleanPassed) {
+        setProof(null);
+        setRunningStage("clean");
+        const clean = await runCase("clean");
+        setProof({ clean, attack: null });
+        if (
+          clean.evidence.actual?.outcome !== "ACCEPTED"
+          || Number(clean.evidence.actual?.semantic_acks ?? 0) < 2
+        ) {
+          throw new Error("clean_baseline_gate_failed");
+        }
+      } else {
+        setRunningStage("model_swap");
+        const attack = await runCase("model_swap");
+        setProof((current) => ({ clean: current.clean, attack }));
       }
-      setRunningStage("model_swap");
-      const attack = await runCase("model_swap");
-      setProof({ clean, attack });
     } catch (error) {
       setRunError(error.message);
     } finally {
@@ -719,6 +773,87 @@ function useLiveTelemetry() {
   return { telemetry, telemetryError };
 }
 
+function useRescueMission() {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch("/api/rescue/state", { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || !payload.state) {
+          throw new Error(payload.error ?? "rescue_state_unavailable");
+        }
+        if (active) {
+          setState(payload.state);
+          setError(null);
+        }
+      } catch (requestError) {
+        if (active) {
+          setState(null);
+          setError(requestError.message);
+        }
+      }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  return { state, error };
+}
+
+function RescueMission({ rescue }) {
+  const state = rescue.state;
+  const alerts = state?.alerts?.slice(0, 3) ?? [];
+  const mappedHazards = state?.hazards?.filter((hazard) => hazard.status === "MAPPED_HAZARD").length ?? 0;
+  const missionOnline = Boolean(state);
+  const eventCount = Number(state?.events_applied ?? 0);
+  const rescueDetail = state?.scenario_id
+    ?? (missionOnline
+      ? `CONNECTED · ${eventCount} VERIFIED EVENT${eventCount === 1 ? "" : "S"} · WAITING FOR MISSION`
+      : rescue.error ?? "RESCUE COLLECTOR OFFLINE");
+  const alertMessage = (alert) => {
+    if (alert.kind === "AUTHORIZATION" && alert.target_id && alert.message?.includes("model_hash_not_approved")) {
+      return `${String(alert.target_id).toUpperCase()} QUARANTINED — UNAPPROVED MODEL HASH`;
+    }
+    return String(alert.message ?? "Responder review required").replaceAll("_", " ");
+  };
+  return (
+    <section className={`rescue-mission ${missionOnline ? "online" : "offline"}`}>
+      <div className="rescue-title">
+        <span>OPERATION VARUNA</span>
+        <b>{state?.mission_status ?? "AWAITING RESCUE EVENTS"}</b>
+        <small>{rescueDetail}</small>
+      </div>
+      <div className="rescue-kpis">
+        <div><span>COVERAGE</span><b>{state ? `${Number(state.coverage?.percent ?? 0).toFixed(1)}%` : "—"}</b></div>
+        <div><span>PERSON CANDIDATES</span><b>{state?.people?.length ?? "—"}</b></div>
+        <div><span>HAZARDS</span><b>{state ? mappedHazards : "—"}</b></div>
+        <div><span>VEHICLES</span><b>{state?.vehicles?.length ?? "—"}</b></div>
+      </div>
+      <div className="rescue-alerts">
+        {alerts.length ? alerts.map((alert) => (
+          <div key={alert.alert_id} className={`rescue-alert priority-${alert.priority.toLowerCase()}`}>
+            <span>{alert.priority}</span>
+            <b>{alertMessage(alert)}</b>
+          </div>
+        )) : (
+          <div className="rescue-alert empty">
+            <span>{missionOnline ? "CLEAR" : "OFFLINE"}</span>
+            <b>{missionOnline ? "No active rescue alerts" : "No rescue state is being fabricated"}</b>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function chartPath(values, maximum, height = 148) {
   if (!values?.length) return "";
   const points = values.length === 1 ? [values[0], values[0]] : values;
@@ -734,7 +869,7 @@ function chartPath(values, maximum, height = 148) {
 function Analytics({ scenario, qualification = {} }) {
   const { telemetry, telemetryError } = useLiveTelemetry();
   const proof = qualification?.proof;
-  const proofActive = Boolean(proof?.attack?.evidence);
+  const proofActive = Boolean(proof?.clean?.evidence);
   const proofEvidence = [proof?.clean?.evidence, proof?.attack?.evidence].filter(Boolean);
   const proofConsensus = proofEvidence
     .map((row) => Number(row.timings_ms?.consensus))
@@ -748,8 +883,10 @@ function Analytics({ scenario, qualification = {} }) {
     ? consensus.reduce((total, value) => total + value, 0) / consensus.length
     : null;
   const latestSemantic = semantic.at(-1);
+  const cleanEvidence = proof?.clean?.evidence;
   const attackEvidence = proof?.attack?.evidence;
-  const proofFile = proof?.attack?.dashboardEvidenceFile;
+  const currentEvidence = attackEvidence ?? cleanEvidence;
+  const proofFile = proof?.attack?.dashboardEvidenceFile ?? proof?.clean?.dashboardEvidenceFile;
   const analyticsOffline = !proofActive && telemetryError;
   return (
     <section className="glass-panel analytics-panel">
@@ -804,16 +941,16 @@ function Analytics({ scenario, qualification = {} }) {
         <div><span>SEMANTIC</span><b>{latestSemantic ?? "—"}</b></div>
         <div>
           <span>{proofActive ? "DISPUTES" : "ALTITUDE"}</span>
-          <b>{proofActive ? attackEvidence?.actual?.disputes ?? "—" : telemetry?.altitude == null ? "—" : `${telemetry.altitude}m`}</b>
+          <b>{proofActive ? currentEvidence?.actual?.disputes ?? 0 : telemetry?.altitude == null ? "—" : `${telemetry.altitude}m`}</b>
         </div>
         <div>
           <span>{proofActive ? "RESULT" : "TRUST"}</span>
-          <b>{proofActive ? attackEvidence?.actual?.outcome ?? "—" : telemetry?.reputation == null ? "—" : `${Math.round(telemetry.reputation * 100)}%`}</b>
+          <b>{proofActive ? currentEvidence?.actual?.outcome ?? "—" : telemetry?.reputation == null ? "—" : `${Math.round(telemetry.reputation * 100)}%`}</b>
         </div>
       </div>
       <div className="analytics-source">
         <span>{proofActive ? proofFile ?? "create-once dashboard evidence" : telemetry?.source ?? "waiting for event source"}</span>
-        <b>{proofActive ? attackEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD" : telemetry?.action ?? scenario.supervisor}</b>
+        <b>{proofActive ? currentEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD" : telemetry?.action ?? scenario.supervisor}</b>
       </div>
     </section>
   );
@@ -824,13 +961,18 @@ function AttackSystems({ qualification }) {
   const cleanEvidence = proof?.clean?.evidence;
   const attackEvidence = proof?.attack?.evidence;
   const dashboardProof = attackEvidence?.dashboard_proof;
+  const visibleProof = dashboardProof ?? cleanEvidence?.dashboard_proof;
+  const cleanPassed = cleanEvidence?.actual?.outcome === "ACCEPTED"
+    && Number(cleanEvidence?.actual?.semantic_acks ?? 0) >= 2;
   const pending = Boolean(runningStage);
   const status = pending
     ? { message: runningStage === "clean" ? "VERIFYING CLEAN BASELINE" : "RUNNING MODEL-HASH ATTACK", tone: "pending" }
-    : runError
+      : runError
       ? { message: runError.toUpperCase(), tone: "error" }
       : dashboardProof?.proof_valid
         ? { message: "REAL EVIDENCE VERIFIED", tone: "success" }
+        : cleanPassed
+          ? { message: "APPROVED BASELINE VERIFIED · READY FOR ATTACK", tone: "success" }
         : backend.ready
           ? { message: "JETSON QUALIFIER READY", tone: "ready" }
           : { message: backend.loading ? "CONNECTING TO JETSON" : "QUALIFIER OFFLINE", tone: "error" };
@@ -857,7 +999,7 @@ function AttackSystems({ qualification }) {
             key={key}
             className={`attack-control ${key === "model" && dashboardProof ? "active" : ""} ${key === "model" && pending ? "pending" : ""}`}
             onClick={key === "model" ? runProof : undefined}
-            disabled={!enabled || pending || !backend.ready}
+            disabled={!enabled || pending || !backend.ready || (key === "model" && Boolean(dashboardProof))}
             aria-pressed={key === "model" && Boolean(dashboardProof)}
           >
             <Icon size={17} />
@@ -868,34 +1010,43 @@ function AttackSystems({ qualification }) {
       </div>
       <div className="qualification-proof">
         <div>
-          <span>CLEAN GATE</span>
+          <span>CLEAN BASELINE</span>
           <b>{cleanEvidence?.actual?.outcome ?? "NOT RUN"}</b>
           <small>semantic ACKs {cleanEvidence?.actual?.semantic_acks ?? "—"}/2</small>
         </div>
         <div>
-          <span>MODEL HASH</span>
+          <span>MODEL-HASH ATTACK</span>
           <b>{attackEvidence?.actual?.outcome ?? "NOT RUN"}</b>
-          <small>disputes {attackEvidence?.actual?.disputes ?? "—"}/2</small>
+          <small>peer disputes {attackEvidence?.actual?.disputes ?? "—"}/2</small>
         </div>
         <div>
           <span>RELEASED COMMAND</span>
-          <b>{attackEvidence?.authorization?.allowed ? "EXECUTE" : attackEvidence ? "HOLD" : "—"}</b>
+          <b>{attackEvidence?.authorization?.allowed ? "EXECUTE" : attackEvidence ? "HOLD · NO MOTION" : "—"}</b>
           <small>{attackEvidence ? JSON.stringify(attackEvidence.authorization?.released ?? []) : "waiting for evidence"}</small>
         </div>
       </div>
       <div className="hash-comparison">
-        <div><span>APPROVED</span><b>{shortHash(dashboardProof?.approved_model_sha256, 20)}</b></div>
+        <div><span>ALLOWLIST MODEL HASH</span><b>{shortHash(visibleProof?.approved_model_sha256, 20)}</b></div>
         <i aria-hidden="true" />
-        <div><span>OBSERVED ON ALPHA</span><b>{shortHash(dashboardProof?.observed_model_sha256, 20)}</b></div>
+        <div>
+          <span>{dashboardProof ? "CLAIMED HASH ON ALPHA" : "VERIFIED HASH ON ALPHA"}</span>
+          <b>{shortHash(visibleProof?.observed_model_sha256, 20)}</b>
+        </div>
       </div>
       <div className="attack-status">
         <span className={status.tone} aria-live="polite"><i /> {status.message}</span>
-        <button onClick={runProof} disabled={pending || !backend.ready}>
-          {pending ? "RUNNING…" : "RUN CLEAN + MODEL HASH"}
+        <button onClick={runProof} disabled={pending || !backend.ready || Boolean(dashboardProof)}>
+          {pending
+            ? "RUNNING…"
+            : dashboardProof
+              ? "RESULT RETAINED · RESET TO RERUN"
+              : cleanPassed
+                ? "RUN MODEL-HASH ATTACK"
+                : "RUN APPROVED BASELINE"}
         </button>
       </div>
       <div className="control-summary">
-        <span>{dashboardProof?.policy_reason ?? "MODEL POLICY NOT YET TESTED"}</span>
+        <span>{visibleProof?.policy_reason ?? "MODEL POLICY NOT YET TESTED"}</span>
         <b>{backend.details?.signerBackend === "optee" ? "ALPHA / OP-TEE" : "NO SIGNER CLAIM"}</b>
       </div>
     </section>
@@ -924,8 +1075,24 @@ function TerminalFeed({ scenario }) {
   );
 }
 
-function EvidenceStrip({ scenario }) {
-  const items = [
+function EvidenceStrip({ scenario, qualification }) {
+  const cleanEvidence = qualification?.proof?.clean?.evidence;
+  const attackEvidence = qualification?.proof?.attack?.evidence;
+  const dashboardProof = attackEvidence?.dashboard_proof;
+  const cleanProof = cleanEvidence?.dashboard_proof;
+  const items = dashboardProof ? [
+    ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
+    ["Attack ACKs", `${attackEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, Binary],
+    ["Peer verdict", `${attackEvidence?.actual?.disputes ?? 0}/2 DISPUTE`, ShieldX],
+    ["Safety response", attackEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD + QUARANTINE", ShieldCheck],
+    ["Retained proof", dashboardProof.proof_valid ? "VERIFIED · UNAPPROVED HASH" : "VERIFICATION FAILED", Fingerprint],
+  ] : cleanProof ? [
+    ["Approved provenance", cleanProof.proof_valid ? "VERIFIED" : "FAILED", Fingerprint],
+    ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
+    ["Model-hash attack", "NOT RUN", Binary],
+    ["Safety state", cleanEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD · NO MOTION", ShieldCheck],
+    ["Next step", "RUN MODEL-HASH ATTACK", Activity],
+  ] : [
     ["Provenance", scenario.provenance, Fingerprint],
     ["Semantic ACK", String(scenario.semanticAcks), Binary],
     ["Supervisor", scenario.supervisor, ShieldCheck],
@@ -945,7 +1112,7 @@ function EvidenceStrip({ scenario }) {
   );
 }
 
-function ScrollAnalyticsScene({ scenario, qualification }) {
+function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
   const storyRef = useRef(null);
   const { scrollYProgress } = useScroll({
     target: storyRef,
@@ -1009,7 +1176,9 @@ function ScrollAnalyticsScene({ scenario, qualification }) {
             <p>One presentation-ready view for retained evidence, live telemetry, attack controls, and cryptographic status.</p>
           </div>
 
-          <EvidenceStrip scenario={scenario} />
+          <EvidenceStrip scenario={scenario} qualification={qualification} />
+
+          <RescueMission rescue={rescue} />
 
           <div className="lower-zone">
             <div className="lower-aurora" aria-hidden="true" />
@@ -1033,6 +1202,7 @@ function ScrollAnalyticsScene({ scenario, qualification }) {
 
 export default function App() {
   const qualification = useModelHashQualification();
+  const rescue = useRescueMission();
   const scenario = useMemo(
     () => qualificationScenario(qualification.proof, qualification.runningStage, qualification.runError),
     [qualification.proof, qualification.runningStage, qualification.runError],
@@ -1068,6 +1238,7 @@ export default function App() {
       <ScrollAnalyticsScene
         scenario={scenario}
         qualification={qualification}
+        rescue={rescue}
       />
     </main>
   );

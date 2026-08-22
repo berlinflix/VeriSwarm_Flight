@@ -10,6 +10,8 @@ const attackFile = resolve(codebaseRoot, "attack.json");
 const eventFile = resolve(codebaseRoot, "results", "live_events.jsonl");
 const qualifierUrl = (process.env.VERISWARM_QUALIFIER_URL ?? "").replace(/\/$/, "");
 const qualifierToken = process.env.VERISWARM_QUALIFIER_TOKEN ?? "";
+const rescueUrl = (process.env.VERISWARM_RESCUE_URL ?? "").replace(/\/$/, "");
+const rescueToken = process.env.VERISWARM_RESCUE_TOKEN ?? "";
 
 const clearedAttacks = {
   model_swap: [],
@@ -56,6 +58,30 @@ async function callQualifier(path, options = {}) {
         "X-VeriSwarm-Token": qualifierToken,
         ...(options.headers ?? {}),
       },
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({ ok: false, error: "invalid_backend_response" }));
+    return { status: response.status, payload };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function callRescue(path) {
+  if (!rescueUrl) {
+    const error = new Error("rescue backend is not configured");
+    error.code = "rescue_not_configured";
+    throw error;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const headers = rescueToken
+      ? { "X-VeriSwarm-Token": rescueToken }
+      : {};
+    const response = await fetch(`${rescueUrl}${path}`, {
+      headers,
+      cache: "no-store",
       signal: controller.signal,
     });
     const payload = await response.json().catch(() => ({ ok: false, error: "invalid_backend_response" }));
@@ -214,6 +240,32 @@ function dashboardApi() {
           });
         } catch (error) {
           sendJson(response, 503, { ok: false, error: error.message });
+        }
+      });
+
+      server.middlewares.use("/api/rescue", async (request, response) => {
+        if (request.method !== "GET") {
+          sendJson(response, 405, { ok: false, error: "method_not_allowed" });
+          return;
+        }
+        const routes = {
+          "/status": "/health",
+          "/state": "/state",
+          "/report": "/report",
+        };
+        const target = routes[request.url];
+        if (!target) {
+          sendJson(response, 404, { ok: false, error: "not_found" });
+          return;
+        }
+        try {
+          const result = await callRescue(target);
+          sendJson(response, result.status, result.payload);
+        } catch (error) {
+          const message = error.name === "AbortError"
+            ? "rescue_timeout"
+            : error.code ?? error.message;
+          sendJson(response, 503, { ok: false, error: message });
         }
       });
     },

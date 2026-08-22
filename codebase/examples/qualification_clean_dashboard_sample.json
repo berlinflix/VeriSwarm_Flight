@@ -1,0 +1,29 @@
+{
+  "schema": "veriswarm.internal_qualifier.v1",
+  "run_id": "DEV-RESCUE-CLEAN-001",
+  "created_ns": 1787394603000000000,
+  "pass": true,
+  "actual": {
+    "outcome": "ACCEPTED",
+    "disputes": 0,
+    "semantic_acks": 2
+  },
+  "receipt": {
+    "model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "authorization": {
+    "allowed": false,
+    "released": [0.0, 0.0, 0.0]
+  },
+  "dashboard_proof": {
+    "schema": "veriswarm.qualification_dashboard.v1",
+    "case": "clean",
+    "approved_model_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "observed_model_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "observed_is_approved": true,
+    "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "signer_backend": "optee",
+    "policy_reason": "model_hash_approved",
+    "proof_valid": true
+  }
+}
