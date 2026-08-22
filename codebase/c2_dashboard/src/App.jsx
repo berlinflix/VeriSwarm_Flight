@@ -314,6 +314,34 @@ function qualificationScenario(proof, runningStage, error) {
       ],
     };
   }
+  if (proof?.clean?.evidence && !proof?.attack?.evidence) {
+    const clean = proof.clean.evidence;
+    const actual = clean.actual ?? {};
+    const authorization = clean.authorization ?? {};
+    const dashboardProof = clean.dashboard_proof ?? {};
+    const valid = dashboardProof.proof_valid === true
+      && actual.outcome === "ACCEPTED"
+      && Number(actual.semantic_acks ?? 0) >= 2;
+    const voterLines = (clean.peer_votes ?? []).map(
+      (vote) => `${vote.voter} ${vote.decision} target=${shortHash(clean.consensus_target_receipt_hash)}`,
+    );
+    return {
+      label: "Approved Baseline",
+      banner: valid ? "APPROVED HASH · 2/2 ACK" : "BASELINE FAILED",
+      tone: valid ? "green" : "amber",
+      semanticAcks: Number(actual.semantic_acks ?? 0),
+      supervisor: authorization.allowed ? "EXECUTE" : "HOLD",
+      provenance: valid ? "APPROVED HASH" : "UNVERIFIED",
+      evidence: valid ? "PASS" : "FAIL",
+      reason: dashboardProof.policy_reason ?? actual.reason ?? "clean_baseline_failed",
+      terminal: [
+        `alpha model=${shortHash(dashboardProof.observed_model_sha256, 16)} matches approved=${shortHash(dashboardProof.approved_model_sha256, 16)}`,
+        ...voterLines.slice(0, 2),
+        `clean consensus ${actual.outcome ?? "UNKNOWN"}; semantic_acks=${actual.semantic_acks ?? 0}/2`,
+        "model-hash attack NOT RUN; waiting for reviewer",
+      ].slice(0, 5),
+    };
+  }
   if (!proof?.attack?.evidence) return scenarios.modelIdle;
 
   const clean = proof.clean.evidence;
@@ -348,7 +376,7 @@ function useModelHashQualification() {
   const [proof, setProof] = useState(() => {
     try {
       const restored = JSON.parse(window.sessionStorage.getItem(QUALIFICATION_VIEW_KEY) ?? "null");
-      return restored?.clean?.evidence && restored?.attack?.evidence ? restored : null;
+      return restored?.clean?.evidence ? restored : null;
     } catch {
       return null;
     }
@@ -374,10 +402,14 @@ function useModelHashQualification() {
   }, []);
 
   useEffect(() => {
-    if (proof) {
-      window.sessionStorage.setItem(QUALIFICATION_VIEW_KEY, JSON.stringify(proof));
-    } else {
-      window.sessionStorage.removeItem(QUALIFICATION_VIEW_KEY);
+    try {
+      if (proof) {
+        window.sessionStorage.setItem(QUALIFICATION_VIEW_KEY, JSON.stringify(proof));
+      } else {
+        window.sessionStorage.removeItem(QUALIFICATION_VIEW_KEY);
+      }
+    } catch {
+      // Qualification remains usable when browser storage is unavailable.
     }
   }, [proof]);
 
@@ -396,21 +428,27 @@ function useModelHashQualification() {
 
   const runProof = async () => {
     if (runningStage || !backend.ready) return;
-    setProof(null);
     setRunError(null);
     try {
-      setRunningStage("clean");
-      const clean = await runCase("clean");
-      const cleanEvidence = clean.evidence;
-      if (
-        cleanEvidence.actual?.outcome !== "ACCEPTED"
-        || Number(cleanEvidence.actual?.semantic_acks ?? 0) < 2
-      ) {
-        throw new Error("clean_baseline_gate_failed");
+      const cleanEvidence = proof?.clean?.evidence;
+      const cleanPassed = cleanEvidence?.actual?.outcome === "ACCEPTED"
+        && Number(cleanEvidence?.actual?.semantic_acks ?? 0) >= 2;
+      if (!cleanPassed) {
+        setProof(null);
+        setRunningStage("clean");
+        const clean = await runCase("clean");
+        setProof({ clean, attack: null });
+        if (
+          clean.evidence.actual?.outcome !== "ACCEPTED"
+          || Number(clean.evidence.actual?.semantic_acks ?? 0) < 2
+        ) {
+          throw new Error("clean_baseline_gate_failed");
+        }
+      } else {
+        setRunningStage("model_swap");
+        const attack = await runCase("model_swap");
+        setProof((current) => ({ clean: current.clean, attack }));
       }
-      setRunningStage("model_swap");
-      const attack = await runCase("model_swap");
-      setProof({ clean, attack });
     } catch (error) {
       setRunError(error.message);
     } finally {
@@ -831,7 +869,7 @@ function chartPath(values, maximum, height = 148) {
 function Analytics({ scenario, qualification = {} }) {
   const { telemetry, telemetryError } = useLiveTelemetry();
   const proof = qualification?.proof;
-  const proofActive = Boolean(proof?.attack?.evidence);
+  const proofActive = Boolean(proof?.clean?.evidence);
   const proofEvidence = [proof?.clean?.evidence, proof?.attack?.evidence].filter(Boolean);
   const proofConsensus = proofEvidence
     .map((row) => Number(row.timings_ms?.consensus))
@@ -845,8 +883,10 @@ function Analytics({ scenario, qualification = {} }) {
     ? consensus.reduce((total, value) => total + value, 0) / consensus.length
     : null;
   const latestSemantic = semantic.at(-1);
+  const cleanEvidence = proof?.clean?.evidence;
   const attackEvidence = proof?.attack?.evidence;
-  const proofFile = proof?.attack?.dashboardEvidenceFile;
+  const currentEvidence = attackEvidence ?? cleanEvidence;
+  const proofFile = proof?.attack?.dashboardEvidenceFile ?? proof?.clean?.dashboardEvidenceFile;
   const analyticsOffline = !proofActive && telemetryError;
   return (
     <section className="glass-panel analytics-panel">
@@ -901,16 +941,16 @@ function Analytics({ scenario, qualification = {} }) {
         <div><span>SEMANTIC</span><b>{latestSemantic ?? "—"}</b></div>
         <div>
           <span>{proofActive ? "DISPUTES" : "ALTITUDE"}</span>
-          <b>{proofActive ? attackEvidence?.actual?.disputes ?? "—" : telemetry?.altitude == null ? "—" : `${telemetry.altitude}m`}</b>
+          <b>{proofActive ? currentEvidence?.actual?.disputes ?? 0 : telemetry?.altitude == null ? "—" : `${telemetry.altitude}m`}</b>
         </div>
         <div>
           <span>{proofActive ? "RESULT" : "TRUST"}</span>
-          <b>{proofActive ? attackEvidence?.actual?.outcome ?? "—" : telemetry?.reputation == null ? "—" : `${Math.round(telemetry.reputation * 100)}%`}</b>
+          <b>{proofActive ? currentEvidence?.actual?.outcome ?? "—" : telemetry?.reputation == null ? "—" : `${Math.round(telemetry.reputation * 100)}%`}</b>
         </div>
       </div>
       <div className="analytics-source">
         <span>{proofActive ? proofFile ?? "create-once dashboard evidence" : telemetry?.source ?? "waiting for event source"}</span>
-        <b>{proofActive ? attackEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD" : telemetry?.action ?? scenario.supervisor}</b>
+        <b>{proofActive ? currentEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD" : telemetry?.action ?? scenario.supervisor}</b>
       </div>
     </section>
   );
@@ -921,13 +961,18 @@ function AttackSystems({ qualification }) {
   const cleanEvidence = proof?.clean?.evidence;
   const attackEvidence = proof?.attack?.evidence;
   const dashboardProof = attackEvidence?.dashboard_proof;
+  const visibleProof = dashboardProof ?? cleanEvidence?.dashboard_proof;
+  const cleanPassed = cleanEvidence?.actual?.outcome === "ACCEPTED"
+    && Number(cleanEvidence?.actual?.semantic_acks ?? 0) >= 2;
   const pending = Boolean(runningStage);
   const status = pending
     ? { message: runningStage === "clean" ? "VERIFYING CLEAN BASELINE" : "RUNNING MODEL-HASH ATTACK", tone: "pending" }
-    : runError
+      : runError
       ? { message: runError.toUpperCase(), tone: "error" }
       : dashboardProof?.proof_valid
         ? { message: "REAL EVIDENCE VERIFIED", tone: "success" }
+        : cleanPassed
+          ? { message: "APPROVED BASELINE VERIFIED · READY FOR ATTACK", tone: "success" }
         : backend.ready
           ? { message: "JETSON QUALIFIER READY", tone: "ready" }
           : { message: backend.loading ? "CONNECTING TO JETSON" : "QUALIFIER OFFLINE", tone: "error" };
@@ -954,7 +999,7 @@ function AttackSystems({ qualification }) {
             key={key}
             className={`attack-control ${key === "model" && dashboardProof ? "active" : ""} ${key === "model" && pending ? "pending" : ""}`}
             onClick={key === "model" ? runProof : undefined}
-            disabled={!enabled || pending || !backend.ready}
+            disabled={!enabled || pending || !backend.ready || (key === "model" && Boolean(dashboardProof))}
             aria-pressed={key === "model" && Boolean(dashboardProof)}
           >
             <Icon size={17} />
@@ -981,18 +1026,27 @@ function AttackSystems({ qualification }) {
         </div>
       </div>
       <div className="hash-comparison">
-        <div><span>ALLOWLIST MODEL HASH</span><b>{shortHash(dashboardProof?.approved_model_sha256, 20)}</b></div>
+        <div><span>ALLOWLIST MODEL HASH</span><b>{shortHash(visibleProof?.approved_model_sha256, 20)}</b></div>
         <i aria-hidden="true" />
-        <div><span>CLAIMED HASH ON ALPHA</span><b>{shortHash(dashboardProof?.observed_model_sha256, 20)}</b></div>
+        <div>
+          <span>{dashboardProof ? "CLAIMED HASH ON ALPHA" : "VERIFIED HASH ON ALPHA"}</span>
+          <b>{shortHash(visibleProof?.observed_model_sha256, 20)}</b>
+        </div>
       </div>
       <div className="attack-status">
         <span className={status.tone} aria-live="polite"><i /> {status.message}</span>
         <button onClick={runProof} disabled={pending || !backend.ready || Boolean(dashboardProof)}>
-          {pending ? "RUNNING…" : dashboardProof ? "RESULT RETAINED · RESET TO RERUN" : "RUN CLEAN + MODEL HASH"}
+          {pending
+            ? "RUNNING…"
+            : dashboardProof
+              ? "RESULT RETAINED · RESET TO RERUN"
+              : cleanPassed
+                ? "RUN MODEL-HASH ATTACK"
+                : "RUN APPROVED BASELINE"}
         </button>
       </div>
       <div className="control-summary">
-        <span>{dashboardProof?.policy_reason ?? "MODEL POLICY NOT YET TESTED"}</span>
+        <span>{visibleProof?.policy_reason ?? "MODEL POLICY NOT YET TESTED"}</span>
         <b>{backend.details?.signerBackend === "optee" ? "ALPHA / OP-TEE" : "NO SIGNER CLAIM"}</b>
       </div>
     </section>
@@ -1025,13 +1079,19 @@ function EvidenceStrip({ scenario, qualification }) {
   const cleanEvidence = qualification?.proof?.clean?.evidence;
   const attackEvidence = qualification?.proof?.attack?.evidence;
   const dashboardProof = attackEvidence?.dashboard_proof;
-  const proofActive = Boolean(dashboardProof);
-  const items = proofActive ? [
+  const cleanProof = cleanEvidence?.dashboard_proof;
+  const items = dashboardProof ? [
     ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
     ["Attack ACKs", `${attackEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, Binary],
     ["Peer verdict", `${attackEvidence?.actual?.disputes ?? 0}/2 DISPUTE`, ShieldX],
     ["Safety response", attackEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD + QUARANTINE", ShieldCheck],
     ["Retained proof", dashboardProof.proof_valid ? "VERIFIED · UNAPPROVED HASH" : "VERIFICATION FAILED", Fingerprint],
+  ] : cleanProof ? [
+    ["Approved provenance", cleanProof.proof_valid ? "VERIFIED" : "FAILED", Fingerprint],
+    ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
+    ["Model-hash attack", "NOT RUN", Binary],
+    ["Safety state", cleanEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD · NO MOTION", ShieldCheck],
+    ["Next step", "RUN MODEL-HASH ATTACK", Activity],
   ] : [
     ["Provenance", scenario.provenance, Fingerprint],
     ["Semantic ACK", String(scenario.semanticAcks), Binary],

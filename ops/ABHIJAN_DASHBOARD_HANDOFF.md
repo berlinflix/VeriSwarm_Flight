@@ -76,8 +76,12 @@ VERISWARM_REPO=/your/path ./ops/start_abhijan_mac.sh
 It verifies the frozen commit, pings Alpha, opens the tunnel, fetches the token,
 checks the backend, and starts the dashboard.
 
-Then open **http://127.0.0.1:5175**, choose **Model Hash**, and run
-**CLEAN + MODEL HASH**.
+Then open **http://127.0.0.1:5175** and choose **Model Hash**.
+
+1. Click **RUN APPROVED BASELINE**. Stop and show the reviewer `2/2 ACK`, matching hashes,
+   and `MODEL-HASH ATTACK — NOT RUN`.
+2. Only after the clean baseline is visible, click **RUN MODEL-HASH ATTACK**. Show `0/2 ACK`,
+   `2/2 DISPUTE`, `HOLD · NO MOTION`, and quarantine.
 
 Press **Ctrl+C** in that terminal when finished — it closes the tunnel too.
 
@@ -102,7 +106,7 @@ cd /Volumes/HyperDrive/Development/VERISWARM_SIH_RESCUE_SECURITY
 ./ops/start_abhijan_rescue_mac.sh
 ```
 
-After CLEAN + MODEL HASH completes, the dashboard shows a create-once filename ending in
+After the second-stage model-hash attack completes, the dashboard shows a create-once filename ending in
 `.dashboard.json`. In a second Mac terminal publish that exact retained proof into the
 local rescue collector:
 

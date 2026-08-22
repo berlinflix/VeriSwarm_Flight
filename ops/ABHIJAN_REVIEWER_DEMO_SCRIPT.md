@@ -117,12 +117,13 @@ Point to **Safety response — HOLD + QUARANTINE** and the critical alert.
 1. Keep Bravo and Charlie peer services ready.
 2. On Alpha, run `~/vs peers`, `~/vs check`, then `~/vs dash`.
 3. On the Mac, run `./ops/start_abhijan_rescue_mac.sh`.
-4. Open `http://127.0.0.1:5175` and run the qualification once.
-5. Publish the exact retained model-swap filename with
+4. Open `http://127.0.0.1:5175`, run **Approved Baseline**, and pause on `2/2 ACK`.
+5. Run **Model-Hash Attack** only after explaining the clean state.
+6. Publish the exact retained model-swap filename with
    `./ops/publish_rescue_authorization.sh <filename>`.
-6. Confirm one vehicle, Alpha quarantined and the critical model-hash alert.
-7. Do not rerun after evidence is retained unless **Reset view** is intentionally selected.
-8. Do not install Jetson updates immediately before the demonstration.
+7. Confirm one vehicle, Alpha quarantined and the critical model-hash alert.
+8. Do not rerun after evidence is retained unless **Reset view** is intentionally selected.
+9. Do not install Jetson updates immediately before the demonstration.
 
 ## If the live qualifier is unavailable
 

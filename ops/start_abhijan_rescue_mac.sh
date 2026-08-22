@@ -98,7 +98,8 @@ unset VERISWARM_RESCUE_TOKEN
 
 echo
 echo "${GRN}Ready.${OFF} Open ${CYN}http://127.0.0.1:5175${OFF}"
-echo "Run CLEAN + MODEL HASH. The UI will show the create-once .dashboard.json filename."
+echo "Run APPROVED BASELINE first and pause on 2/2 ACK. Then run MODEL-HASH ATTACK."
+echo "The second stage will show the create-once .dashboard.json filename."
 echo "Publish that result in another Mac terminal with:"
 echo "  ./ops/publish_rescue_authorization.sh <filename-shown-by-dashboard>"
 echo "Ctrl+C here stops the dashboard, collector and SSH tunnel."

@@ -80,7 +80,10 @@ Leave it running. Ctrl+C here kills Abhijan's session.
 ./start_abhijan_mac.sh
 ```
 
-Then `http://127.0.0.1:5175` → **Model Hash** → **CLEAN + MODEL HASH**.
+Then `http://127.0.0.1:5175` → **Model Hash**:
+
+1. **RUN APPROVED BASELINE** and pause on `2/2 ACK` with the attack marked `NOT RUN`.
+2. **RUN MODEL-HASH ATTACK** and show `0/2 ACK`, `2/2 DISPUTE`, `HOLD`, and quarantine.
 
 He may re-run as often as he likes. Each click gets a fresh sequence and a fresh
 create-once evidence file; nothing is overwritten and no result is cached.
