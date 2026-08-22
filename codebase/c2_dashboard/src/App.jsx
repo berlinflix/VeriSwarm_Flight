@@ -992,6 +992,74 @@ function useRescueMission() {
   return { state, error, movementConfig, configError };
 }
 
+function useMovementAuthorization() {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  const [pending, setPending] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/movement-authorization/status", { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error ?? "movement_authorization_unavailable");
+        }
+        if (active) {
+          setState(payload);
+          setError(null);
+        }
+      } catch (requestError) {
+        if (active) {
+          setState(null);
+          setError(requestError.message);
+        }
+      }
+    };
+    poll();
+    const timer = window.setInterval(poll, 1_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const setPolicy = async (node, decision) => {
+    const action = `${node}:${decision}`;
+    setPending(action);
+    try {
+      const response = await fetch("/api/movement-authorization/policy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node,
+          decision,
+          reason: decision === "ALLOW"
+            ? "reviewer_nominal_release"
+            : decision === "HOLD"
+              ? "reviewer_safety_hold"
+              : "reviewer_quarantine",
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error ?? "movement_authorization_update_failed");
+      }
+      setState(payload);
+      setError(null);
+      return true;
+    } catch (requestError) {
+      setError(requestError.message);
+      return false;
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return { state, error, pending, setPolicy };
+}
+
 function RescueMission({ rescue }) {
   const [reportStatus, setReportStatus] = useState("EXPORT REPORT");
   const state = rescue.state;
@@ -1071,7 +1139,73 @@ function RescueMission({ rescue }) {
   );
 }
 
-function CellMovementPanel({ rescue }) {
+function MovementAuthorityPanel({ authority }) {
+  const nowMs = useClock(500);
+  const publisher = authority.state?.publisher;
+  const decisions = authority.state?.policy?.decisions ?? {};
+  const successAge = Number.isFinite(Number(publisher?.last_success_at_ms))
+    ? Math.max(0, nowMs - Number(publisher.last_success_at_ms))
+    : null;
+  const linkLive = successAge !== null && successAge <= 1_500 && !publisher?.last_error;
+  const update = async (node, decision) => {
+    if (decision !== "HOLD") {
+      const scope = node === "all" ? "all five simulated vehicles" : node.toUpperCase();
+      const verb = decision === "ALLOW" ? "release movement for" : "quarantine and land";
+      if (!window.confirm(`Confirm ${verb} ${scope}?`)) return;
+    }
+    await authority.setPolicy(node, decision);
+  };
+  return (
+    <section className={`movement-authority ${linkLive ? "link-live" : "link-hold"}`}>
+      <div className="movement-authority-heading">
+        <div>
+          <span>SIMULATION MOVEMENT AUTHORITY</span>
+          <b>Five-Lease Safety Control</b>
+        </div>
+        <div className="movement-authority-status">
+          <i />
+          <strong>{linkLive ? "LEASE LINK LIVE" : authority.error ? "LINK NOT ENABLED" : "FAIL-CLOSED HOLD"}</strong>
+          <small>{linkLive ? `${successAge}ms since Windows acceptance` : publisher?.last_error ?? authority.error ?? "awaiting first accepted snapshot"}</small>
+        </div>
+      </div>
+      <div className="movement-authority-actions">
+        <button type="button" onClick={() => update("all", "HOLD")} disabled={!authority.state || authority.pending !== null}>
+          HOLD ALL
+        </button>
+        <button type="button" onClick={() => update("all", "ALLOW")} disabled={!authority.state || authority.pending !== null}>
+          ALLOW ALL
+        </button>
+        <span>Independent from Jetson model-hash qualification</span>
+      </div>
+      <div className="movement-authority-grid" aria-label="Five-drone movement authorization controls">
+        {["alpha", "bravo", "charlie", "delta", "echo"].map((node) => {
+          const current = decisions[node]?.decision ?? "HOLD";
+          return (
+            <motion.div layout key={node} className={`movement-authority-row decision-${current.toLowerCase()}`}>
+              <div><b>{node.toUpperCase()}</b><span>{current}</span></div>
+              <div className="movement-decision-buttons">
+                {["ALLOW", "HOLD", "QUARANTINE"].map((decision) => (
+                  <button
+                    type="button"
+                    key={decision}
+                    className={current === decision ? "active" : ""}
+                    onClick={() => update(node, decision)}
+                    disabled={!authority.state || authority.pending !== null}
+                    aria-label={`${decision} ${node} simulation movement`}
+                  >
+                    {authority.pending === `${node}:${decision}` ? "…" : decision}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function CellMovementPanel({ rescue, movementAuthorization }) {
   const view = useMemo(
     () => buildCellMissionView(rescue.state, rescue.movementConfig),
     [rescue.state, rescue.movementConfig],
@@ -1088,13 +1222,15 @@ function CellMovementPanel({ rescue }) {
     <section className={`cell-movement-panel ${view.issues.length ? "has-conflicts" : ""}`}>
       <div className="cell-panel-heading">
         <div>
-          <span className="section-kicker">READ-ONLY FACTORYCITY CELL EVIDENCE</span>
+          <span className="section-kicker">FACTORYCITY CELL EVIDENCE + SIMULATION CONTROL</span>
           <div className="panel-title">Coverage Heatmap & Movement Safety</div>
         </div>
         <span className={`cell-validation ${view.issues.length ? "invalid" : ""}`}>
           <i /> {validationLabel}
         </span>
       </div>
+
+      <MovementAuthorityPanel authority={movementAuthorization} />
 
       <div className="cell-scoreboard" aria-label="Exact cell scoreboard">
         <div><span>ASSIGNED</span><b>{view.scoreboard.assigned}</b></div>
@@ -1459,7 +1595,7 @@ function EvidenceStrip({ scenario, qualification }) {
   );
 }
 
-function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
+function ScrollAnalyticsScene({ scenario, qualification, rescue, movementAuthorization }) {
   const storyRef = useRef(null);
   const { scrollYProgress } = useScroll({
     target: storyRef,
@@ -1528,7 +1664,7 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
 
           <RescueMission rescue={rescue} />
 
-          <CellMovementPanel rescue={rescue} />
+          <CellMovementPanel rescue={rescue} movementAuthorization={movementAuthorization} />
 
           <div className="lower-zone">
             <div className="lower-aurora" aria-hidden="true" />
@@ -1553,6 +1689,7 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
 export default function App() {
   const qualification = useModelHashQualification();
   const rescue = useRescueMission();
+  const movementAuthorization = useMovementAuthorization();
   const scenario = useMemo(
     () => qualificationScenario(qualification.proof, qualification.runningStage, qualification.runError),
     [qualification.proof, qualification.runningStage, qualification.runError],
@@ -1595,6 +1732,7 @@ export default function App() {
         scenario={scenario}
         qualification={qualification}
         rescue={rescue}
+        movementAuthorization={movementAuthorization}
       />
     </main>
   );

@@ -1324,6 +1324,206 @@ button {
   box-shadow: 0 0 10px currentColor;
 }
 
+.movement-authority {
+  margin: 9px 0;
+  padding: 9px;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 86% 0%, rgba(251, 191, 36, 0.08), transparent 38%),
+    rgba(5, 8, 12, 0.62);
+  transition: border-color 220ms ease, box-shadow 220ms ease;
+}
+
+.movement-authority.link-live {
+  border-color: rgba(74, 222, 128, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.035), 0 0 24px rgba(34, 197, 94, 0.035);
+}
+
+.movement-authority-heading,
+.movement-authority-actions,
+.movement-authority-row,
+.movement-authority-row > div,
+.movement-decision-buttons {
+  display: flex;
+  align-items: center;
+}
+
+.movement-authority-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.movement-authority-heading > div:first-child,
+.movement-authority-status {
+  display: flex;
+  flex-direction: column;
+}
+
+.movement-authority-heading span,
+.movement-authority-status small,
+.movement-authority-actions span,
+.movement-authority-row,
+.movement-authority button {
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+}
+
+.movement-authority-heading span {
+  color: #64748b;
+  font-size: 7px;
+  letter-spacing: 0.12em;
+}
+
+.movement-authority-heading b {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.movement-authority-status {
+  position: relative;
+  min-width: 210px;
+  padding-left: 13px;
+  text-align: right;
+}
+
+.movement-authority-status i {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fbbf24;
+  box-shadow: 0 0 10px #f59e0b;
+}
+
+.link-live .movement-authority-status i {
+  background: #4ade80;
+  box-shadow: 0 0 10px #22c55e;
+  animation: telemetryPulse 1.6s ease-in-out infinite;
+}
+
+.movement-authority-status strong {
+  color: #fcd34d;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.link-live .movement-authority-status strong { color: #86efac; }
+
+.movement-authority-status small {
+  max-width: 360px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 7px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.movement-authority-actions {
+  gap: 6px;
+  margin: 7px 0;
+}
+
+.movement-authority-actions span {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 7px;
+  letter-spacing: 0.06em;
+}
+
+.movement-authority button {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.5);
+  cursor: pointer;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.movement-authority button:hover:not(:disabled),
+.movement-authority button:focus-visible {
+  color: #f8fafc;
+  border-color: rgba(103, 232, 249, 0.48);
+  background: rgba(8, 145, 178, 0.13);
+  transform: translateY(-1px);
+}
+
+.movement-authority button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.movement-authority-actions button {
+  min-height: 24px;
+  padding: 4px 9px;
+}
+
+.movement-authority-actions button:first-child {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.movement-authority-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.movement-authority-row {
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid rgba(255,255,255,0.055);
+  border-radius: 7px;
+  background: rgba(255,255,255,0.018);
+}
+
+.movement-authority-row > div:first-child {
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.movement-authority-row b { font-size: 8px; }
+.movement-authority-row span { color: #fcd34d; font-size: 7px; }
+.movement-authority-row.decision-allow span { color: #86efac; }
+.movement-authority-row.decision-quarantine span { color: #fb7185; }
+
+.movement-decision-buttons {
+  gap: 3px;
+}
+
+.movement-decision-buttons button {
+  min-width: 0;
+  flex: 1;
+  padding: 4px 2px;
+  font-size: 5px;
+}
+
+.movement-authority-row.decision-allow button.active {
+  color: #86efac;
+  border-color: rgba(74, 222, 128, 0.38);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.movement-authority-row.decision-hold button.active {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.38);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.movement-authority-row.decision-quarantine button.active {
+  color: #fda4af;
+  border-color: rgba(251, 113, 133, 0.42);
+  background: rgba(225, 29, 72, 0.1);
+}
+
 .cell-scoreboard {
   display: grid;
   grid-template-columns: repeat(5, minmax(76px, 1fr));
@@ -2298,6 +2498,7 @@ button {
   .scanline,
   .attack-control.pending,
   .node-online.freshness-live i,
+  .link-live .movement-authority-status i,
   .map-entity-pulse {
     animation: none;
   }
@@ -2507,6 +2708,43 @@ button {
 
   .cell-scoreboard {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .movement-authority-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .movement-authority-status {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .movement-authority-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .movement-authority-actions span {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .movement-authority-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .movement-authority-row {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .movement-authority-row > div:first-child {
+    min-width: 76px;
+  }
+
+  .movement-decision-buttons {
+    flex: 1;
   }
 
   .drone-coverage-grid {
