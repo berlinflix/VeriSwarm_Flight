@@ -67,6 +67,16 @@ Functional rescue data-plane parent: `30736f3`
     enter perception, planning, localization, collision avoidance or authorization;
   - a survivor observation must remain visible after its observing drone is held or
     quarantined.
+- Reviewed Pratik's movement handoff at `f2bbd65` (`bc5cbd7` contract and `d96cf1c`
+  nominal controller). The published JSON freezes policy text, but the live controller
+  does not yet consume authorization, perform cell reassignment or emit the durable rescue
+  event stream. The first live A-to-B run is also still open.
+- Reviewed Ayush's heatmap, priority, scoreboard and read-only command-centre proposals.
+  Accepted the deterministic heatmap/scoreboard as P1 after P0 movement events are stable;
+  retained the natural-language query layer as optional and strictly read-only.
+- Published `MESSAGE_ABHIJAN_TO_PRATIK_AUTONOMOUS_MOVEMENT_AND_COMMAND_CENTRE_2026-08-22.md`
+  to request autonomous sensor-driven obstacle deflection, authorization gating and the
+  cell-level event inputs needed for a truthful heatmap.
 
 ## Network observed from Abhijan's Mac
 
@@ -90,6 +100,7 @@ codebase/tools/rescue_authorization_adapter.py
 codebase/tests/test_rescue_authorization_adapter.py
 codebase/docs/ABHIJAN_AUTHORIZATION_ADAPTER.md
 codebase/docs/team_updates/STATUS_ABHIJAN.md
+codebase/docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_AUTONOMOUS_MOVEMENT_AND_COMMAND_CENTRE_2026-08-22.md
 codebase/examples/qualification_clean_dashboard_sample.json
 codebase/examples/qualification_model_swap_dashboard_sample.json
 codebase/c2_dashboard/src/App.jsx
@@ -102,21 +113,25 @@ ops/DEMO_RUNBOOK.md
 
 ## Current blockers
 
-- The joint configuration-driven movement contract requested by Suyash at `ef56941` is
-  not yet available on this branch. Value-specific security movement tests cannot be
-  finalized until Pratik publishes the exact Point A/Point B, five-drone roster and poses,
-  sectors/cells, route, limits, obstacles, command lifecycle and repeatable reset details.
-- Pratik's CoSys rescue-event producer/handoff has not yet been reviewed in this branch.
-  Until that handoff is supplied, Abhijan will not invent coordinates, simulator truth,
-  movement state or reassignment events.
+- Pratik's contract is now available and reviewed, but it freezes one straight route with
+  no deviation and depth unavailable to avoidance. Autonomous obstacle deflection requires
+  a coordinated contract revision; it cannot be claimed from the current implementation.
+- Pratik's live controller still lacks authorization consumption, cell reassignment and a
+  durable rescue-event producer. The first retained live A-to-B RPC run is open.
+- A cell-level heatmap cannot be reconstructed from the current count-only assignment,
+  coverage and reassignment payloads. Suyash must freeze additive cell-ID/state fields
+  before Pratik and Abhijan depend on them.
+- The simulator-only authorization source proposed by Abhijan must remain separate from
+  the physical Jetson `abhijan-security` producer and be recorded in the joint contract.
 - A physical model-hash rerun still operationally requires Alpha, Bravo and Charlie to be
   reachable, Charlie's peer service to be running, and `vs dash` to be started on Alpha.
   This is not a code blocker for the already retained evidence or dashboard.
 
 ## Next checkpoint
 
-- Review Pratik's exact branch/commit handoff when supplied; do not redesign or merge it
-  blindly.
+- Port compatible Pratik movement files without merging the older branch wholesale.
+- After Pratik/Suyash freeze the revised movement and cell-event interface, implement the
+  simulator authorization lease, fail-closed command gate and movement-security tests.
 - Add compatible movement-security tests on this branch covering `ALLOW`, transient
   `HOLD`, `QUARANTINE`, abort/hover/land behavior, and unfinished-cell reassignment using
   the published configuration rather than hard-coded or invented simulator facts.
@@ -125,5 +140,7 @@ ops/DEMO_RUNBOOK.md
   vehicle-state and reassignment events projected through the frozen rescue data plane.
 - Keep attack evidence separate from genuine mission observations and use hidden simulator
   truth only for post-run scoring.
+- Add the deterministic heatmap and compact scoreboard after cell-level producers pass;
+  keep the read-only command-centre query layer optional until the P0 thin slice is stable.
 - Publish code, tests and any new blockers here; keep raw videos and runtime evidence out
   of Git.
