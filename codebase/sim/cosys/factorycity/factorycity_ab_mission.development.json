@@ -1,0 +1,80 @@
+{
+  "schema": "veriswarm.factorycity.ab_mission.v1",
+  "scenario_id": "factorycity_disaster_point_a_to_point_b_development",
+  "development_only": true,
+  "source_map": {
+    "world": "/Game/VeriSwarm/FactoryCity_Disaster",
+    "sha256": "703b892b0587b9a93bb3688fa36407a999a66b416ef1ddcc6c84dab6489c4cf0"
+  },
+  "rpc": {
+    "host": "127.0.0.1",
+    "port": 41451,
+    "timeout_seconds": 10.0
+  },
+  "vehicles": ["alpha", "bravo", "charlie", "delta", "echo"],
+  "formation_offsets_ned_m": {
+    "alpha": [-2.0, -2.0],
+    "bravo": [2.0, 2.0],
+    "charlie": [-2.0, 2.0],
+    "delta": [2.0, -2.0],
+    "echo": [0.0, 0.0]
+  },
+  "coordinate_transform": {
+    "world_to_meters": 100.0,
+    "ned_to_unreal_axis_sign": {"x": 1.0, "y": 1.0, "z": -1.0},
+    "point_a_unreal_cm": [13070.0, 2950.0, 130.0],
+    "point_b_unreal_cm": [3787.5360492931277, 4993.4910575448075, 921.6932947503205],
+    "point_b_landing_surface_world_z_cm": 900.1502685546875
+  },
+  "route": {
+    "target_delta_ned_m": [-92.82463950706873, 20.434910575448075],
+    "horizontal_distance_m": 95.04735277662299,
+    "cruise_z_ned_m": -10.0,
+    "horizontal_velocity_mps": 4.0,
+    "control_step_seconds": 0.25,
+    "arrival_tolerance_m": 1.0,
+    "maximum_lateral_error_m": 1.0,
+    "yaw_faces_route": true
+  },
+  "flood": {
+    "water_actor_id": "global_flood_surface",
+    "maximum_water_world_z_cm": 500.0,
+    "peak_water_z_ned_m": -3.7,
+    "manage_water_to_peak": true,
+    "rise_duration_seconds": 20.0,
+    "update_period_seconds": 1.0,
+    "leave_water_at_peak_after_mission": true,
+    "desired_clearance_above_water_m": 5.0,
+    "minimum_clearance_above_water_m": 3.0,
+    "landing_surface_minimum_clearance_above_water_m": 3.0
+  },
+  "limits": {
+    "takeoff_timeout_seconds": 20.0,
+    "command_timeout_seconds": 10.0,
+    "vertical_velocity_mps": 2.0,
+    "minimum_pairwise_separation_m": 1.5,
+    "post_takeoff_settle_seconds": 1.0,
+    "maximum_route_runtime_seconds": 45.0
+  },
+  "collision_policy": {
+    "monitor_from_state": "EN_ROUTE",
+    "ignore_takeoff_and_landing_collisions": true,
+    "new_collision_terminal_state": "DESTROYED_BY_COLLISION",
+    "terminal_behavior": "disarm_release_and_exclude"
+  },
+  "landing": {
+    "collision_actor": "VS_PointB_LandingCollision",
+    "platform_size_m": [5.5, 5.5],
+    "land_survivors_at_point_b": true
+  },
+  "weather": {
+    "Rain": 0.05,
+    "Roadwetness": 0.85,
+    "Fog": 0.0,
+    "Dust": 0.0,
+    "Snow": 0.0,
+    "RoadSnow": 0.0,
+    "MapleLeaf": 0.0,
+    "RoadLeaf": 0.0
+  }
+}

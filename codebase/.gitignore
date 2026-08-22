@@ -27,6 +27,9 @@ data/
 sim/logs/
 sim/annotated/
 eval/results/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 
 # Generated figures. Rebuilt from results/*.csv with `python -m eval.make_figures`,
 # so committing them just puts 2 MB of derived binaries in everyone's checkout and
