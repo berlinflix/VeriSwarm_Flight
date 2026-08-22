@@ -27,6 +27,7 @@ export function buildCellMissionView(state, movementConfig) {
       issues: [{ code: "movement_geometry_unavailable", cellId: null, detail: "immutable movement configuration missing" }],
       scoreboard: { assigned: 0, inProgress: 0, completed: 0, blocked: 0, conflicts: 1 },
       movement: [],
+      byDrone: [],
     };
   }
 
@@ -152,11 +153,27 @@ export function buildCellMissionView(state, movementConfig) {
 
   const uniqueIssues = [...new Map(issues.map((issue) => [issueKey(issue), issue])).values()];
   const count = (value) => cells.filter((cell) => cell.state === value).length;
+  const roster = Array.isArray(movementConfig?.vehicles?.roster)
+    ? movementConfig.vehicles.roster.filter((node) => typeof node === "string")
+    : [];
+  const byDrone = roster.map((node) => {
+    const owned = cells.filter((cell) => cell.owner === node);
+    return {
+      node,
+      cellIds: owned.map((cell) => cell.id),
+      assigned: owned.filter((cell) => !["UNREPORTED", "CONFLICT"].includes(cell.state)).length,
+      inProgress: owned.filter((cell) => cell.state === "IN_PROGRESS").length,
+      completed: owned.filter((cell) => cell.state === "COMPLETED").length,
+      blocked: owned.filter((cell) => cell.state === "BLOCKED").length,
+      conflicts: owned.filter((cell) => cell.state === "CONFLICT").length,
+    };
+  });
   return {
     ready: true,
     cells,
     issues: uniqueIssues,
     movement,
+    byDrone,
     scoreboard: {
       assigned: cells.filter((cell) => !["UNREPORTED", "CONFLICT"].includes(cell.state)).length,
       inProgress: count("IN_PROGRESS"),

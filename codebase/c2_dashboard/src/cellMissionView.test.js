@@ -42,6 +42,9 @@ test("heatmap geometry and colors come from exact IDs plus immutable configurati
   assert.equal(view.cells[5].state, "IN_PROGRESS");
   assert.equal(view.scoreboard.completed, 1);
   assert.equal(view.scoreboard.inProgress, 1);
+  assert.deepEqual(view.byDrone.map((item) => item.node), ["alpha", "bravo", "charlie", "delta", "echo"]);
+  assert.equal(view.byDrone.find((item) => item.node === "alpha").completed, 1);
+  assert.equal(view.byDrone.find((item) => item.node === "alpha").inProgress, 1);
 });
 
 test("unknown IDs and inconsistent ownership fail visibly instead of receiving a color", () => {

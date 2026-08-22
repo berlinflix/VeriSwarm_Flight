@@ -202,10 +202,10 @@ button {
 
 .drone-card {
   position: absolute;
-  width: 205px;
+  width: 172px;
   height: 296px;
   left: 50%;
-  margin-left: -102.5px;
+  margin-left: -86px;
   top: 34px;
   transform-origin: center;
   outline: none;
@@ -315,7 +315,7 @@ button {
   z-index: 1;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  gap: 4px;
   margin-top: 42px;
 }
 
@@ -332,8 +332,8 @@ button {
 .telemetry-cluster span {
   margin-bottom: 7px;
   color: #64748b;
-  font-size: 9px;
-  letter-spacing: 0.08em;
+  font-size: 7px;
+  letter-spacing: 0.03em;
 }
 
 .telemetry-cluster b {
@@ -388,6 +388,10 @@ button {
 
 .hash-value {
   color: #fda4af;
+}
+
+.coverage-value {
+  color: #67e8f9;
 }
 
 .capsule {
@@ -653,6 +657,142 @@ button {
     0 22px 50px rgba(0,0,0,0.32),
     inset 0 1px 0 rgba(255,255,255,0.07);
 }
+
+.mission-map-shell {
+  overflow: hidden;
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(14,116,144,0.09), rgba(255,255,255,0.012)),
+    rgba(5, 9, 13, 0.7);
+  backdrop-filter: blur(12px) saturate(112%);
+  box-shadow:
+    0 22px 50px rgba(0,0,0,0.32),
+    inset 0 1px 0 rgba(255,255,255,0.07);
+}
+
+.mission-map-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 270px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(8, 145, 178, 0.12), transparent 64%),
+    rgba(3, 7, 11, 0.68);
+}
+
+.mission-top-view-bg {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.23;
+  filter: grayscale(0.72) saturate(0.65) contrast(1.15);
+}
+
+.mission-map-svg {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 270px;
+}
+
+.map-axis-label,
+.map-cell-label,
+.map-endpoint text,
+.map-vehicle text {
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-weight: 800;
+}
+
+.map-axis-label {
+  fill: #64748b;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.map-cell {
+  stroke: rgba(148, 163, 184, 0.36);
+  stroke-width: 1.25;
+  fill: rgba(100, 116, 139, 0.14);
+  transition: fill 380ms ease, stroke 380ms ease;
+}
+
+.map-cell.state-assigned { fill: rgba(14,116,144,0.42); stroke: #38bdf8; }
+.map-cell.state-in_progress { fill: rgba(161,98,7,0.52); stroke: #facc15; }
+.map-cell.state-completed { fill: rgba(22,101,52,0.62); stroke: #4ade80; }
+.map-cell.state-blocked { fill: rgba(159,18,57,0.62); stroke: #fb7185; }
+.map-cell.state-conflict { fill: rgba(134,25,143,0.62); stroke: #e879f9; }
+
+.map-cell-label {
+  pointer-events: none;
+  fill: #e2e8f0;
+  font-size: 8px;
+}
+
+.map-endpoint circle {
+  fill: rgba(5, 9, 13, 0.9);
+  stroke: #67e8f9;
+  stroke-width: 2;
+}
+
+.map-endpoint.end circle { stroke: #86efac; }
+.map-endpoint text { fill: #f8fafc; font-size: 10px; }
+
+.map-vehicle circle:not(.map-vehicle-pulse) {
+  fill: #f8fafc;
+  stroke: #0891b2;
+  stroke-width: 3;
+}
+
+.map-vehicle-pulse {
+  fill: rgba(34, 211, 238, 0.14);
+  stroke: rgba(103, 232, 249, 0.54);
+  stroke-width: 1;
+}
+
+.map-vehicle text {
+  paint-order: stroke;
+  fill: #f8fafc;
+  stroke: rgba(3, 7, 11, 0.95);
+  stroke-width: 3px;
+  font-size: 10px;
+}
+
+.map-source-badge {
+  position: absolute;
+  z-index: 2;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #64748b;
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  letter-spacing: 0.07em;
+}
+
+.map-source-badge b { color: #67e8f9; }
+
+.map-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 280px;
+  padding: 28px;
+  color: #64748b;
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.map-placeholder b { color: #fbbf24; }
 
 .camera-stage {
   position: relative;
@@ -1022,6 +1162,69 @@ button {
 .cell-scoreboard b {
   font-size: 13px;
 }
+
+.drone-coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 9px;
+}
+
+.drone-coverage-row {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(56, 189, 248, 0.13);
+  border-radius: 8px;
+  background: rgba(8, 47, 73, 0.1);
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+}
+
+.drone-coverage-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.drone-coverage-heading b {
+  color: #e2e8f0;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.drone-coverage-heading span,
+.drone-coverage-row small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 6px;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drone-cell-chips {
+  display: flex;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.drone-cell-chips span {
+  flex: 1;
+  padding: 3px 2px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 4px;
+  color: #94a3b8;
+  background: rgba(100, 116, 139, 0.08);
+  font-size: 7px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.drone-cell-chips .state-assigned { color: #7dd3fc; border-color: rgba(56,189,248,0.32); background: rgba(14,116,144,0.15); }
+.drone-cell-chips .state-in_progress { color: #fde047; border-color: rgba(250,204,21,0.42); background: rgba(161,98,7,0.17); }
+.drone-cell-chips .state-completed { color: #86efac; border-color: rgba(74,222,128,0.38); background: rgba(22,101,52,0.18); }
+.drone-cell-chips .state-blocked { color: #fda4af; border-color: rgba(251,113,133,0.48); background: rgba(159,18,57,0.2); }
+.drone-cell-chips .state-conflict { color: #f0abfc; border-color: rgba(217,70,239,0.52); background: rgba(134,25,143,0.2); }
 
 .cell-content-grid {
   display: grid;
@@ -1950,6 +2153,10 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .drone-coverage-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .movement-ledger {
     padding-top: 8px;
     padding-left: 0;
@@ -2062,6 +2269,14 @@ button {
 
   .cell-scoreboard {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .drone-coverage-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .drone-coverage-row:last-child {
+    grid-column: 1 / -1;
   }
 
   .cell-content-grid {

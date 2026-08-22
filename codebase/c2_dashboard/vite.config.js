@@ -269,9 +269,11 @@ function dashboardApi() {
                 schema: config.schema,
                 scenario_id: config.scenario_id,
                 map_binding: config.map_binding,
+                endpoints_ned_m: config.endpoints_ned_m,
                 route: config.route,
                 search_cells: config.search_cells,
                 vehicles: config.vehicles,
+                command_limits: config.command_limits,
               },
             });
           } catch (error) {

@@ -12,16 +12,15 @@ import {
   ShieldCheck,
   ShieldX,
   TerminalSquare,
-  Video,
-  Wifi,
   X,
   Zap,
 } from "lucide-react";
 import flightDrone from "./assets/flight-drone.png";
 import { buildCellMissionView } from "./cellMissionView.js";
+import { buildMissionMap } from "./missionMap.js";
 import { isApprovedCleanEvidence } from "./modelHashQualification.js";
 
-const liveFeedUrl = import.meta.env.VITE_DRONE_STREAM_URL;
+const pratikTopViewUrl = import.meta.env.VITE_PRATIK_TOP_VIEW_URL;
 const QUALIFICATION_VIEW_KEY = "veriswarm.qualification.proof.v1";
 
 const scenarios = {
@@ -229,54 +228,36 @@ const baseDrones = [
   {
     id: "DELTA",
     serial: "DELTA",
-    role: "rescue observer",
+    role: "CoSys rescue vehicle",
     endpoint: "cosys://delta",
-    signer: "AWAITING RETAINED EVENT",
-    trust: "—",
-    latency: "—",
     slot: -2,
   },
   {
     id: "ALPHA",
     serial: "ALPHA",
-    role: "OP-TEE originator",
-    hash: "awaiting receipt",
-    endpoint: "192.168.50.10",
-    trust: "100%",
-    latency: "12.4ms",
-    signer: "OP-TEE VERIFIED",
+    role: "CoSys rescue vehicle",
+    endpoint: "cosys://alpha",
     slot: -1,
   },
   {
     id: "BRAVO",
     serial: "BRAVO",
-    role: "semantic peer",
-    hash: "policy verifier",
-    endpoint: "192.168.50.12",
-    trust: "98%",
-    latency: "14.1ms",
-    signer: "MISSION CA VERIFIED",
+    role: "CoSys rescue vehicle",
+    endpoint: "cosys://bravo",
     slot: 0,
   },
   {
     id: "CHARLIE",
     serial: "CHARLIE",
-    role: "semantic peer",
-    hash: "policy verifier",
-    endpoint: "192.168.50.13",
-    trust: "96%",
-    latency: "15.7ms",
-    signer: "MISSION CA VERIFIED",
+    role: "CoSys rescue vehicle",
+    endpoint: "cosys://charlie",
     slot: 1,
   },
   {
     id: "ECHO",
     serial: "ECHO",
-    role: "rescue observer",
+    role: "CoSys rescue vehicle",
     endpoint: "cosys://echo",
-    signer: "AWAITING RETAINED EVENT",
-    trust: "—",
-    latency: "—",
     slot: 2,
   },
 ];
@@ -291,6 +272,13 @@ const deckOffset = {
 
 function metricValue(value, suffix = "") {
   return Number.isFinite(value) ? `${Math.round(value)}${suffix}` : "—";
+}
+
+function nedLabel(position) {
+  if (!Array.isArray(position) || position.length !== 3 || !position.every((value) => Number.isFinite(Number(value)))) {
+    return "—";
+  }
+  return position.map((value) => Number(value).toFixed(1)).join(", ");
 }
 
 function toneClass(tone) {
@@ -575,7 +563,7 @@ function DroneCard({ drone, index, activeCard, setActiveCard, onSelect }) {
       <div className="drone-glass">
         <div className="card-header">
           <div>
-            <span className="node-kicker">TRUSTED NODE</span>
+            <span className="node-kicker">SIMULATED VEHICLE</span>
             <h2>{drone.id}</h2>
           </div>
           <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.status}</span>
@@ -589,8 +577,8 @@ function DroneCard({ drone, index, activeCard, setActiveCard, onSelect }) {
           {Array.from({ length: 18 }).map((_, bar) => <i key={bar} style={{ height: `${18 + ((bar * 17) % 34)}%` }} />)}
         </div>
         <div className="card-meta">
-          <span>{drone.role}</span>
-          <span className="hash-value">{drone.hash}</span>
+          <span>{drone.linkState}</span>
+          <span className="coverage-value">{drone.completedCells}/{drone.totalCells} CELLS</span>
         </div>
       </div>
     </motion.article>
@@ -612,12 +600,12 @@ function DroneDetailsModal({ drone, onClose }) {
   }, [onClose]);
 
   const details = [
-    ["Mesh endpoint", drone.endpoint],
-    ["Swarm role", drone.role],
-    ["Identity signer", drone.signer],
-    ["Runtime hash", drone.hash],
-    ["Trust score", drone.trust],
-    ["Link latency", drone.latency],
+    ["Simulation endpoint", drone.endpoint],
+    ["Simulation role", drone.role],
+    ["NED position (N, E, D)", nedLabel(drone.position)],
+    ["Link state", drone.linkState],
+    ["Owned cells", drone.cellIds.length ? drone.cellIds.join(", ") : "—"],
+    ["Blocked cells", String(drone.blockedCells)],
   ];
 
   return (
@@ -642,9 +630,9 @@ function DroneDetailsModal({ drone, onClose }) {
       >
         <div className="modal-drone-header">
           <div>
-            <span className="node-kicker">TRUSTED SWARM NODE</span>
+            <span className="node-kicker">PRATIK COSYS SIMULATION VEHICLE</span>
             <h2 id={`drone-modal-${drone.id}`}>{drone.id}</h2>
-            <p>{drone.role} · encrypted Ethernet mesh</p>
+            <p>{drone.role} · retained rescue telemetry</p>
           </div>
           <div className="modal-header-actions">
             <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.status}</span>
@@ -670,9 +658,9 @@ function DroneDetailsModal({ drone, onClose }) {
         </div>
 
         <div className="modal-signal-row">
-          <span>SECURE TELEMETRY CHANNEL</span>
+          <span>SIMULATION TELEMETRY CHANNEL</span>
           <div aria-hidden="true">{Array.from({ length: 22 }).map((_, index) => <i key={index} style={{ height: `${8 + ((index * 19) % 25)}px` }} />)}</div>
-          <b>LINK NOMINAL</b>
+          <b>{drone.linkState}</b>
         </div>
         <p className="modal-dismiss-hint">Click outside this card or press ESC to return to command view.</p>
       </motion.section>
@@ -680,10 +668,14 @@ function DroneDetailsModal({ drone, onClose }) {
   );
 }
 
-function DroneDeck({ proof, backend, rescue }) {
+function DroneDeck({ rescue }) {
   const [activeCard, setActiveCard] = useState(null);
   const [selectedDrone, setSelectedDrone] = useState(null);
-  const dashboardProof = proof?.attack?.evidence?.dashboard_proof;
+  const missionView = useMemo(
+    () => buildCellMissionView(rescue.state, rescue.movementConfig),
+    [rescue.state, rescue.movementConfig],
+  );
+  const coverageByDrone = new Map((missionView.byDrone ?? []).map((item) => [item.node.toUpperCase(), item]));
   const projectedVehicles = new Map(
     (rescue?.state?.vehicles ?? []).map((vehicle) => [String(vehicle.node).toUpperCase(), vehicle]),
   );
@@ -693,11 +685,7 @@ function DroneDeck({ proof, backend, rescue }) {
     const altitude = Array.isArray(position) && Number.isFinite(Number(position[2]))
       ? Math.abs(Number(position[2]))
       : null;
-    const hash = dashboardProof && ["ALPHA", "BRAVO", "CHARLIE"].includes(drone.id)
-      ? drone.id === "ALPHA"
-        ? shortHash(dashboardProof.observed_model_sha256)
-        : shortHash(dashboardProof.approved_model_sha256)
-      : drone.hash ?? "awaiting evidence";
+    const coverage = coverageByDrone.get(drone.id);
     return {
       ...drone,
       alt: altitude,
@@ -705,7 +693,12 @@ function DroneDeck({ proof, backend, rescue }) {
       online: Boolean(vehicle) && vehicle.link_state !== "OFFLINE",
       status: vehicle?.state ?? "AWAITING",
       vehicleState: vehicle?.state ?? null,
-      hash,
+      position,
+      linkState: vehicle?.link_state ?? "AWAITING LINK",
+      cellIds: coverage?.cellIds ?? [],
+      completedCells: coverage?.completed ?? 0,
+      blockedCells: coverage?.blocked ?? 0,
+      totalCells: coverage?.cellIds?.length ?? 0,
     };
   });
   return (
@@ -725,7 +718,7 @@ function DroneDeck({ proof, backend, rescue }) {
           />
         ))}
         <div className="deck-caption">
-          FIVE-DRONE RESCUE FLEET · DELTA / ALPHA / BRAVO / CHARLIE / ECHO · {rescue?.state ? "RETAINED STATE LIVE" : backend.ready ? "QUALIFIER READY" : "AWAITING EVENTS"}
+          PRATIK FIVE-DRONE SIMULATION · DELTA / ALPHA / BRAVO / CHARLIE / ECHO · {rescue?.state ? "RETAINED TELEMETRY LIVE" : "AWAITING SIMULATION EVENTS"}
         </div>
       </section>
       <AnimatePresence>
@@ -735,45 +728,97 @@ function DroneDeck({ proof, backend, rescue }) {
   );
 }
 
-function RealTimeView({ scenario }) {
-  const [feedFailed, setFeedFailed] = useState(false);
-  const showFeed = Boolean(liveFeedUrl) && !feedFailed;
+function RealTimeView({ rescue }) {
+  const [topViewFailed, setTopViewFailed] = useState(false);
+  const missionView = useMemo(
+    () => buildCellMissionView(rescue.state, rescue.movementConfig),
+    [rescue.state, rescue.movementConfig],
+  );
+  const missionMap = useMemo(
+    () => buildMissionMap(missionView, rescue.movementConfig, rescue.state?.vehicles ?? []),
+    [missionView, rescue.movementConfig, rescue.state?.vehicles],
+  );
+  const showTopView = Boolean(pratikTopViewUrl) && !topViewFailed;
+  const eventCount = Number(rescue.state?.events_applied ?? 0);
   return (
     <section className="capsule">
       <div className="panel-heading">
         <div>
-          <span className="section-kicker">ETHERNET INGEST</span>
-          <div className="panel-title">Real-Time View</div>
+          <span className="section-kicker">PRATIK SIMULATION · NED TOP VIEW</span>
+          <div className="panel-title">Live Coverage Map</div>
         </div>
-        <span className={`feed-state ${showFeed ? "connected" : "standby"}`}>
-          <i /> {showFeed ? "LIVE" : "AWAITING FEED"}
+        <span className={`feed-state ${rescue.state ? "connected" : "standby"}`}>
+          <i /> {rescue.state ? "LIVE EVENTS" : "AWAITING EVENTS"}
         </span>
       </div>
-      <div className="camera-shell">
-        <div className="camera-stage">
-          {showFeed ? (
+      <div className="mission-map-shell">
+        <div className="mission-map-stage">
+          {showTopView && (
             <img
-              className="live-feed"
-              src={liveFeedUrl}
-              alt="Live drone simulation feed"
-              onError={() => setFeedFailed(true)}
+              className="mission-top-view-bg"
+              src={pratikTopViewUrl}
+              alt="Pratik simulation top-view background"
+              onError={() => setTopViewFailed(true)}
             />
+          )}
+          {missionMap.ready ? (
+            <svg
+              className="mission-map-svg"
+              viewBox={`0 0 ${missionMap.width} ${missionMap.height}`}
+              preserveAspectRatio="xMidYMid slice"
+              role="img"
+              aria-label="Live Pratik simulation coverage heatmap"
+            >
+              <defs>
+                <pattern id="ned-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(148,163,184,0.12)" strokeWidth="1" />
+                </pattern>
+              </defs>
+              <rect width={missionMap.width} height={missionMap.height} fill="url(#ned-grid)" />
+              <text className="map-axis-label" x="22" y="26">N ↑</text>
+              <text className="map-axis-label" x={missionMap.width - 50} y={missionMap.height - 18}>E →</text>
+              {missionMap.cells.map((cell) => (
+                <g key={cell.id}>
+                  <polygon
+                    className={`map-cell state-${cell.state.toLowerCase()}`}
+                    points={cell.points}
+                  >
+                    <title>{cell.id} · {cell.state} · owner {cell.owner ?? "unknown"}</title>
+                  </polygon>
+                  <text className="map-cell-label" x={cell.label.x} y={cell.label.y + 3} textAnchor="middle">
+                    {cell.id.replace("route_cell_", "")}
+                  </text>
+                </g>
+              ))}
+              <g className="map-endpoint start" transform={`translate(${missionMap.start.x} ${missionMap.start.y})`}>
+                <circle r="12" /><text textAnchor="middle" y="4">A</text>
+              </g>
+              <g className="map-endpoint end" transform={`translate(${missionMap.end.x} ${missionMap.end.y})`}>
+                <circle r="12" /><text textAnchor="middle" y="4">B</text>
+              </g>
+              {missionMap.vehicles.map((vehicle) => (
+                <g key={vehicle.node} className="map-vehicle" transform={`translate(${vehicle.x} ${vehicle.y})`}>
+                  <circle className="map-vehicle-pulse" r="15" />
+                  <circle r="6" />
+                  <text x="11" y="4">{String(vehicle.node).toUpperCase()}</text>
+                  <title>{String(vehicle.node).toUpperCase()} · {vehicle.state ?? "state unavailable"}</title>
+                </g>
+              ))}
+            </svg>
           ) : (
-            <div className="feed-placeholder">
-              <Video size={30} />
-              <b>PRATIK SIMULATION FEED</b>
-              <span>Connect the Ethernet stream bridge to populate this viewport.</span>
+            <div className="map-placeholder">
+              <b>IMMUTABLE MAP CONFIGURATION UNAVAILABLE</b>
+              <span>The dashboard will not invent route cells or vehicle coordinates.</span>
             </div>
           )}
-          <div className="feed-overlay">
-            <span><Wifi size={13} /> ETH0</span>
-            <span>COSYS-AIRSIM / RPC 41451</span>
+          <div className="map-source-badge">
+            <span>{showTopView ? "PRATIK TOP VIEW + NED OVERLAY" : "NED EVENT OVERLAY"}</span>
+            <b>{missionMap.vehicles.length}/5 POSITIONED</b>
           </div>
-            <div className="scanline" />
         </div>
         <div className="feed-footer">
-          <span><Server size={14} /> SOURCE: {liveFeedUrl ? "VITE_DRONE_STREAM_URL" : "NOT CONFIGURED"}</span>
-          <b>{scenario.reason}</b>
+          <span><Server size={14} /> SOURCE: PRATIK COSYS RETAINED RESCUE EVENTS</span>
+          <b>{rescue.state ? `${eventCount} EVENTS APPLIED` : "AWAITING STATE"}</b>
         </div>
       </div>
     </section>
@@ -948,6 +993,29 @@ function CellMovementPanel({ rescue }) {
         <div><span>COMPLETED</span><b>{view.scoreboard.completed}</b></div>
         <div><span>BLOCKED</span><b>{view.scoreboard.blocked}</b></div>
         <div><span>CONFLICTS</span><b>{view.scoreboard.conflicts}</b></div>
+      </div>
+
+      <div className="drone-coverage-grid" aria-label="Five-drone coverage breakdown">
+        {(view.byDrone ?? []).map((drone) => (
+          <div key={drone.node} className={`drone-coverage-row node-${drone.node}`}>
+            <div className="drone-coverage-heading">
+              <b>{drone.node.toUpperCase()}</b>
+              <span>{drone.completed}/{drone.cellIds.length} COMPLETE</span>
+            </div>
+            <div className="drone-cell-chips">
+              {view.cells.filter((cell) => cell.owner === drone.node).map((cell) => (
+                <span
+                  key={cell.id}
+                  className={`state-${cell.state.toLowerCase()}`}
+                  title={`${cell.id} · ${cell.state}`}
+                >
+                  {cell.id.replace("route_cell_", "")}
+                </span>
+              ))}
+            </div>
+            <small>{drone.inProgress} ACTIVE · {drone.blocked} BLOCKED · {drone.conflicts} CONFLICT</small>
+          </div>
+        ))}
       </div>
 
       <div className="cell-content-grid">
@@ -1391,8 +1459,8 @@ export default function App() {
         </header>
 
         <section className="upper-tier">
-          <DroneDeck proof={qualification.proof} backend={qualification.backend} rescue={rescue} />
-          <RealTimeView scenario={scenario} />
+          <DroneDeck rescue={rescue} />
+          <RealTimeView rescue={rescue} />
         </section>
 
         <div className="scroll-cue" aria-hidden="true">
