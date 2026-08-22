@@ -23,13 +23,13 @@ The runner is unarmed and has no flight, signing, OP-TEE or actuator interface.
 - A pair with no accepted homography-projected intersection displays
   `ABSTAIN / NO VALID INTERSECTION` and its exact reason. If no pair intersects,
   the dashboard says `NO CAMERA PAIR HAS A VALID INTERSECTION`.
-- In semantic mode, an `ABSTAIN` pair may additionally show an explicitly
-  labelled `ASSUMED SAME OBJECT` side-by-side panel when same-class YOLO crops
-  exceed the configured rough colour/shape appearance threshold. This is an
-  operator-requested visualization heuristic: it is recorded as
-  `appearance_assumption`, keeps the geometric decision at `ABSTAIN`, and always
-  states `identity_proven=false`. It must not be reported as calibrated geometry,
-  object re-identification or proof that two similar instances are one object.
+- Appearance similarity never connects cameras by itself. Same-class colour and
+  shape scores remain diagnostic metadata, but `assumed_same_object` requires a
+  valid homography-projected shared view. An unrelated or reverse-facing camera
+  therefore stays `ABSTAIN` even if it sees a similar object. Person colour uses
+  the central torso/clothing region instead of the full box and must also satisfy
+  the configured person-colour threshold. Evidence always keeps
+  `identity_proven=false`; this is not calibrated object re-identification.
 
 Every pair is directional only for projection: `cam1 -> cam2` means Camera 1's
 footprint was projected into Camera 2 coordinates. It is still the one unordered
@@ -167,5 +167,7 @@ two measured semantic claims differ.
 
 The optional rough-appearance heuristic defaults to `--appearance-threshold
 0.60`. It compares only same-class YOLO crops using HSV colour distribution and
-bounding-box aspect similarity. The dashboard counts these separately as
-`assumed object intersections`; it never adds them to `valid intersections`.
+bounding-box aspect similarity. `--person-colour-threshold` defaults to `0.60`
+and applies an additional HSV gate to the central torso/clothing crop. Appearance
+without projected shared-view geometry is counted as rejected and never becomes
+an intersection.

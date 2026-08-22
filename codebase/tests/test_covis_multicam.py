@@ -21,6 +21,8 @@ from tools.covis_live import (  # noqa: E402
 )
 from tools.covis_multicam import (  # noqa: E402
     CameraSpec,
+    _appearance_match_allowed,
+    _colour_region,
     _parser,
     _validate_args,
     assess_all_pairs,
@@ -370,7 +372,7 @@ def test_feature_gate_failure_is_explicit_no_intersection_abstain():
     assert pair.assessment.decision == "ABSTAIN"
 
 
-def test_matching_same_class_crops_are_shown_as_an_explicit_assumption_only():
+def test_matching_same_class_crops_cannot_connect_views_without_geometry():
     specs = _specs(2)
     frame = _frame(21)
     packets = {"cam1": _packet(frame), "cam2": _packet(frame.copy())}
@@ -391,12 +393,14 @@ def test_matching_same_class_crops_are_shown_as_an_explicit_assumption_only():
     assert pair.overlap_available is False
     assert pair.displayed_decision == "ABSTAIN"
     assert pair.appearance_assumption is not None
-    assert pair.appearance_assumption.assumed_same_object is True
+    assert pair.appearance_assumption.assumed_same_object is False
+    assert pair.appearance_assumption.geometry_supported is False
     assert pair.appearance_assumption.identity_proven is False
     assert pair.appearance_assumption.class_name == "car"
     event = event_record(1, specs, packets, observations, (pair,), "f" * 64)
     assumption = event["pairs"][0]["appearance_assumption"]
-    assert assumption["assumed_same_object"] is True
+    assert assumption["assumed_same_object"] is False
+    assert assumption["geometry_supported"] is False
     assert assumption["identity_proven"] is False
 
     dashboard = render_dashboard(
@@ -410,6 +414,51 @@ def test_matching_same_class_crops_are_shown_as_an_explicit_assumption_only():
     )
     assert dashboard.shape == (700, 1000, 3)
     assert np.count_nonzero(dashboard) > 0
+
+
+def test_matching_same_class_crops_need_projected_shared_view_geometry():
+    specs = _specs(2)
+    frame = _frame(23)
+    packets = {"cam1": _packet(frame), "cam2": _packet(frame.copy())}
+    observations = {"cam1": _observation(), "cam2": _observation()}
+
+    pair = assess_all_pairs(
+        specs,
+        packets,
+        observations,
+        cv2_module=cv2,
+        now_monotonic_ns=1_000_000_000,
+        alignment_provider=_alignment,
+    )[0]
+
+    assert pair.overlap_available is True
+    assert pair.appearance_assumption is not None
+    assert pair.appearance_assumption.assumed_same_object is True
+    assert pair.appearance_assumption.geometry_supported is True
+    assert pair.appearance_assumption.identity_proven is False
+
+
+def test_person_appearance_requires_torso_colour_similarity():
+    allowed, colour_passed = _appearance_match_allowed(
+        class_name="person",
+        score=0.80,
+        colour_similarity=0.40,
+        appearance_threshold=0.45,
+        person_colour_threshold=0.65,
+        geometry_supported=True,
+    )
+
+    assert allowed is False
+    assert colour_passed is False
+
+
+def test_person_colour_uses_central_torso_region():
+    crop = np.zeros((100, 80, 3), dtype=np.uint8)
+
+    region, name = _colour_region(crop, "person")
+
+    assert name == "person_torso"
+    assert region.shape == (55, 48, 3)
 
 
 def test_different_classes_never_create_an_appearance_assumption():
