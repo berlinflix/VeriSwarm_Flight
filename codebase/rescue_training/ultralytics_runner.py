@@ -41,6 +41,8 @@ from .batch_gate import (
     validate_batch_decision,
 )
 from .cloud_environment import (
+    RTX_5090_MEMORY_BYTES,
+    RTX_5090_MIN_MEMORY_BYTES,
     CloudEnvironmentError,
     load_cloud_environment,
     validate_cloud_environment,
@@ -981,7 +983,23 @@ def run_training(
         raise TrainingExecutionError(
             "live GPU identity differs from cloud-environment evidence"
         )
-    if actual_runtime.get("gpu_total_memory_bytes") != cloud_evidence["gpu"]["memory_bytes"]:
+    # ``nvidia-smi`` reports MiB-rounded board memory while Torch reports the
+    # CUDA-usable total, which is always smaller by the driver/ECC reservation
+    # (~498 MiB on this RTX 5090).  Byte equality across those two independent
+    # sources can never hold, so validate the live figure the same way the
+    # cloud manifest already validates GPU memory: it must not exceed the
+    # recorded board memory and must stay inside the approximate-32-GiB band.
+    live_gpu_memory = actual_runtime.get("gpu_total_memory_bytes")
+    recorded_gpu_memory = cloud_evidence["gpu"]["memory_bytes"]
+    if (
+        type(live_gpu_memory) is not int
+        or live_gpu_memory > recorded_gpu_memory
+        or not (
+            RTX_5090_MIN_MEMORY_BYTES
+            <= live_gpu_memory
+            <= RTX_5090_MEMORY_BYTES
+        )
+    ):
         raise TrainingExecutionError(
             "live GPU memory differs from cloud-environment evidence"
         )
