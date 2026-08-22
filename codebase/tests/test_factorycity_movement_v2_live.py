@@ -117,12 +117,13 @@ class _CleanupClient:
 def test_failure_cleanup_hovers_airborne_and_disarms_only_landed():
     client = _CleanupClient()
 
-    failures = _fail_closed_hover_or_disarm_landed(
+    failures, held_airborne = _fail_closed_hover_or_disarm_landed(
         client,
         ("flying", "landed"),
     )
 
     assert failures == ()
+    assert held_airborne == ("flying",)
     assert ("hover", "flying") in client.calls
     assert ("arm", "landed", False) in client.calls
     assert ("arm", "flying", False) not in client.calls

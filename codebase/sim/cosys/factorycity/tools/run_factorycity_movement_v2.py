@@ -197,10 +197,11 @@ def _join_if_future(value: Any) -> Any:
 def _fail_closed_hover_or_disarm_landed(
     client: object,
     nodes: Sequence[str],
-) -> tuple[str, ...]:
-    """Hover airborne vehicles and disarm only confirmed landed vehicles."""
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Hover airborne vehicles and report which API-control leases must remain held."""
 
     failures: list[str] = []
+    held_airborne: list[str] = []
     for node in tuple(sorted(nodes)):
         try:
             state = client.getMultirotorState(vehicle_name=node)
@@ -209,9 +210,10 @@ def _fail_closed_hover_or_disarm_landed(
                     failures.append(f"{node}:disarm_failed")
                 continue
             _join_if_future(client.hoverAsync(vehicle_name=node))
+            held_airborne.append(node)
         except Exception as error:
             failures.append(f"{node}:{type(error).__name__}:{error}")
-    return tuple(failures)
+    return tuple(failures), tuple(held_airborne)
 
 
 class LiveCoSimCommandAdapter:
@@ -1025,8 +1027,12 @@ def main() -> None:
                 )
         raise
     finally:
+        retained_api_control: set[str] = set()
         if failure is not None:
-            cleanup_failures = _fail_closed_hover_or_disarm_landed(client, armed)
+            cleanup_failures, held_airborne = _fail_closed_hover_or_disarm_landed(
+                client, armed
+            )
+            retained_api_control.update(held_airborne)
             if cleanup_failures:
                 failure += "; fail_closed_cleanup=" + "|".join(cleanup_failures)
         else:
@@ -1036,6 +1042,8 @@ def main() -> None:
                 except Exception:
                     pass
         for node in tuple(sorted(api_enabled)):
+            if node in retained_api_control:
+                continue
             try:
                 client.enableApiControl(False, vehicle_name=node)
             except Exception:
