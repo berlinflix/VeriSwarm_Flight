@@ -60,11 +60,12 @@ from tools.covis_live import (
     assess_pair,
 )
 
-SCHEMA = "veriswarm.covis_multicam.v2"
+SCHEMA = "veriswarm.covis_multicam.v3"
 CAMERA_NAME_RE = RUN_ID_RE
 MIN_CAMERAS = 2
 MAX_CAMERAS = 5
 DEFAULT_APPEARANCE_THRESHOLD = 0.60
+DEFAULT_PERSON_COLOUR_THRESHOLD = 0.60
 WINDOW_TITLE = "VeriSwarm multi-camera | s save | q quit"
 
 
@@ -88,7 +89,7 @@ class PairResult:
 
 @dataclass(frozen=True)
 class AppearanceAssumption:
-    """Heuristic same-object suggestion; never geometric identity evidence."""
+    """Appearance evidence that cannot connect views without shared geometry."""
 
     class_id: int
     class_name: str
@@ -98,6 +99,9 @@ class AppearanceAssumption:
     camera_a_detection_index: int
     camera_b_detection_index: int
     assumed_same_object: bool
+    geometry_supported: bool
+    colour_gate_passed: bool
+    colour_region: str
     identity_proven: bool = False
 
 
@@ -209,21 +213,41 @@ def _detection_crop(frame: Any, detection: Any) -> Any | None:
     return frame[y0:y1, x0:x1]
 
 
+def _colour_region(crop: Any, class_name: str) -> tuple[Any, str]:
+    """Use clothing-heavy torso pixels for people and the full crop otherwise."""
+    if class_name.casefold() != "person":
+        return crop, "full_detection"
+    height, width = crop.shape[:2]
+    x0, x1 = round(width * 0.20), round(width * 0.80)
+    y0, y1 = round(height * 0.20), round(height * 0.75)
+    torso = crop[y0:y1, x0:x1]
+    if torso.shape[0] < 2 or torso.shape[1] < 2:
+        return crop, "full_detection_fallback"
+    return torso, "person_torso"
+
+
 def _appearance_similarity(
     frame_a: Any,
     detection_a: Any,
     frame_b: Any,
     detection_b: Any,
+    class_name: str,
     cv2_module: Any,
-) -> tuple[float, float, float] | None:
+) -> tuple[float, float, float, str] | None:
     """Compare same-class crops by HSV colour distribution and box shape."""
     crop_a = _detection_crop(frame_a, detection_a)
     crop_b = _detection_crop(frame_b, detection_b)
     if crop_a is None or crop_b is None:
         return None
 
-    histograms = []
+    colour_regions = []
+    region_names = []
     for crop in (crop_a, crop_b):
+        region, region_name = _colour_region(crop, class_name)
+        colour_regions.append(region)
+        region_names.append(region_name)
+    histograms = []
+    for crop in colour_regions:
         hsv = cv2_module.cvtColor(crop, cv2_module.COLOR_BGR2HSV)
         histogram = cv2_module.calcHist(
             [hsv], [0, 1], None, [24, 16], [0, 180, 0, 256]
@@ -240,7 +264,32 @@ def _appearance_similarity(
     aspect_b = detection_b.w / max(detection_b.h, 1e-9)
     shape_similarity = math.exp(-abs(math.log(max(aspect_a, 1e-9) / max(aspect_b, 1e-9))))
     score = 0.8 * colour_similarity + 0.2 * shape_similarity
-    return score, colour_similarity, shape_similarity
+    region_name = (
+        region_names[0]
+        if region_names[0] == region_names[1]
+        else "+".join(region_names)
+    )
+    return score, colour_similarity, shape_similarity, region_name
+
+
+def _appearance_match_allowed(
+    *,
+    class_name: str,
+    score: float,
+    colour_similarity: float,
+    appearance_threshold: float,
+    person_colour_threshold: float,
+    geometry_supported: bool,
+) -> tuple[bool, bool]:
+    """Require geometry for all classes and a separate clothing-colour gate for people."""
+    colour_gate_passed = (
+        class_name.casefold() != "person"
+        or colour_similarity >= person_colour_threshold
+    )
+    return (
+        geometry_supported and score >= appearance_threshold and colour_gate_passed,
+        colour_gate_passed,
+    )
 
 
 def _best_appearance_assumption(
@@ -249,29 +298,48 @@ def _best_appearance_assumption(
     assessment: Any,
     cv2_module: Any,
     threshold: float,
+    person_colour_threshold: float,
+    geometry_supported: bool,
 ) -> AppearanceAssumption | None:
-    """Select the strongest same-class crop match and state that it is assumed."""
+    """Select same-class appearance evidence without bypassing shared geometry."""
     names = dict(assessment.class_names)
     best: AppearanceAssumption | None = None
     for index_a, detection_a in enumerate(assessment.detections_a):
         for index_b, detection_b in enumerate(assessment.detections_b):
             if detection_a.cls != detection_b.cls:
                 continue
+            class_name = names.get(detection_a.cls, f"class_{detection_a.cls}")
             similarities = _appearance_similarity(
-                frame_a, detection_a, frame_b, detection_b, cv2_module
+                frame_a,
+                detection_a,
+                frame_b,
+                detection_b,
+                class_name,
+                cv2_module,
             )
             if similarities is None:
                 continue
-            score, colour_similarity, shape_similarity = similarities
+            score, colour_similarity, shape_similarity, colour_region = similarities
+            assumed_same_object, colour_gate_passed = _appearance_match_allowed(
+                class_name=class_name,
+                score=score,
+                colour_similarity=colour_similarity,
+                appearance_threshold=threshold,
+                person_colour_threshold=person_colour_threshold,
+                geometry_supported=geometry_supported,
+            )
             candidate = AppearanceAssumption(
                 class_id=detection_a.cls,
-                class_name=names.get(detection_a.cls, f"class_{detection_a.cls}"),
+                class_name=class_name,
                 score=score,
                 colour_similarity=colour_similarity,
                 shape_similarity=shape_similarity,
                 camera_a_detection_index=index_a,
                 camera_b_detection_index=index_b,
-                assumed_same_object=score >= threshold,
+                assumed_same_object=assumed_same_object,
+                geometry_supported=geometry_supported,
+                colour_gate_passed=colour_gate_passed,
+                colour_region=colour_region,
             )
             if best is None or candidate.score > best.score:
                 best = candidate
@@ -293,11 +361,14 @@ def assess_all_pairs(
     m_min: int = 15,
     min_intersection_pixels: float = 1.0,
     appearance_threshold: float = DEFAULT_APPEARANCE_THRESHOLD,
+    person_colour_threshold: float = DEFAULT_PERSON_COLOUR_THRESHOLD,
     alignment_provider: Any = None,
 ) -> tuple[PairResult, ...]:
     """Assess every unordered pair using cached per-camera observations."""
     if not 0.0 <= appearance_threshold <= 1.0:
         raise ValueError("appearance_threshold must be in [0, 1]")
+    if not 0.0 <= person_colour_threshold <= 1.0:
+        raise ValueError("person_colour_threshold must be in [0, 1]")
     results: list[PairResult] = []
     kwargs = {
         "cv2_module": cv2_module,
@@ -362,6 +433,8 @@ def assess_all_pairs(
                 assessment,
                 cv2_module,
                 appearance_threshold,
+                person_colour_threshold,
+                overlap_available,
             )
         results.append(
             PairResult(
@@ -671,15 +744,15 @@ def render_dashboard(
         canvas[y : y + cell_height, x : x + cell_width] = tile
 
     valid = sum(pair.overlap_available for pair in pairs)
-    assumed = sum(
+    rejected_appearance_only = sum(
         not pair.overlap_available
         and pair.appearance_assumption is not None
-        and pair.appearance_assumption.assumed_same_object
+        and not pair.appearance_assumption.assumed_same_object
         for pair in pairs
     )
     title = (
         f"VeriSwarm multi-camera | sources={len(specs)} | pairs={pair_count} | "
-        f"valid intersections={valid} | assumed object intersections={assumed}"
+            f"valid intersections={valid} | rejected appearance-only={rejected_appearance_only}"
     )
     if valid == 0:
         title += " | NO CAMERA PAIR HAS A VALID INTERSECTION"
@@ -792,6 +865,12 @@ def _parser() -> argparse.ArgumentParser:
             "assumed object intersection; never proves identity"
         ),
     )
+    parser.add_argument(
+        "--person-colour-threshold",
+        type=float,
+        default=DEFAULT_PERSON_COLOUR_THRESHOLD,
+        help="minimum torso/clothing HSV similarity for person appearance support",
+    )
     parser.add_argument("--weights", type=Path)
     parser.add_argument("--expected-model-sha256")
     parser.add_argument("--confidence", type=float, default=0.25)
@@ -834,6 +913,8 @@ def _validate_args(args: argparse.Namespace) -> tuple[CameraSpec, ...]:
         raise ValueError("confidence must be in (0, 1]")
     if not 0 <= args.appearance_threshold <= 1:
         raise ValueError("appearance-threshold must be in [0, 1]")
+    if not 0 <= args.person_colour_threshold <= 1:
+        raise ValueError("person-colour-threshold must be in [0, 1]")
     if not 0 <= args.min_luma < args.max_luma <= 255:
         raise ValueError("luma bounds must satisfy 0 <= min < max <= 255")
     if args.min_focus < 0:
@@ -939,6 +1020,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "m_min": args.m_min,
             "min_intersection_pixels": args.min_intersection_pixels,
             "appearance_threshold": args.appearance_threshold,
+            "person_colour_threshold": args.person_colour_threshold,
         },
         "video": {
             "enabled": args.record_video,
@@ -1028,6 +1110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 m_min=args.m_min,
                 min_intersection_pixels=args.min_intersection_pixels,
                 appearance_threshold=args.appearance_threshold,
+                person_colour_threshold=args.person_colour_threshold,
             )
             dashboard = render_dashboard(
                 specs,
