@@ -25,13 +25,22 @@ if ($MacAddress -ne "192.168.50.14") {
     Fail "receiver must accept only Abhijan's frozen Ethernet address 192.168.50.14"
 }
 
-$PythonCandidates = @(
-    (Join-Path $Repo ".venv\Scripts\python.exe"),
-    (Join-Path $Workspace ".venv-cosys341\Scripts\python.exe")
-)
-$Python = $PythonCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($null -eq $Python) {
-    Fail "CoSim Python environment was not found"
+$RepoPython = Join-Path $Repo ".venv\Scripts\python.exe"
+$CoSimPython = Join-Path $Workspace ".venv-cosys341\Scripts\python.exe"
+if (Test-Path $RepoPython) {
+    $Python = $RepoPython
+    $PythonPrefix = @()
+} elseif (Test-Path $CoSimPython) {
+    $Python = $CoSimPython
+    $PythonPrefix = @()
+} elseif (Get-Command py -ErrorAction SilentlyContinue) {
+    $Python = "py"
+    $PythonPrefix = @("-3")
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    $Python = "python"
+    $PythonPrefix = @()
+} else {
+    Fail "Python 3 was not found; install Python or create .venv before starting the receiver"
 }
 if (-not (Test-Path (Join-Path $Repo "codebase\tools\movement_authorization_link.py"))) {
     Fail "movement authorization receiver code is missing"
@@ -48,7 +57,7 @@ Write-Host "  INFO  atomic output: $AuthorizationFile"
 Write-Host "  INFO  keep this window open before starting movement-v2"
 
 Push-Location (Join-Path $Repo "codebase")
-& $Python -m tools.movement_authorization_link receive `
+& $Python @PythonPrefix -m tools.movement_authorization_link receive `
     --bind $BindAddress --port $Port `
     --peer-ip $MacAddress `
     --output $AuthorizationFile `
