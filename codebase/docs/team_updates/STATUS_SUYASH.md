@@ -4,7 +4,7 @@ Updated: 2026-08-22 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
-Latest work commit: `e208551`
+Latest work commit: `0030d29`
 
 ## Completed since the previous update
 
@@ -24,6 +24,10 @@ Latest work commit: `e208551`
 - Kept PBFT-style control authorization independent: a security `HOLD` remains visible
   and can stop motion without erasing a person candidate.
 - Verified the complete repository at 463 passed and 3 dependency-gated skips.
+- Reviewed Abhijan's rescue-integration handoff and corrected a producer sequencing gap:
+  role-scoped node streams now let perception, telemetry and fusion producers maintain
+  independent `source_seq` values without impersonating another node.
+- Verified the corrected repository at 469 passed and 3 dependency-gated skips.
 
 ## In progress now
 
@@ -58,6 +62,9 @@ Latest work commit: `e208551`
 - Person evidence must follow the survivor-first policy in
   `codebase/docs/MULTIVIEW_SURVIVOR_FUSION.md`; semantic consensus is a security label
   and control gate, never a negative vote on survivor existence.
+- Node producers use `<node>.perception`, `<node>.telemetry` and `<node>.fusion` stream
+  identities. Exact-node sources remain backward-compatible only for a single combined
+  producer.
 
 ## Next checkpoint
 
