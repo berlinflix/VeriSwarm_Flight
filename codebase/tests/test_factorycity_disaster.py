@@ -207,11 +207,20 @@ def test_ab_mission_is_five_drone_straight_flood_safe_and_map_bound() -> None:
     assert config["collision_policy"]["monitor_from_state"] == "EN_ROUTE"
     assert config["collision_policy"]["ignore_takeoff_and_landing_collisions"] is True
     assert config["landing"]["collision_actor"] == "VS_PointB_LandingCollision"
-    assert config["landing"]["command_timeout_seconds"] > config["limits"][
-        "command_timeout_seconds"
-    ]
+    assert config["landing"]["collision_object_name"] == "StaticMeshActor_0"
+    assert config["landing"]["controlled_descent_velocity_mps"] > 0.0
+    assert config["landing"]["controlled_descent_timeout_seconds"] > 0.0
+    assert config["landing"]["descent_target_below_surface_m"] > 0.0
     assert config["landing"]["confirmation_timeout_seconds"] > 0.0
     assert config["landing"]["confirmation_poll_seconds"] > 0.0
+    assert config["landing"]["contact_settle_seconds"] > 0.0
+    assert config["landing"]["minimum_contact_center_height_above_surface_m"] > 0.0
+    assert (
+        config["landing"]["maximum_contact_center_height_above_surface_m"]
+        > config["landing"]["minimum_contact_center_height_above_surface_m"]
+    )
+    assert config["landing"]["maximum_contact_vertical_speed_mps"] > 0.0
+    assert config["landing"]["post_disarm_confirmation_timeout_seconds"] > 0.0
 
 
 def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> None:
@@ -231,9 +240,14 @@ def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> N
     assert '"state": "ARRIVAL_CONVERGENCE"' in source
     assert "pending_arrival.discard(vehicle)" in source
     assert "client.hoverAsync(vehicle_name=vehicle).join()" in source
-    assert "client.landAsync(" in source
+    assert '"state": "CONTROLLED_DESCENT_COMMANDED"' in source
+    assert "descent_target_z_ned_m = landing_surface_z_ned_m" in source
+    assert 'landing["controlled_descent_velocity_mps"]' in source
     assert '"state": "LANDING_CONFIRMATION"' in source
     assert "pending_landing = set(survivors)" in source
+    assert "landing_collision_baseline" in source
+    assert 'sample["stable_contact_candidate"]' in source
+    assert 'states[vehicle] = "CONTACT_DISARMED"' in source
     assert "cosysairsim.LandedState.Landed" in source
     assert "client.isApiControlEnabled" in source
     assert 'status = "PARTIAL_COLLISION"' in source

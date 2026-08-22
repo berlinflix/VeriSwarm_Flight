@@ -66,11 +66,19 @@
   },
   "landing": {
     "collision_actor": "VS_PointB_LandingCollision",
+    "collision_object_name": "StaticMeshActor_0",
     "platform_size_m": [5.5, 5.5],
     "land_survivors_at_point_b": true,
-    "command_timeout_seconds": 30.0,
+    "controlled_descent_velocity_mps": 0.5,
+    "controlled_descent_timeout_seconds": 12.0,
+    "descent_target_below_surface_m": 0.25,
     "confirmation_timeout_seconds": 10.0,
-    "confirmation_poll_seconds": 0.25
+    "confirmation_poll_seconds": 0.25,
+    "contact_settle_seconds": 1.0,
+    "minimum_contact_center_height_above_surface_m": 0.05,
+    "maximum_contact_center_height_above_surface_m": 0.4,
+    "maximum_contact_vertical_speed_mps": 0.25,
+    "post_disarm_confirmation_timeout_seconds": 5.0
   },
   "weather": {
     "Rain": 0.05,
