@@ -25,6 +25,7 @@ body {
 button, a { font: inherit; }
 a { color: inherit; text-decoration: none; }
 button { color: inherit; }
+:where(a, button):focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }
 ::selection { background: rgba(104, 225, 255, 0.26); color: white; }
 
 .sr-only {
@@ -67,6 +68,8 @@ button { color: inherit; }
   backdrop-filter: blur(24px) saturate(130%);
   box-shadow: 0 18px 70px rgba(0,0,0,.34), inset 0 1px rgba(255,255,255,.035);
 }
+.nav-progress { position: absolute; left: 18px; right: 18px; bottom: -1px; height: 1px; overflow: hidden; }
+.nav-progress i { display: block; width: 100%; height: 100%; background: linear-gradient(90deg, var(--cyan), #9bf4ff); box-shadow: 0 0 12px rgba(104,225,255,.7); transform-origin: left; transition: transform .08s linear; }
 
 .brand { display: inline-flex; align-items: center; gap: 12px; font-size: 13px; letter-spacing: .15em; }
 .brand strong { color: var(--cyan); font-weight: 760; }
@@ -78,7 +81,8 @@ button { color: inherit; }
 .nav-links { display: flex; align-items: center; gap: 30px; color: #aeb8c8; font-size: 12px; }
 .nav-links a { transition: color .2s ease; }
 .nav-links a:hover, .nav-links a:focus-visible { color: white; }
-.nav-cta { padding: 13px 18px; border-radius: 11px; background: rgba(255,255,255,.08); color: white !important; display: inline-flex; gap: 15px; }
+.nav-cta { min-height: 42px; padding: 0 16px; border-radius: 11px; background: rgba(255,255,255,.08); color: white !important; display: inline-flex; align-items: center; justify-content: center; gap: 12px; line-height: 1; }
+.nav-cta .button-icon { width: 16px; height: 16px; font-size: 11px; }
 .menu-button { display: none; border: 0; background: transparent; }
 
 .hero {
@@ -141,11 +145,20 @@ button { color: inherit; }
 }
 h1 em, .final-cta h2 em { font-style: normal; color: var(--cyan); text-shadow: 0 0 34px rgba(104,225,255,.16); }
 .hero-copy > p { max-width: 610px; color: #9aa7b8; font-size: 17px; line-height: 1.7; }
-.hero-actions { display: flex; align-items: center; gap: 12px; margin-top: 34px; }
-.button { display: inline-flex; align-items: center; justify-content: center; gap: 22px; min-height: 52px; padding: 0 22px; border: 1px solid var(--line); border-radius: 12px; font-size: 12px; letter-spacing: .04em; transition: transform .2s ease, border-color .2s ease, background .2s ease; }
+.hero-actions { display: flex; align-items: center; gap: 16px; margin-top: 34px; }
+.button { position: relative; isolation: isolate; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 14px; min-height: 54px; padding: 0 20px; border: 1px solid var(--line); border-radius: 13px; font-size: 12px; line-height: 1; letter-spacing: .04em; cursor: pointer; transition: transform .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease; }
+.button::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(110deg, transparent 15%, rgba(255,255,255,.18) 48%, transparent 70%); transform: translateX(-130%); transition: transform .55s cubic-bezier(.2,.7,.2,1); }
 .button:hover { transform: translateY(-2px); border-color: rgba(104,225,255,.45); }
+.button:hover::before { transform: translateX(130%); }
+.button:active { transform: translateY(0) scale(.985); }
 .button.primary { background: var(--ink); color: #070b11; font-weight: 700; box-shadow: 0 14px 50px rgba(181,224,255,.10); }
+.button.primary:hover { box-shadow: 0 17px 55px rgba(181,224,255,.17); }
 .button.ghost { background: rgba(255,255,255,.025); color: #c4ccda; }
+.button-icon { flex: 0 0 auto; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; line-height: 1; transition: transform .2s ease, background .2s ease; }
+.button.primary .button-icon { background: rgba(5,10,17,.08); }
+.button:hover .button-icon { transform: translate(2px, -2px); }
+.return-button { z-index: 3; }
+.return-button:hover .button-icon { transform: translateY(-2px); }
 .proof-line { display: flex; gap: 24px; margin-top: 38px; color: #69768a; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .proof-line span { display: flex; align-items: center; gap: 7px; }
 .pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #79f5c2; box-shadow: 0 0 0 4px rgba(121,245,194,.08), 0 0 13px rgba(121,245,194,.55); animation: pulse 2s ease-in-out infinite; }

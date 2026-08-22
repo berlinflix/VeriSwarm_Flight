@@ -52,6 +52,8 @@ test("keeps project claims and presentation controls in source", async () => {
 
   assert.match(page, /"use client"/);
   assert.match(page, /pointermove/);
+  assert.match(page, /window\.scrollTo\(\{ top: 0, behavior: "smooth" \}\)/);
+  assert.match(page, /className="button primary return-button"/);
   assert.match(page, /role="tablist"/);
   assert.match(page, /PERSON CANDIDATE/);
   assert.match(page, /Illustrative interface state/);

@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import Image from "next/image";
 
 const workflow = [
@@ -93,12 +99,17 @@ const missionCells = [
 ];
 
 function Arrow() {
-  return <span aria-hidden="true">↗</span>;
+  return <span className="button-icon" aria-hidden="true">↗</span>;
+}
+
+function UpArrow() {
+  return <span className="button-icon" aria-hidden="true">↑</span>;
 }
 
 export default function Home() {
   const [activeStep, setActiveStep] = useState(2);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [scrollProgress, setScrollProgress] = useState(0);
   const heroRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -123,13 +134,39 @@ export default function Home() {
     };
   }, []);
 
-  const closeMenu = () => setMenuOpen(false);
+  useEffect(() => {
+    const updateProgress = () => {
+      const available = document.documentElement.scrollHeight - window.innerHeight;
+      setScrollProgress(available > 0 ? Math.min(window.scrollY / available, 1) : 0);
+    };
+    updateProgress();
+    window.addEventListener("scroll", updateProgress, { passive: true });
+    window.addEventListener("resize", updateProgress);
+    return () => {
+      window.removeEventListener("scroll", updateProgress);
+      window.removeEventListener("resize", updateProgress);
+    };
+  }, []);
+
+  const scrollToSection = (id: string) => {
+    setMenuOpen(false);
+    if (id === "top") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleSectionLink = (id: string) => (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    scrollToSection(id);
+  };
 
   return (
     <main>
       <div className="noise" aria-hidden="true" />
       <nav className="nav" aria-label="Primary navigation">
-        <a className="brand" href="#top" onClick={closeMenu}>
+        <a className="brand" href="#top" onClick={handleSectionLink("top")}>
           <span className="brand-mark"><i /><i /><i /></span>
           <span>VERI<strong>SWARM</strong></span>
         </a>
@@ -143,11 +180,14 @@ export default function Home() {
           <span className="sr-only">Toggle navigation</span>
         </button>
         <div id="site-nav" className={`nav-links ${menuOpen ? "open" : ""}`}>
-          <a href="#problem" onClick={closeMenu}>Problem</a>
-          <a href="#system" onClick={closeMenu}>System</a>
-          <a href="#progress" onClick={closeMenu}>Progress</a>
-          <a href="#safety" onClick={closeMenu}>Safety</a>
-          <a className="nav-cta" href="#mission" onClick={closeMenu}>View mission <Arrow /></a>
+          <a href="#problem" onClick={handleSectionLink("problem")}>Problem</a>
+          <a href="#system" onClick={handleSectionLink("system")}>System</a>
+          <a href="#progress" onClick={handleSectionLink("progress")}>Progress</a>
+          <a href="#safety" onClick={handleSectionLink("safety")}>Safety</a>
+          <a className="nav-cta" href="#mission" onClick={handleSectionLink("mission")}>View mission <Arrow /></a>
+        </div>
+        <div className="nav-progress" aria-hidden="true">
+          <i style={{ transform: `scaleX(${scrollProgress})` }} />
         </div>
       </nav>
 
@@ -163,8 +203,8 @@ export default function Home() {
             finding person candidates, mapping hazards and keeping unsafe commands grounded.
           </p>
           <div className="hero-actions">
-            <a className="button primary" href="#system">Explore the system <Arrow /></a>
-            <a className="button ghost" href="#progress">See what works now</a>
+            <a className="button primary" href="#system" onClick={handleSectionLink("system")}>Explore the system <Arrow /></a>
+            <a className="button ghost" href="#progress" onClick={handleSectionLink("progress")}>See what works now</a>
           </div>
           <div className="proof-line">
             <span><i className="pulse" /> Integration build</span>
@@ -196,7 +236,7 @@ export default function Home() {
           <div className="target target-a"><i /><span>PERSON CANDIDATE</span></div>
           <div className="target target-b"><i /><span>HAZARD</span></div>
         </div>
-        <a className="scroll-cue" href="#problem"><span>Scroll to mission</span><i /></a>
+        <a className="scroll-cue" href="#problem" onClick={handleSectionLink("problem")}><span>Scroll to mission</span><i /></a>
       </section>
 
       <section className="metric-ribbon" aria-label="Project mission facts">
@@ -387,11 +427,13 @@ export default function Home() {
         <span>SIH 26177 · DISASTER SEARCH & RESCUE</span>
         <h2>Move fast.<br /><em>Keep the evidence.</em></h2>
         <p>VeriSwarm turns a fleet of drones into an accountable rescue observation network—built to continue when conditions stop being ideal.</p>
-        <a className="button primary" href="#top">Return to launch <Arrow /></a>
+        <button className="button primary return-button" type="button" onClick={() => scrollToSection("top")}>
+          Return to launch <UpArrow />
+        </button>
       </section>
 
       <footer>
-        <a className="brand" href="#top"><span className="brand-mark"><i /><i /><i /></span><span>VERI<strong>SWARM</strong></span></a>
+        <a className="brand" href="#top" onClick={handleSectionLink("top")}><span className="brand-mark"><i /><i /><i /></span><span>VERI<strong>SWARM</strong></span></a>
         <p>Offline-first multi-drone rescue observation validation.</p>
         <span>SIH 2026 · TEAM VERISWARM</span>
       </footer>
