@@ -6,6 +6,12 @@
 
 You need **one command**. Everything else is Suyash's job.
 
+> Rescue integration update: the original launcher below remains the frozen
+> model-hash-only path. For the combined rescue collector + qualification dashboard, use
+> `./ops/start_abhijan_rescue_mac.sh` from the rescue-security worktree. The UI still runs
+> on Abhijan's Mac at `127.0.0.1:5175`; Suyash does not host the browser dashboard on his
+> laptop.
+
 ---
 
 ## What you are demonstrating
@@ -77,6 +83,37 @@ Press **Ctrl+C** in that terminal when finished — it closes the tunnel too.
 
 The token is minted fresh each session, lives only in memory on your Mac, and is
 deleted from the Jetson the moment Suyash stops the service.
+
+## Combined rescue-dashboard run
+
+The integrated topology is intentionally split:
+
+```text
+Suyash laptop .13: Charlie peer + LAN time source
+Jetson Alpha .10: OP-TEE originator + loopback qualification API
+Abhijan Mac .14: SSH tunnel + rescue collector + Vite/browser dashboard
+Bravo .12: independent verification peer
+```
+
+On Abhijan's Mac:
+
+```bash
+cd /Volumes/HyperDrive/Development/VERISWARM_SIH_RESCUE_SECURITY
+./ops/start_abhijan_rescue_mac.sh
+```
+
+After CLEAN + MODEL HASH completes, the dashboard shows a create-once filename ending in
+`.dashboard.json`. In a second Mac terminal publish that exact retained proof into the
+local rescue collector:
+
+```bash
+./ops/publish_rescue_authorization.sh <filename-shown-by-dashboard>
+```
+
+The helper fetches the file from Alpha's fixed evidence directory over SSH, validates it
+through Abhijan's fail-closed adapter and posts only the normalized Alpha authorization to
+the Mac collector. No private manifest, signing seed or bearer token is requested from
+Suyash.
 
 ---
 

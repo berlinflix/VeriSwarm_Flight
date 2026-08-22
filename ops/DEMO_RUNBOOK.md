@@ -88,6 +88,26 @@ create-once evidence file; nothing is overwritten and no result is cached.
 The UI runs CLEAN first and **refuses to continue** unless it reaches two
 semantic ACKs. That is correct behaviour, not a bug.
 
+### Rescue-dashboard integration
+
+For the combined rescue dashboard, Abhijan instead runs from the rescue-security
+worktree:
+
+```bash
+./ops/start_abhijan_rescue_mac.sh
+```
+
+This keeps the same secure qualifier tunnel while also starting the rescue collector on
+the Mac. After the two dashboard cases complete, the UI displays the create-once attack
+evidence filename. Abhijan publishes it with:
+
+```bash
+./ops/publish_rescue_authorization.sh <filename-shown-by-dashboard>
+```
+
+The target is `alpha`: Alpha originated the signed approved/unapproved provenance cases;
+Bravo and Charlie independently voted on them. This is not a runtime model hot-load.
+
 ---
 
 ## Phase 3 — kill a drone, on camera

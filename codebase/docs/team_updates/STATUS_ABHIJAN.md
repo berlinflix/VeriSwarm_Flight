@@ -33,15 +33,30 @@ Functional rescue data-plane parent: `30736f3`
 - Live visual dashboard check passed against the collector projection: Operation Varuna
   showed ACTIVE, 45% coverage, one person candidate, one mapped hazard, one vehicle and the
   critical Alpha quarantine alert. Browser console warnings/errors: none.
+- Added an integrated Mac launcher that opens the secure Alpha tunnel, starts the rescue
+  collector and serves the rescue-enabled dashboard at `127.0.0.1:5175`.
+- Added a publisher that securely fetches the create-once `*.dashboard.json` proof from
+  Alpha, converts it through the fail-closed adapter and posts only the normalized
+  authorization event to the Mac collector.
+- Validated the publisher with retained hardware-run evidence on Alpha:
+  - `dashboard-clean-1787276531963106801.dashboard.json` -> `ALLOW`, sequence 1;
+  - `dashboard-model_swap-1787276532093292096.dashboard.json` -> `QUARANTINE`, sequence 2;
+  - projected Alpha state -> `QUARANTINED`, with a `CRITICAL` responder alert.
 
 ## Network observed from Abhijan's Mac
 
 - Mac Ethernet: `192.168.50.14` on `en7`.
 - Jetson Alpha `192.168.50.10`: ping passes; SSH port 22 accepts connections.
 - Suyash/Charlie `192.168.50.13`: ping passes; peer port 51003 accepts connections.
-- Bravo `192.168.50.12`: ping and peer port 51001 time out; not connected.
+- Bravo `192.168.50.12`: ping passes; peer port 51001 accepts connections.
+- Alpha's deployed `~/vs peers` reports Bravo and Charlie `UP`.
+- Alpha's deployed `~/vs check` passes OP-TEE device, TA, CA, frozen bundle, seed
+  isolation and clock synchronization checks. Observed offsets were 7.2 ms for Bravo and
+  10.9 ms for Charlie against the 250 ms bound.
+- Alpha's `~/vs` helper was missing its executable bit; `chmod u+x ~/vs` was applied and
+  the documented checks now run normally.
 
-No network configuration was changed.
+No IP address, route, peer configuration or firewall setting was changed.
 
 ## Files owned in this checkpoint
 
@@ -52,21 +67,24 @@ codebase/docs/ABHIJAN_AUTHORIZATION_ADAPTER.md
 codebase/examples/qualification_clean_dashboard_sample.json
 codebase/examples/qualification_model_swap_dashboard_sample.json
 codebase/docs/team_updates/STATUS_ABHIJAN.md
+ops/start_abhijan_rescue_mac.sh
+ops/publish_rescue_authorization.sh
+ops/ABHIJAN_DASHBOARD_HANDOFF.md
+ops/DEMO_RUNBOOK.md
 ```
 
 ## Current blockers
 
-- Real delivery requires the path to Suyash's create-once `*.dashboard.json` qualification
-  evidence and confirmation of which rescue node the existing Alpha-originated
-  qualification should target.
-- Bravo is not connected, so the physical three-node qualification cannot run yet.
 - Pratik's simulator event producer is not yet available; this does not block the
   authorization adapter.
+- Suyash must keep Charlie running and start `vs dash` on Alpha before Abhijan launches
+  the integrated Mac dashboard. This is an operational start step, not a code blocker.
 
 ## Next checkpoint
 
-- Dry-run the adapter against one real retained clean proof on Suyash's machine.
-- Run the Mac collector on the isolated LAN with a fresh private token.
-- Deliver the real authorization event and verify it in `/state` and the dashboard.
-- After Bravo connects, run the physical clean and model-swap qualification and retain the
-  resulting rescue authorization events.
+- Suyash keeps Charlie ready and runs `vs dash` on Alpha.
+- Abhijan runs `./ops/start_abhijan_rescue_mac.sh` on the Mac.
+- Run the physical CLEAN + MODEL HASH cases and publish each displayed retained evidence
+  filename with `./ops/publish_rescue_authorization.sh <filename>`.
+- Ingest Pratik's simulator events through the same frozen rescue collector when his
+  producer is delivered; do not mix attack evidence with survivor/hazard observations.
