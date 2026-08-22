@@ -28,7 +28,11 @@ Functional rescue data-plane parent: `30736f3`
   - model-swap proof -> `QUARANTINE`;
   - projected Alpha state -> `QUARANTINED`;
   - responder alert -> `CRITICAL`, reason `model_hash_not_approved`.
-- Full Python validation: `453 passed in 58.97s`.
+- Full Python validation after the final restart-safety test: `454 passed in 55.56s`.
+- Dashboard production build passed with Vite 7.3.6.
+- Live visual dashboard check passed against the collector projection: Operation Varuna
+  showed ACTIVE, 45% coverage, one person candidate, one mapped hazard, one vehicle and the
+  critical Alpha quarantine alert. Browser console warnings/errors: none.
 
 ## Network observed from Abhijan's Mac
 
