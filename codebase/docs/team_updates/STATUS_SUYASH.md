@@ -4,7 +4,7 @@ Updated: 2026-08-22 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
-Latest work commit: `0030d29`
+Latest work commit: `510c9c2`
 
 ## Completed since the previous update
 
@@ -28,6 +28,8 @@ Latest work commit: `0030d29`
   role-scoped node streams now let perception, telemetry and fusion producers maintain
   independent `source_seq` values without impersonating another node.
 - Verified the corrected repository at 469 passed and 3 dependency-gated skips.
+- Established Orin Nano 8GB at 15 W as the mandatory model deployment floor, including
+  TensorRT FP16, held-out accuracy retention and a sustained full-pipeline benchmark.
 
 ## In progress now
 
@@ -45,6 +47,8 @@ Latest work commit: `0030d29`
 - `codebase/tools/rescue_multiview_fusion.py`
 - `codebase/docs/MULTIVIEW_SURVIVOR_FUSION.md`
 - `codebase/examples/rescue_multiview_person_sample.json`
+- `codebase/docs/JETSON_ORIN_NANO_MODEL_GATE.md`
+- `codebase/examples/rescue_model_deployment_manifest.example.json`
 
 ## Blockers
 
@@ -53,6 +57,8 @@ Latest work commit: `0030d29`
 - Metric map localization still needs Pratik's calibrated camera pose/depth producer.
 - The physical rig demonstrates common planar overlap; it cannot claim real 3-D location
   until its cameras are calibrated into a shared metric frame.
+- The new rescue model is not Jetson-qualified yet: training, FP16 export and sustained
+  Nano measurements have not been produced.
 
 ## Shared-interface changes
 
@@ -65,6 +71,8 @@ Latest work commit: `0030d29`
 - Node producers use `<node>.perception`, `<node>.telemetry` and `<node>.fusion` stream
   identities. Exact-node sources remain backward-compatible only for a single combined
   producer.
+- The final model allowlist binds the actually executed TensorRT engine and runtime
+  lineage. A source `.pt` hash alone is insufficient when deployment executes `.engine`.
 
 ## Next checkpoint
 
