@@ -47,6 +47,56 @@ A non-loopback bind refuses to start without a 32-character token in
 `VERISWARM_RESCUE_TOKEN`. Clients may send it as `Authorization: Bearer ...` or
 `X-VeriSwarm-Token`.
 
+## Offline producer outbox
+
+Samik and Pratik must persist an event before attempting the network. Each producer uses
+its own SQLite outbox; do not point multiple nodes at the same file.
+
+Enqueue one JSON file, a JSON array, or JSONL events:
+
+```bash
+python -m tools.rescue_event_sender \
+  --mission-id OP-VARUNA-001 \
+  --outbox results/alpha-rescue-outbox.sqlite3 \
+  enqueue --input examples/rescue_event_sample.jsonl
+```
+
+Deliver pending events after the collector becomes reachable:
+
+```bash
+python -m tools.rescue_event_sender \
+  --mission-id OP-VARUNA-001 \
+  --outbox results/alpha-rescue-outbox.sqlite3 \
+  flush --endpoint http://127.0.0.1:8770
+```
+
+Inspect pending attempts and retained dead letters:
+
+```bash
+python -m tools.rescue_event_sender \
+  --mission-id OP-VARUNA-001 \
+  --outbox results/alpha-rescue-outbox.sqlite3 \
+  status
+```
+
+The sender provides at-least-once delivery:
+
+- validation happens before durable enqueue;
+- exact event bytes and their internal content digest are retained in SQLite;
+- FIFO replay preserves producer sequence order;
+- network, service, endpoint and authentication failures remain pending;
+- transient network/5xx retries are bounded inside one flush invocation;
+- an exact collector duplicate is treated as delivered;
+- a collector ordering/identity conflict is retained in the dead-letter table;
+- local content corruption is quarantined before transmission.
+
+`flush` returns exit code `0` only when the outbox is empty, `3` when valid events remain
+pending, and `2` for invalid local input/configuration. A pending result is expected during
+an offline interval and must not be converted into mission failure by the producer.
+
+For a LAN collector, set `VERISWARM_RESCUE_TOKEN` in both collector and sender processes.
+The token is sent in the HTTP authorization header and is never stored in the outbox.
+
 ## Producer handoff
 
 Samik emits `observation` events after local inference. Pratik emits mission, assignment,
