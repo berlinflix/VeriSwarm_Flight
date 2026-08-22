@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Binary,
   Cpu,
+  Download,
   Fingerprint,
   RadioTower,
   RotateCcw,
@@ -18,9 +19,19 @@ import {
 import flightDrone from "./assets/flight-drone.png";
 import { buildCellMissionView } from "./cellMissionView.js";
 import { buildMissionMap } from "./missionMap.js";
+import {
+  classifyVehicleFreshness,
+  formatTelemetryAge,
+  normalizeDataMode,
+} from "./missionPresentation.js";
 import { isApprovedCleanEvidence } from "./modelHashQualification.js";
 
 const pratikTopViewUrl = import.meta.env.VITE_PRATIK_TOP_VIEW_URL;
+const rescueDataMode = normalizeDataMode(import.meta.env.VITE_RESCUE_DATA_MODE);
+const configuredStaleAfterMs = Number(import.meta.env.VITE_RESCUE_STALE_AFTER_MS);
+const rescueStaleAfterMs = Number.isFinite(configuredStaleAfterMs) && configuredStaleAfterMs > 0
+  ? configuredStaleAfterMs
+  : 8_000;
 const QUALIFICATION_VIEW_KEY = "veriswarm.qualification.proof.v1";
 
 const scenarios = {
@@ -279,6 +290,15 @@ function nedLabel(position) {
     return "—";
   }
   return position.map((value) => Number(value).toFixed(1)).join(", ");
+}
+
+function useClock(intervalMs = 1_000) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs]);
+  return nowMs;
 }
 
 function toneClass(tone) {
@@ -566,7 +586,7 @@ function DroneCard({ drone, index, activeCard, setActiveCard, onSelect }) {
             <span className="node-kicker">SIMULATED VEHICLE</span>
             <h2>{drone.id}</h2>
           </div>
-          <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.status}</span>
+          <span className={`node-online freshness-${drone.freshness.key}`}><i /> {drone.freshness.label}</span>
         </div>
         <div className="telemetry-cluster">
           <div><span>ALTITUDE</span><b>{Number.isFinite(drone.alt) ? <AnimatedMetric value={drone.alt} suffix="m" /> : "—"}</b></div>
@@ -577,7 +597,7 @@ function DroneCard({ drone, index, activeCard, setActiveCard, onSelect }) {
           {Array.from({ length: 18 }).map((_, bar) => <i key={bar} style={{ height: `${18 + ((bar * 17) % 34)}%` }} />)}
         </div>
         <div className="card-meta">
-          <span>{drone.linkState}</span>
+          <span>{drone.linkState} · {formatTelemetryAge(drone.freshness.ageMs)}</span>
           <span className="coverage-value">{drone.completedCells}/{drone.totalCells} CELLS</span>
         </div>
       </div>
@@ -604,6 +624,7 @@ function DroneDetailsModal({ drone, onClose }) {
     ["Simulation role", drone.role],
     ["NED position (N, E, D)", nedLabel(drone.position)],
     ["Link state", drone.linkState],
+    ["Telemetry freshness", `${drone.freshness.label} · ${formatTelemetryAge(drone.freshness.ageMs)}`],
     ["Owned cells", drone.cellIds.length ? drone.cellIds.join(", ") : "—"],
     ["Blocked cells", String(drone.blockedCells)],
   ];
@@ -635,7 +656,7 @@ function DroneDetailsModal({ drone, onClose }) {
             <p>{drone.role} · retained rescue telemetry</p>
           </div>
           <div className="modal-header-actions">
-            <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.status}</span>
+            <span className={`node-online freshness-${drone.freshness.key}`}><i /> {drone.freshness.label}</span>
             <button className="modal-close" onClick={onClose} aria-label="Close drone details" autoFocus>
               <X size={19} />
             </button>
@@ -671,6 +692,7 @@ function DroneDetailsModal({ drone, onClose }) {
 function DroneDeck({ rescue }) {
   const [activeCard, setActiveCard] = useState(null);
   const [selectedDrone, setSelectedDrone] = useState(null);
+  const nowMs = useClock();
   const missionView = useMemo(
     () => buildCellMissionView(rescue.state, rescue.movementConfig),
     [rescue.state, rescue.movementConfig],
@@ -686,12 +708,14 @@ function DroneDeck({ rescue }) {
       ? Math.abs(Number(position[2]))
       : null;
     const coverage = coverageByDrone.get(drone.id);
+    const freshness = classifyVehicleFreshness(vehicle, nowMs, rescueStaleAfterMs);
     return {
       ...drone,
       alt: altitude,
       bat: Number.isFinite(Number(vehicle?.battery_pct)) ? Number(vehicle.battery_pct) : null,
-      online: Boolean(vehicle) && vehicle.link_state !== "OFFLINE",
+      online: freshness.live,
       status: vehicle?.state ?? "AWAITING",
+      freshness,
       vehicleState: vehicle?.state ?? null,
       position,
       linkState: vehicle?.link_state ?? "AWAITING LINK",
@@ -718,7 +742,7 @@ function DroneDeck({ rescue }) {
           />
         ))}
         <div className="deck-caption">
-          PRATIK FIVE-DRONE SIMULATION · DELTA / ALPHA / BRAVO / CHARLIE / ECHO · {rescue?.state ? "RETAINED TELEMETRY LIVE" : "AWAITING SIMULATION EVENTS"}
+          PRATIK FIVE-DRONE SIMULATION · DELTA / ALPHA / BRAVO / CHARLIE / ECHO · {rescueDataMode.label} · {rescue?.state ? "RETAINED STATE CONNECTED" : "AWAITING SIMULATION EVENTS"}
         </div>
       </section>
       <AnimatePresence>
@@ -735,8 +759,20 @@ function RealTimeView({ rescue }) {
     [rescue.state, rescue.movementConfig],
   );
   const missionMap = useMemo(
-    () => buildMissionMap(missionView, rescue.movementConfig, rescue.state?.vehicles ?? []),
-    [missionView, rescue.movementConfig, rescue.state?.vehicles],
+    () => buildMissionMap(
+      missionView,
+      rescue.movementConfig,
+      rescue.state?.vehicles ?? [],
+      rescue.state?.people ?? [],
+      rescue.state?.hazards ?? [],
+    ),
+    [
+      missionView,
+      rescue.movementConfig,
+      rescue.state?.vehicles,
+      rescue.state?.people,
+      rescue.state?.hazards,
+    ],
   );
   const showTopView = Boolean(pratikTopViewUrl) && !topViewFailed;
   const eventCount = Number(rescue.state?.events_applied ?? 0);
@@ -745,10 +781,14 @@ function RealTimeView({ rescue }) {
       <div className="panel-heading">
         <div>
           <span className="section-kicker">PRATIK SIMULATION · NED TOP VIEW</span>
-          <div className="panel-title">Live Coverage Map</div>
+          <div className="panel-title">
+            {rescueDataMode.code === "LIVE_PRATIK" ? "Live Coverage Map" : "Coverage Replay"}
+          </div>
         </div>
         <span className={`feed-state ${rescue.state ? "connected" : "standby"}`}>
-          <i /> {rescue.state ? "LIVE EVENTS" : "AWAITING EVENTS"}
+          <i /> {rescue.state
+            ? rescueDataMode.code === "LIVE_PRATIK" ? "LIVE EVENTS" : "REPLAY EVENTS"
+            : "AWAITING EVENTS"}
         </span>
       </div>
       <div className="mission-map-shell">
@@ -767,7 +807,7 @@ function RealTimeView({ rescue }) {
               viewBox={`0 0 ${missionMap.width} ${missionMap.height}`}
               preserveAspectRatio="xMidYMid slice"
               role="img"
-              aria-label="Live Pratik simulation coverage heatmap"
+              aria-label={`${rescueDataMode.label} Pratik simulation coverage heatmap`}
             >
               <defs>
                 <pattern id="ned-grid" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -796,6 +836,37 @@ function RealTimeView({ rescue }) {
               <g className="map-endpoint end" transform={`translate(${missionMap.end.x} ${missionMap.end.y})`}>
                 <circle r="12" /><text textAnchor="middle" y="4">B</text>
               </g>
+              {missionMap.hazards.map((hazard) => (
+                <motion.g
+                  key={hazard.hazard_id}
+                  className={`map-hazard hazard-${String(hazard.class_id).replaceAll("_", "-")}`}
+                  transform={`translate(${hazard.x} ${hazard.y})`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.35 }}
+                >
+                  <circle className="map-entity-pulse" r="17" />
+                  <rect x="-7" y="-7" width="14" height="14" rx="2" transform="rotate(45)" />
+                  <text x="13" y="4">{String(hazard.class_id).replaceAll("_", " ").toUpperCase()}</text>
+                  <title>{hazard.hazard_id} · {hazard.class_id} · {hazard.status}</title>
+                </motion.g>
+              ))}
+              {missionMap.people.map((person) => (
+                <motion.g
+                  key={person.marker_id}
+                  className={`map-person ${person.security_review_required ? "security-review" : ""}`}
+                  transform={`translate(${person.x} ${person.y})`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.35 }}
+                >
+                  <circle className="map-entity-pulse" r="17" />
+                  <circle className="person-head" cy="-5" r="3.5" />
+                  <path className="person-body" d="M 0,-1 L 0,7 M -5,2 L 5,2 M 0,7 L -4,12 M 0,7 L 4,12" />
+                  <text x="13" y="4">PERSON</text>
+                  <title>{person.marker_id} · confidence {Number(person.confidence ?? 0).toFixed(2)} · responder confirmation required</title>
+                </motion.g>
+              ))}
               {missionMap.vehicles.map((vehicle) => (
                 <g key={vehicle.node} className="map-vehicle" transform={`translate(${vehicle.x} ${vehicle.y})`}>
                   <circle className="map-vehicle-pulse" r="15" />
@@ -813,7 +884,12 @@ function RealTimeView({ rescue }) {
           )}
           <div className="map-source-badge">
             <span>{showTopView ? "PRATIK TOP VIEW + NED OVERLAY" : "NED EVENT OVERLAY"}</span>
-            <b>{missionMap.vehicles.length}/5 POSITIONED</b>
+            <b>{missionMap.vehicles.length}/5 DRONES · {missionMap.people.length} PEOPLE · {missionMap.hazards.length} HAZARDS</b>
+          </div>
+          <div className="map-entity-legend" aria-label="Map entity legend">
+            <span className="entity-drone">DRONE</span>
+            <span className="entity-person">PERSON CANDIDATE</span>
+            <span className="entity-hazard">HAZARD</span>
           </div>
         </div>
         <div className="feed-footer">
@@ -917,6 +993,7 @@ function useRescueMission() {
 }
 
 function RescueMission({ rescue }) {
+  const [reportStatus, setReportStatus] = useState("EXPORT REPORT");
   const state = rescue.state;
   const alerts = state?.alerts?.slice(0, 3) ?? [];
   const mappedHazards = state?.hazards?.filter((hazard) => hazard.status === "MAPPED_HAZARD").length ?? 0;
@@ -932,12 +1009,38 @@ function RescueMission({ rescue }) {
     }
     return String(alert.message ?? "Responder review required").replaceAll("_", " ");
   };
+  const downloadReport = async () => {
+    if (!state || reportStatus === "PREPARING…") return;
+    setReportStatus("PREPARING…");
+    try {
+      const response = await fetch("/api/rescue/report", { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok || !payload.report) throw new Error("report_unavailable");
+      const blob = new Blob([`${JSON.stringify(payload.report, null, 2)}\n`], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${state.mission_id ?? "veriswarm-mission"}-report.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setReportStatus("EXPORTED");
+      window.setTimeout(() => setReportStatus("EXPORT REPORT"), 1_800);
+    } catch {
+      setReportStatus("EXPORT FAILED");
+      window.setTimeout(() => setReportStatus("EXPORT REPORT"), 2_200);
+    }
+  };
   return (
     <section className={`rescue-mission ${missionOnline ? "online" : "offline"}`}>
       <div className="rescue-title">
         <span>OPERATION VARUNA</span>
         <b>{state?.mission_status ?? "AWAITING RESCUE EVENTS"}</b>
-        <small>{rescueDetail}</small>
+        <small>{rescueDataMode.label} · {rescueDetail}</small>
+        <button className="report-export" type="button" onClick={downloadReport} disabled={!state}>
+          <Download size={12} /> {reportStatus}
+        </button>
       </div>
       <div className="rescue-kpis">
         <div><span>COVERAGE</span><b>{state ? `${Number(state.coverage?.percent ?? 0).toFixed(1)}%` : "—"}</b></div>
@@ -947,10 +1050,16 @@ function RescueMission({ rescue }) {
       </div>
       <div className="rescue-alerts">
         {alerts.length ? alerts.map((alert) => (
-          <div key={alert.alert_id} className={`rescue-alert priority-${alert.priority.toLowerCase()}`}>
+          <motion.div
+            layout
+            key={alert.alert_id}
+            className={`rescue-alert priority-${alert.priority.toLowerCase()}`}
+            initial={{ opacity: 0, x: 10 }}
+            animate={{ opacity: 1, x: 0 }}
+          >
             <span>{alert.priority}</span>
             <b>{alertMessage(alert)}</b>
-          </div>
+          </motion.div>
         )) : (
           <div className="rescue-alert empty">
             <span>{missionOnline ? "CLEAR" : "OFFLINE"}</span>
@@ -1058,7 +1167,14 @@ function CellMovementPanel({ rescue }) {
             <b>{view.movement.length} TRANSITIONS</b>
           </div>
           {recentMovement.length ? recentMovement.map((event) => (
-            <div key={event.event_id} className={`movement-row result-${String(event.result).toLowerCase()}`}>
+            <motion.div
+              layout
+              key={event.event_id}
+              className={`movement-row result-${String(event.result).toLowerCase()}`}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24 }}
+            >
               <div>
                 <span>{String(event.node).toUpperCase()} · {event.cell_id}</span>
                 <b>{String(event.event_type).replaceAll("_", " ")}</b>
@@ -1067,7 +1183,7 @@ function CellMovementPanel({ rescue }) {
                 <strong>{event.terminalLabel}</strong>
                 <small>{Number(event.measured_distance_m).toFixed(2)}m · {event.measurement_source}</small>
               </div>
-            </div>
+            </motion.div>
           )) : (
             <div className="movement-empty">
               Retained obstacle, hold, deflection, rejoin, blockage and collision transitions will appear here.
@@ -1452,9 +1568,15 @@ export default function App() {
             <p>VERISWARM C2 / INTERNAL QUALIFIER</p>
             <h1>Drone Command & Control</h1>
           </div>
-          <div className={`mission-status ${statusClass}`}>
-            <RadioTower size={18} />
-            <span>{scenario.banner}</span>
+          <div className="topbar-statuses">
+            <div className={`data-mode-badge mode-${rescueDataMode.key}`}>
+              <i />
+              <div><span>{rescueDataMode.label}</span><small>{rescueDataMode.description}</small></div>
+            </div>
+            <div className={`mission-status ${statusClass}`}>
+              <RadioTower size={18} />
+              <span>{scenario.banner}</span>
+            </div>
           </div>
         </header>
 

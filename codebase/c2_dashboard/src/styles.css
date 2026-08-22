@@ -138,6 +138,69 @@ button {
   font-weight: 800;
 }
 
+.topbar-statuses {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.data-mode-badge {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 7px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-radius: 8px;
+  color: #fbbf24;
+  background: rgba(18, 19, 22, 0.56);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.09);
+}
+
+.data-mode-badge > i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 14px currentColor;
+}
+
+.data-mode-badge div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.data-mode-badge span,
+.data-mode-badge small {
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.data-mode-badge span {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+}
+
+.data-mode-badge small {
+  color: #64748b;
+  font-size: 7px;
+  letter-spacing: 0.05em;
+}
+
+.data-mode-badge.mode-live {
+  border-color: rgba(52, 211, 153, 0.28);
+  color: #86efac;
+}
+
+.data-mode-badge.mode-reference {
+  border-color: rgba(251, 191, 36, 0.34);
+  color: #fbbf24;
+}
+
 .mission-status {
   display: flex;
   align-items: center;
@@ -296,8 +359,22 @@ button {
   white-space: nowrap;
 }
 
-.node-online.unverified {
+.node-online.unverified,
+.node-online.freshness-awaiting,
+.node-online.freshness-unverified {
   color: #fbbf24;
+}
+
+.node-online.freshness-stale {
+  color: #fca5a5;
+}
+
+.node-online.freshness-offline {
+  color: #fb7185;
+}
+
+.node-online.freshness-live i {
+  animation: telemetryPulse 1.8s ease-in-out infinite;
 }
 
 .node-online i,
@@ -708,6 +785,99 @@ button {
   font-weight: 800;
 }
 
+.map-person,
+.map-hazard {
+  filter: drop-shadow(0 0 7px rgba(2, 6, 23, 0.92));
+}
+
+.map-person text,
+.map-hazard text {
+  paint-order: stroke;
+  stroke: rgba(3, 7, 11, 0.98);
+  stroke-width: 3px;
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.map-person text { fill: #fde68a; }
+.map-hazard text { fill: #fda4af; }
+
+.map-person .person-head {
+  fill: #fde68a;
+  stroke: #f59e0b;
+  stroke-width: 1.5;
+}
+
+.map-person .person-body {
+  fill: none;
+  stroke: #fde68a;
+  stroke-linecap: round;
+  stroke-width: 2.2;
+}
+
+.map-person.security-review .person-head,
+.map-person.security-review .person-body {
+  stroke: #fb7185;
+}
+
+.map-hazard rect {
+  fill: rgba(190, 18, 60, 0.9);
+  stroke: #fda4af;
+  stroke-width: 1.6;
+}
+
+.map-entity-pulse {
+  fill: rgba(251, 191, 36, 0.08);
+  stroke: rgba(251, 191, 36, 0.5);
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mapEntityPulse 2s ease-out infinite;
+}
+
+.map-hazard .map-entity-pulse {
+  fill: rgba(244, 63, 94, 0.09);
+  stroke: rgba(251, 113, 133, 0.55);
+}
+
+.map-entity-legend {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 7px;
+  background: rgba(3, 7, 11, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.map-entity-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #94a3b8;
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 6px;
+  letter-spacing: 0.06em;
+}
+
+.map-entity-legend span::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #67e8f9;
+  box-shadow: 0 0 7px currentColor;
+}
+
+.map-entity-legend .entity-person::before { background: #fde68a; }
+.map-entity-legend .entity-hazard::before { background: #fb7185; border-radius: 1px; transform: rotate(45deg); }
+
 .map-axis-label {
   fill: #64748b;
   font-size: 12px;
@@ -962,6 +1132,38 @@ button {
 .rescue-title b,
 .rescue-title small {
   min-width: 0;
+}
+
+.report-export {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  margin-top: 7px;
+  padding: 5px 8px;
+  border: 1px solid rgba(103, 232, 249, 0.2);
+  border-radius: 6px;
+  color: #67e8f9;
+  background: rgba(14, 116, 144, 0.08);
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.report-export:hover:not(:disabled),
+.report-export:focus-visible:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(103, 232, 249, 0.48);
+  background: rgba(14, 116, 144, 0.18);
+}
+
+.report-export:disabled {
+  color: #475569;
+  border-color: rgba(71, 85, 105, 0.18);
+  cursor: not-allowed;
 }
 
 .rescue-title {
@@ -2077,6 +2279,16 @@ button {
   50% { box-shadow: 0 0 22px rgba(251,191,36,0.16); }
 }
 
+@keyframes telemetryPulse {
+  0%, 100% { transform: scale(0.82); opacity: 0.72; }
+  50% { transform: scale(1.24); opacity: 1; }
+}
+
+@keyframes mapEntityPulse {
+  0% { transform: scale(0.55); opacity: 0.78; }
+  72%, 100% { transform: scale(1.3); opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .orbital-bg::before,
   .scroll-cue i,
@@ -2084,7 +2296,9 @@ button {
   .lower-zone::after,
   .glass-panel::before,
   .scanline,
-  .attack-control.pending {
+  .attack-control.pending,
+  .node-online.freshness-live i,
+  .map-entity-pulse {
     animation: none;
   }
 }
@@ -2109,6 +2323,10 @@ button {
 
   .rescue-mission {
     grid-template-columns: 1fr 1.4fr;
+  }
+
+  .topbar-statuses {
+    flex-wrap: wrap;
   }
 
   .rescue-alerts {
@@ -2176,6 +2394,19 @@ button {
   .analytics-intro {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .topbar-statuses {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .topbar-statuses > * {
+    flex: 1;
+  }
+
+  .data-mode-badge {
+    justify-content: center;
   }
 
   .mission-status {
@@ -2255,6 +2486,13 @@ button {
   .rescue-mission,
   .rescue-kpis {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .map-entity-legend {
+    left: 10px;
+    right: auto;
+    flex-wrap: wrap;
+    max-width: calc(100% - 20px);
   }
 
   .rescue-alerts {

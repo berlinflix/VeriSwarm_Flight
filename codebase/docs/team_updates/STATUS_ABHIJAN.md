@@ -183,9 +183,8 @@ ops/DEMO_RUNBOOK.md
   corresponding rescue events. No live authorization-aware flight is claimed yet.
 - The first retained live A-to-B RPC run, transient-HOLD flight and quarantined-Alpha
   flight remain open simulator qualifications.
-- A cell-level heatmap cannot be reconstructed from the current count-only assignment,
-  coverage and reassignment payloads. Suyash must freeze additive cell-ID/state fields
-  before Pratik and Abhijan depend on them.
+- The dashboard and collector now consume the frozen cell-ID/state fields. The remaining
+  dependency is Pratik's first retained live five-drone stream using those fields.
 - A physical model-hash rerun still operationally requires Alpha, Bravo and Charlie to be
   reachable, Charlie's peer service to be running, and `vs dash` to be started on Alpha.
   This is not a code blocker for the already retained evidence or dashboard.
@@ -202,7 +201,22 @@ ops/DEMO_RUNBOOK.md
   report measured outcomes without claiming autonomous obstacle avoidance.
 - Keep attack evidence separate from genuine mission observations and use hidden simulator
   truth only for post-run scoring.
-- Add the deterministic heatmap and compact scoreboard after cell-level producers pass;
-  keep the read-only command-centre query layer optional until the P0 thin slice is stable.
+- Feed the completed deterministic heatmap, compact scoreboard, freshness labels and
+  positioned rescue markers from Pratik's retained live producer events.
 - Publish code, tests and any new blockers here; keep raw videos and runtime evidence out
   of Git.
+
+## 2026-08-23 dashboard presentation checkpoint
+
+- Published annotated Git checkpoint tag `checkpoint/pratik-handoff` at the last stable
+  Pratik integration handoff before changing the dashboard.
+- Added explicit `LIVE_PRATIK`, `REFERENCE_REPLAY` and fail-closed unverified source modes.
+- Added per-vehicle telemetry freshness without changing the vehicle mission state.
+- Added map projection for person candidates and hazards only when validated NED
+  coordinates exist; missing coordinates remain intentionally unmapped.
+- Added report export from the collector projection and polished the five-drone,
+  cell-scoreboard, movement-safety and alert transitions with reduced-motion support.
+- Isolated visual QA passed at desktop and narrow responsive widths against retained
+  five-drone events plus one positioned person and one positioned hazard. All five cards,
+  the NED map, the analytics view and the vehicle-detail modal rendered without browser
+  console errors. Replay mode was verified to say `Coverage Replay` / `REPLAY EVENTS`.

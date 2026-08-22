@@ -111,10 +111,26 @@ source IP; it does not contact the Jetson/model-hash peers. Pratik runs
 `ops/start_pratik_rescue_sender.ps1`; no rescue bearer token is shared. See
 `../docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_DIRECT_ETHERNET_DATA_HANDOFF_2026-08-22.md`.
 
+The dashboard labels the rescue source explicitly and fails closed when it is not set:
+
+- `LIVE_PRATIK` is set by the two Abhijan launchers and means the collector is receiving
+  Pratik's direct Ethernet data plane.
+- `REFERENCE_REPLAY` is only for retained sample/rehearsal events; the UI says replay and
+  never labels that state live.
+- an unset or unknown `VITE_RESCUE_DATA_MODE` is shown as `SOURCE UNVERIFIED`.
+- `VITE_RESCUE_STALE_AFTER_MS` optionally changes the telemetry freshness threshold from
+  its 8000 ms default.
+
+Person and hazard symbols are drawn on the NED map only when their validated rescue
+events contain a genuine `position_ned`. The dashboard never invents a marker position.
+`EXPORT REPORT` downloads the collector's current `/api/rescue/report` projection.
+
 ## Current Scope
 
-- Translucent telemetry deck for Alpha, Bravo and Charlie.
-- Ethernet-ready real-time stream viewport with a clear disconnected state.
+- Translucent telemetry deck for Pratik's Alpha, Bravo, Charlie, Delta and Echo vehicles,
+  including link state, event age and fail-closed freshness labels.
+- Ethernet-ready NED coverage map with exact cell states, five vehicle positions and
+  genuine positioned person/hazard markers.
 - Live analytics sourced from retained `results/live_events.jsonl` consensus,
   semantic ACK, pose and reputation events.
 - A functional clean-plus-model-hash control backed by Alpha's Jetson service.

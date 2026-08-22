@@ -17,11 +17,25 @@ function interpolate(start, end, fraction) {
 }
 
 /** Build an NED top-view overlay without inventing missing vehicle positions. */
-export function buildMissionMap(missionView, movementConfig, vehicles = []) {
+export function buildMissionMap(
+  missionView,
+  movementConfig,
+  vehicles = [],
+  people = [],
+  hazards = [],
+) {
   const start = movementConfig?.route?.centroid_start_ned_m;
   const end = movementConfig?.route?.centroid_end_ned_m;
   if (!ned2(start) || !ned2(end)) {
-    return { ready: false, width: WIDTH, height: HEIGHT, cells: [], vehicles: [] };
+    return {
+      ready: false,
+      width: WIDTH,
+      height: HEIGHT,
+      cells: [],
+      vehicles: [],
+      people: [],
+      hazards: [],
+    };
   }
 
   const geofence = movementConfig?.command_limits?.enroute_geofence_ned_m;
@@ -73,6 +87,14 @@ export function buildMissionMap(missionView, movementConfig, vehicles = []) {
     if (!ned2(vehicle?.position_ned)) return [];
     return [{ ...vehicle, ...project(vehicle.position_ned) }];
   });
+  const projectedPeople = people.flatMap((person) => {
+    if (!ned2(person?.position_ned)) return [];
+    return [{ ...person, ...project(person.position_ned) }];
+  });
+  const projectedHazards = hazards.flatMap((hazard) => {
+    if (!ned2(hazard?.position_ned)) return [];
+    return [{ ...hazard, ...project(hazard.position_ned) }];
+  });
 
   return {
     ready: true,
@@ -80,6 +102,8 @@ export function buildMissionMap(missionView, movementConfig, vehicles = []) {
     height: HEIGHT,
     cells,
     vehicles: projectedVehicles,
+    people: projectedPeople,
+    hazards: projectedHazards,
     start: project(start),
     end: project(end),
   };
