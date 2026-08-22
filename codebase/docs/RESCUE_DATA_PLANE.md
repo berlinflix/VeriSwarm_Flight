@@ -111,13 +111,19 @@ Required top-level producer fields:
   "schema": "veriswarm.rescue.event.v1",
   "mission_id": "OP-VARUNA-001",
   "event_id": "alpha-person-0007",
-  "source": "alpha",
+  "source": "alpha.perception",
   "source_seq": 7,
   "observed_at_ms": 1787394601200,
   "kind": "observation",
   "payload": {}
 }
 ```
+
+`source` is a producer-stream identity. Use `alpha.perception` for Samik's detector,
+`alpha.telemetry` for Pratik's vehicle/coverage/link producer and `alpha.fusion` for a
+localized hazard promoter. Replace `alpha` with the subject node. This gives independent
+processes independent `source_seq` counters without allowing one node's stream to claim
+another node. The legacy exact-node form remains accepted for a single combined producer.
 
 `event_id` makes offline replay idempotent. Re-delivery of identical content is a successful
 no-op. Reusing the ID with different content or sending a source sequence backwards is

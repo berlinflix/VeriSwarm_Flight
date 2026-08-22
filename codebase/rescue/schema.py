@@ -51,6 +51,13 @@ LOCALIZATION_METHODS = frozenset({
 })
 EVIDENCE_SECURITY_STATES = frozenset({"VERIFIED", "UNVERIFIED", "DISPUTED"})
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+NODE_STREAM_ROLES = {
+    "coverage": frozenset({"telemetry"}),
+    "vehicle_state": frozenset({"telemetry"}),
+    "observation": frozenset({"perception"}),
+    "hazard": frozenset({"fusion"}),
+    "link_state": frozenset({"telemetry"}),
+}
 
 
 class RescueEventError(ValueError):
@@ -117,6 +124,19 @@ def _text_list(value: Any, field: str, *, maximum: int = 32) -> list[str]:
         for index, item in enumerate(value)
     ]
     return sorted(set(normalized))
+
+
+def _source_owns_node(source: str, node: str, kind: str) -> bool:
+    """Return whether a producer stream is authorized to speak for its node.
+
+    Exact node sources remain valid for backward compatibility. Role-scoped sources let
+    telemetry, perception and fusion processes keep independent monotonic sequences.
+    """
+    if source == node:
+        return True
+    return any(
+        source == f"{node}.{role}" for role in NODE_STREAM_ROLES.get(kind, ())
+    )
 
 
 def _optional_position(payload: dict[str, Any]) -> None:
@@ -345,13 +365,14 @@ def validate_rescue_event(
         raise RescueEventError(f"payload is not finite JSON: {error}") from error
     _PAYLOAD_VALIDATORS[kind](payload)
 
-    # Telemetry-producing nodes may speak only for themselves. Mission-manager
-    # events (assignment/authorization/reassignment) intentionally target other
-    # nodes and are excluded from this binding.
-    if kind in {"coverage", "vehicle_state", "observation", "hazard", "link_state"}:
-        if payload["node"] != source:
+    # Node producers may speak only for their own subject. Mission-manager events
+    # (assignment/authorization/reassignment) intentionally target other nodes and are
+    # excluded. Role-scoped sources prevent independent producer sequence collisions.
+    if kind in NODE_STREAM_ROLES:
+        if not _source_owns_node(source, payload["node"], kind):
             raise RescueEventError(
-                f"source/payload node mismatch: source={source}, node={payload['node']}"
+                "source is not an authorized stream for payload node: "
+                f"source={source}, node={payload['node']}, kind={kind}"
             )
     if kind == "observation" and payload.get("corroborated_sources"):
         if payload["node"] not in payload["corroborated_sources"]:
