@@ -22,7 +22,9 @@
     "rise_height_m": 4.6,
     "rise_duration_seconds": 60.0,
     "update_period_seconds": 1.0,
-    "hold_at_peak_seconds": 10.0,
+    "peak_hold_mode": "until_interrupted",
+    "peak_keepalive_seconds": 1.0,
+    "peak_evidence_interval_seconds": 5.0,
     "recede_duration_seconds": 20.0,
     "restore_initial_level_before_landing": true
   },

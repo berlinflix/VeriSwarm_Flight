@@ -29,6 +29,9 @@ the Unreal project, generated settings, raw frames, logs, or development evidenc
 
 The development weather profile prioritizes demo visibility: light rain and wet roads
 remain enabled, while fog, dust, snow, and airborne-leaf effects are explicitly zeroed.
+At peak flood, the controller remains active and repeatedly holds all five drones above
+the observed water pose. The operator presses Ctrl+C to trigger configured recession,
+landing, disarming, weather cleanup, and API-control release.
 
 ## Collision policy
 

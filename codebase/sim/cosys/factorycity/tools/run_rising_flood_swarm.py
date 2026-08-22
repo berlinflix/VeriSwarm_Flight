@@ -49,10 +49,15 @@ def _load_config(path: Path) -> dict[str, object]:
         "rise_height_m",
         "rise_duration_seconds",
         "update_period_seconds",
-        "hold_at_peak_seconds",
+        "peak_keepalive_seconds",
+        "peak_evidence_interval_seconds",
         "recede_duration_seconds",
     ):
         _positive(flood, field)
+    if flood.get("peak_hold_mode") not in ("timed", "until_interrupted"):
+        raise RuntimeError("peak_hold_mode must be timed or until_interrupted")
+    if flood["peak_hold_mode"] == "timed":
+        _positive(flood, "hold_at_peak_seconds")
     if float(flight["desired_clearance_above_water_m"]) <= float(
         flight["minimum_clearance_above_water_m"]
     ):
@@ -248,6 +253,59 @@ def _water_transition(
             time.sleep(remaining)
 
 
+def _hold_flood_at_peak(
+    client: object,
+    water_name: str,
+    vehicles: tuple[str, ...],
+    flight: dict[str, object],
+    flood: dict[str, object],
+    collision_baseline: dict[str, int],
+    events: list[dict[str, object]],
+) -> str:
+    mode = str(flood["peak_hold_mode"])
+    keepalive = float(flood["peak_keepalive_seconds"])
+    evidence_interval = float(flood["peak_evidence_interval_seconds"])
+    started = time.monotonic()
+    deadline = (
+        started + float(flood["hold_at_peak_seconds"])
+        if mode == "timed"
+        else None
+    )
+    next_evidence = started
+    sample = 0
+    print(
+        "Flood is at peak; drones are holding above water. "
+        "Press Ctrl+C for safe recession and landing.",
+        flush=True,
+    )
+    try:
+        while deadline is None or time.monotonic() < deadline:
+            peak = client.simGetObjectPose(water_name, ned=True)
+            _finite_pose(peak, "peak water actor")
+            water_z = float(peak.position.z_val)
+            _move_fleet_to_water_clearance(client, vehicles, water_z, flight)
+            observation = _verify_fleet(
+                client, vehicles, water_z, flight, collision_baseline
+            )
+            now = time.monotonic()
+            if now >= next_evidence:
+                sample += 1
+                events.append(
+                    {
+                        "phase": "peak_hold",
+                        "sample": sample,
+                        "water_z_ned_m": water_z,
+                        **observation,
+                    }
+                )
+                next_evidence = now + evidence_interval
+            time.sleep(keepalive)
+    except KeyboardInterrupt:
+        events.append({"phase": "operator_stop", "reason": "keyboard_interrupt"})
+        return "operator_stop"
+    return "timed_hold_complete"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -317,20 +375,16 @@ def main() -> None:
             "rising",
             collision_baseline,
         )
-        time.sleep(float(flood["hold_at_peak_seconds"]))
-        peak = client.simGetObjectPose(water_name, ned=True)
-        events.append(
-            {
-                "phase": "peak_hold",
-                **_verify_fleet(
-                    client,
-                    vehicles,
-                    float(peak.position.z_val),
-                    flight,
-                    collision_baseline,
-                ),
-            }
+        hold_exit = _hold_flood_at_peak(
+            client,
+            water_name,
+            vehicles,
+            flight,
+            flood,
+            collision_baseline,
+            events,
         )
+        events.append({"phase": "peak_hold_exit", "reason": hold_exit})
         if not bool(flood["restore_initial_level_before_landing"]):
             raise RuntimeError("landing is forbidden while floodwater remains raised")
         peak_pose = _copy_pose(

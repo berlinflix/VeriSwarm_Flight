@@ -78,6 +78,9 @@ def test_rising_flood_controller_has_safe_configured_clearance() -> None:
     assert flight["minimum_pairwise_separation_m"] > 0
     assert flood["rise_height_m"] > 0
     assert flood["rise_duration_seconds"] > flood["update_period_seconds"]
+    assert flood["peak_hold_mode"] == "until_interrupted"
+    assert flood["peak_keepalive_seconds"] > 0
+    assert flood["peak_evidence_interval_seconds"] >= flood["peak_keepalive_seconds"]
     assert flood["restore_initial_level_before_landing"] is True
     assert all(0.0 <= value <= 1.0 for value in config["weather"].values())
     assert config["weather"]["Fog"] == 0.0

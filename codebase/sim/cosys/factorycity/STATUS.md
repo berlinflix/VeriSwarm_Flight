@@ -50,6 +50,11 @@ recession steps. Across the retained run, minimum drone clearance above water wa
 no new post-climb collision occurred, the water returned to its initial pose, all five
 drones landed, and API control was released.
 
+The default development demo now uses persistent peak mode: after the paced rise, the
+controller keeps issuing altitude commands and verifies clearance/separation/collisions
+while the flood remains visible. Ctrl+C is the explicit operator signal for recession and
+the already-validated landing/cleanup path.
+
 ## Current limitation
 
 `SCENARIO_MANIFEST.json` has not been handed off. The checked-in layout is explicitly
