@@ -4,7 +4,11 @@ Updated: 2026-08-22 IST
 
 Branch: `codex/abhijan-rescue-security`
 
-Integration base: `origin/suyash/sih26177-rescue-integration` at `e939121`
+Integration base in this branch: `origin/suyash/sih26177-rescue-integration` at `e939121`
+
+Latest upstream reviewed: `ef56941` (movement freeze); branch tip `437c329` was also
+checked and contains a Samik-only video-evaluation handoff with no replacement Abhijan
+instruction.
 
 Functional rescue data-plane parent: `30736f3`
 
@@ -42,6 +46,27 @@ Functional rescue data-plane parent: `30736f3`
   - `dashboard-clean-1787276531963106801.dashboard.json` -> `ALLOW`, sequence 1;
   - `dashboard-model_swap-1787276532093292096.dashboard.json` -> `QUARANTINE`, sequence 2;
   - projected Alpha state -> `QUARANTINED`, with a `CRITICAL` responder alert.
+- Completed the physical model-hash reviewer path over Ethernet:
+  - clean baseline: semantic acknowledgements `2/2`, disputes `0/2`, accepted;
+  - unapproved Alpha model: semantic acknowledgements `0/2`, disputes `2/2`, rejected;
+  - released command remained `[0,0,0]` / `HOLD`;
+  - normalized rescue authorization was published as `QUARANTINE` with reason
+    `model_hash_not_approved` and projected as one quarantined vehicle.
+- Split the dashboard control into two explicit reviewer stages so the accepted baseline
+  can be demonstrated before the attack:
+  - `RUN APPROVED BASELINE` runs only the clean qualification;
+  - `RUN MODEL-HASH ATTACK` becomes available only after the clean result;
+  - the retained attack evidence remains visible after publication.
+- Updated the dashboard handoff, demo runbook and reviewer script to match that staged
+  sequence. The production dashboard build passed after the change.
+- Read Suyash's P0 movement freeze at `ef56941`. Recorded ownership without changing the
+  frozen rescue event schema:
+  - Pratik owns nominal CoSys flight, formation, route, telemetry, landing and reset;
+  - Pratik and Abhijan jointly own authorization-aware movement safety and reassignment;
+  - hidden simulator truth is restricted to Abhijan's post-run evaluator and must not
+    enter perception, planning, localization, collision avoidance or authorization;
+  - a survivor observation must remain visible after its observing drone is held or
+    quarantined.
 
 ## Network observed from Abhijan's Mac
 
@@ -64,27 +89,41 @@ No IP address, route, peer configuration or firewall setting was changed.
 codebase/tools/rescue_authorization_adapter.py
 codebase/tests/test_rescue_authorization_adapter.py
 codebase/docs/ABHIJAN_AUTHORIZATION_ADAPTER.md
+codebase/docs/team_updates/STATUS_ABHIJAN.md
 codebase/examples/qualification_clean_dashboard_sample.json
 codebase/examples/qualification_model_swap_dashboard_sample.json
-codebase/docs/team_updates/STATUS_ABHIJAN.md
+codebase/c2_dashboard/src/App.jsx
 ops/start_abhijan_rescue_mac.sh
 ops/publish_rescue_authorization.sh
 ops/ABHIJAN_DASHBOARD_HANDOFF.md
+ops/ABHIJAN_REVIEWER_DEMO_SCRIPT.md
 ops/DEMO_RUNBOOK.md
 ```
 
 ## Current blockers
 
-- Pratik's simulator event producer is not yet available; this does not block the
-  authorization adapter.
-- Suyash must keep Charlie running and start `vs dash` on Alpha before Abhijan launches
-  the integrated Mac dashboard. This is an operational start step, not a code blocker.
+- The joint configuration-driven movement contract requested by Suyash at `ef56941` is
+  not yet available on this branch. Value-specific security movement tests cannot be
+  finalized until Pratik publishes the exact Point A/Point B, five-drone roster and poses,
+  sectors/cells, route, limits, obstacles, command lifecycle and repeatable reset details.
+- Pratik's CoSys rescue-event producer/handoff has not yet been reviewed in this branch.
+  Until that handoff is supplied, Abhijan will not invent coordinates, simulator truth,
+  movement state or reassignment events.
+- A physical model-hash rerun still operationally requires Alpha, Bravo and Charlie to be
+  reachable, Charlie's peer service to be running, and `vs dash` to be started on Alpha.
+  This is not a code blocker for the already retained evidence or dashboard.
 
 ## Next checkpoint
 
-- Suyash keeps Charlie ready and runs `vs dash` on Alpha.
-- Abhijan runs `./ops/start_abhijan_rescue_mac.sh` on the Mac.
-- Run the physical CLEAN + MODEL HASH cases and publish each displayed retained evidence
-  filename with `./ops/publish_rescue_authorization.sh <filename>`.
-- Ingest Pratik's simulator events through the same frozen rescue collector when his
-  producer is delivered; do not mix attack evidence with survivor/hazard observations.
+- Review Pratik's exact branch/commit handoff when supplied; do not redesign or merge it
+  blindly.
+- Add compatible movement-security tests on this branch covering `ALLOW`, transient
+  `HOLD`, `QUARANTINE`, abort/hover/land behavior, and unfinished-cell reassignment using
+  the published configuration rather than hard-coded or invented simulator facts.
+- Verify the quarantined-drone case end to end: no unauthorized motion, Alpha unavailable,
+  unfinished cells reassigned, survivor observations preserved, and authorization,
+  vehicle-state and reassignment events projected through the frozen rescue data plane.
+- Keep attack evidence separate from genuine mission observations and use hidden simulator
+  truth only for post-run scoring.
+- Publish code, tests and any new blockers here; keep raw videos and runtime evidence out
+  of Git.
