@@ -4,6 +4,30 @@ Updated: 2026-08-22 IST
 
 Branch: `codex/abhijan-rescue-security`
 
+## Direct Pratik-to-Mac transport checkpoint
+
+- Replaced the proposed Suyash runtime relay with a direct Pratik -> Abhijan transport;
+  Suyash remains schema owner and is not a live telemetry hop.
+- Added `tools.rescue_ethernet_ingress`: it binds only the discovered Mac wired address,
+  accepts event posts only from Pratik's exact `.11` TCP source, and forwards unchanged
+  JSON to the loopback-only canonical collector.
+- Kept `VERISWARM_RESCUE_TOKEN` out of the Ethernet path. This is an isolated-demo-LAN
+  source restriction, not cryptographic producer authentication.
+- Updated the integrated Mac launcher to require the frozen private addresses
+  `192.168.50.11` (Pratik) and `192.168.50.14` (Mac), and start/stop the restricted
+  ingress automatically. The previously reported `.158` address is intentionally refused.
+- Added `ops/start_abhijan_pratik_mac.sh` as the normal simulation-only launcher. It does
+  not contact Jetson Alpha, Bravo, Charlie or Suyash and therefore keeps Pratik's five-
+  drone telemetry operationally separate from model-hash qualification.
+- Added `ops/start_pratik_rescue_sender.ps1` to discover Abhijan `.14`, verify the ingress,
+  and continuously drain every per-producer durable outbox without a shared token.
+- Published the exact Pratik data contract and a checked-in five-drone JSONL sample. No
+  event schema or model-hash behavior was redesigned.
+- Live network check before publication: neither `.11` address was reachable, and macOS
+  routed both attempts through Wi-Fi `en0` via `172.20.10.1`. The code is complete, but
+  direct live qualification is blocked until the wired adapters are configured as
+  `192.168.50.11/24` and `192.168.50.14/24` with no router.
+
 Integration base in this branch: `origin/suyash/sih26177-rescue-integration` at `0f7cb7f`
 
 Latest upstream reviewed: `0f7cb7f` (Pratik contract accepted; movement tests and

@@ -104,6 +104,13 @@ fabricated.
 The producer schema and exact Samik/Pratik handoff are in
 `../docs/RESCUE_DATA_PLANE.md`.
 
+For Pratik's direct wired feed, do not expose this collector or the Vite server to the LAN.
+Run `ops/start_abhijan_pratik_mac.sh` for the simulation-only path. It keeps both
+loopback-only and starts a separate `:8771` ingress restricted to Pratik's exact Ethernet
+source IP; it does not contact the Jetson/model-hash peers. Pratik runs
+`ops/start_pratik_rescue_sender.ps1`; no rescue bearer token is shared. See
+`../docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_DIRECT_ETHERNET_DATA_HANDOFF_2026-08-22.md`.
+
 ## Current Scope
 
 - Translucent telemetry deck for Alpha, Bravo and Charlie.
