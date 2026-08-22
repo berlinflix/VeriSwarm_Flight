@@ -27,6 +27,9 @@ the Unreal project, generated settings, raw frames, logs, or development evidenc
    It verifies clearance, separation, collision state, roster, and safe recession before
    landing; rain, fog, and road wetness also come from configuration.
 
+The development weather profile prioritizes demo visibility: light rain and wet roads
+remain enabled, while fog, dust, snow, and airborne-leaf effects are explicitly zeroed.
+
 ## Collision policy
 
 - Existing road and launch-ground actors remain untouched.

@@ -80,6 +80,9 @@ def test_rising_flood_controller_has_safe_configured_clearance() -> None:
     assert flood["rise_duration_seconds"] > flood["update_period_seconds"]
     assert flood["restore_initial_level_before_landing"] is True
     assert all(0.0 <= value <= 1.0 for value in config["weather"].values())
+    assert config["weather"]["Fog"] == 0.0
+    assert config["weather"]["Dust"] == 0.0
+    assert 0.0 < config["weather"]["Rain"] <= 0.10
 
 
 def test_camera_profile_has_rgb_and_depth_planar() -> None:

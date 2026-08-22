@@ -27,8 +27,13 @@
     "restore_initial_level_before_landing": true
   },
   "weather": {
-    "Rain": 0.85,
-    "Roadwetness": 1.0,
-    "Fog": 0.25
+    "Rain": 0.05,
+    "Roadwetness": 0.85,
+    "Fog": 0.0,
+    "Dust": 0.0,
+    "Snow": 0.0,
+    "RoadSnow": 0.0,
+    "MapleLeaf": 0.0,
+    "RoadLeaf": 0.0
   }
 }
