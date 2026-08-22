@@ -117,7 +117,48 @@ def test_semantic_cli_requires_weights_and_frozen_hash_together():
         ]
     )
 
-    with pytest.raises(ValueError, match="requires both"):
+    with pytest.raises(ValueError, match="semantic mode requires"):
+        _validate_args(args)
+
+
+def test_semantic_cli_accepts_registry_instead_of_duplicate_hash():
+    args = _parser().parse_args(
+        [
+            "--camera",
+            "cam1",
+            "0",
+            "dshow",
+            "--camera",
+            "cam2",
+            "2",
+            "msmf",
+            "--weights",
+            "rescue.pt",
+            "--model-registry",
+            "registry.json",
+        ]
+    )
+
+    assert len(_validate_args(args)) == 2
+
+
+def test_model_registry_without_weights_is_rejected():
+    args = _parser().parse_args(
+        [
+            "--camera",
+            "cam1",
+            "0",
+            "dshow",
+            "--camera",
+            "cam2",
+            "2",
+            "msmf",
+            "--model-registry",
+            "registry.json",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="requires --weights"):
         _validate_args(args)
 
 

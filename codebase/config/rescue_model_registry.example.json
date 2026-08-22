@@ -1,0 +1,21 @@
+{
+  "schema": "veriswarm.model.v1",
+  "model_id": "sar-alert-rgb-k0",
+  "task": "detect",
+  "modality": "rgb",
+  "classes": [
+    "person_candidate",
+    "fire",
+    "smoke"
+  ],
+  "weights_sha256": "REPLACE_WITH_64_HEX_DIGIT_FINAL_WEIGHTS_HASH",
+  "training_manifest_sha256": "REPLACE_WITH_64_HEX_DIGIT_FINAL_MANIFEST_HASH",
+  "thresholds_sha256": "REPLACE_WITH_64_HEX_DIGIT_FINAL_THRESHOLDS_HASH",
+  "framework": "REPLACE_WITH_PINNED_FRAMEWORK_VERSION",
+  "input": {
+    "width": 960,
+    "height": 960,
+    "color": "RGB"
+  },
+  "status": "candidate"
+}

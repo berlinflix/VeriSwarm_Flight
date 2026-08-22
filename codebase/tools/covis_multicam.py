@@ -59,6 +59,13 @@ from tools.covis_live import (
     _utc_now,
     assess_pair,
 )
+from tools.rescue_model_registry import (
+    ModelRegistryError,
+    RescueModelRegistry,
+    load_model_registry,
+    validate_model_class_map,
+    verify_registry_weights,
+)
 
 SCHEMA = "veriswarm.covis_multicam.v2"
 CAMERA_NAME_RE = RUN_ID_RE
@@ -473,6 +480,7 @@ def _source_tile(
     width: int,
     height: int,
     cv2_module: Any,
+    model_registry: RescueModelRegistry | None = None,
 ) -> Any:
     import numpy as np
 
@@ -493,9 +501,17 @@ def _source_tile(
         colour = (0, 0, 255)
     _draw_detections(view, detections, class_names, cv2_module)
     tile[header:] = _fit_image(view, width, height - header, cv2_module)
+    model_text = (
+        "feature-only"
+        if model_registry is None
+        else f"{model_registry.model_id} | {model_registry.modality}"
+    )
     _put_lines(
         tile,
-        (f"{spec.name} | {status}", f"source={spec.source} | {spec.backend}"),
+        (
+            f"{spec.name} | {status}",
+            f"source={spec.source} | {spec.backend} | {model_text}",
+        ),
         (7, 19),
         colour,
         cv2_module,
@@ -625,6 +641,7 @@ def render_dashboard(
     width: int,
     height: int,
     cv2_module: Any,
+    model_registry: RescueModelRegistry | None = None,
 ) -> Any:
     """Render compact sources above a larger all-pairs intersection grid."""
     import numpy as np
@@ -644,6 +661,7 @@ def render_dashboard(
             source_width,
             source_height,
             cv2_module,
+            model_registry,
         )
         canvas[title_height : title_height + source_height, x : x + source_width] = tile
 
@@ -720,6 +738,7 @@ def event_record(
     observations: Mapping[str, DetectorObservation | Exception] | None,
     pairs: Sequence[PairResult],
     model_sha256: str | None,
+    model_registry: RescueModelRegistry | None = None,
 ) -> dict[str, Any]:
     observation_map = observations or {}
     cameras: dict[str, Any] = {}
@@ -750,6 +769,9 @@ def event_record(
         "event_sequence": sequence,
         "recorded_at_utc": _utc_now(),
         "model_sha256": model_sha256,
+        "model_registry": (
+            None if model_registry is None else model_registry.to_record()
+        ),
         "cameras": cameras,
         "pairs": [_pair_json(pair) for pair in pairs],
     }
@@ -790,6 +812,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--weights", type=Path)
     parser.add_argument("--expected-model-sha256")
+    parser.add_argument(
+        "--model-registry",
+        type=Path,
+        help=(
+            "immutable veriswarm.model.v1 JSON; with --weights it supplies the "
+            "approved hash and exact rescue class map"
+        ),
+    )
     parser.add_argument("--confidence", type=float, default=0.25)
     parser.add_argument("--run-id")
     parser.add_argument(
@@ -844,9 +874,18 @@ def _validate_args(args: argparse.Namespace) -> tuple[CameraSpec, ...]:
         raise ValueError("video-fps must be positive")
     if len(args.video_codec) != 4 or not args.video_codec.isascii():
         raise ValueError("video-codec must contain exactly four ASCII characters")
-    if (args.weights is None) != (args.expected_model_sha256 is None):
+    if args.model_registry is not None and args.weights is None:
+        raise ValueError("--model-registry requires --weights")
+    if args.weights is None and args.expected_model_sha256 is not None:
+        raise ValueError("--expected-model-sha256 requires --weights")
+    if (
+        args.weights is not None
+        and args.model_registry is None
+        and args.expected_model_sha256 is None
+    ):
         raise ValueError(
-            "semantic mode requires both --weights and --expected-model-sha256"
+            "semantic mode requires --weights with either --model-registry "
+            "or --expected-model-sha256"
         )
     if args.expected_model_sha256 and not re.fullmatch(
         r"[0-9a-fA-F]{64}", args.expected_model_sha256
@@ -878,21 +917,51 @@ def main(argv: Sequence[str] | None = None) -> int:
     visible_window = _visible_window_size(args.display_width, args.display_height)
 
     weights_hash: str | None = None
+    model_registry: RescueModelRegistry | None = None
     detector: YoloClaimProvider | None = None
     if args.weights is not None:
         if not args.weights.is_file():
             print(f"ERROR: weights file not found: {args.weights}")
             return 2
-        weights_hash = _sha256(args.weights)
+        if args.model_registry is not None:
+            try:
+                model_registry = load_model_registry(args.model_registry)
+            except ModelRegistryError as exc:
+                print(f"ERROR: {exc}")
+                return 2
+            if (
+                args.expected_model_sha256 is not None
+                and args.expected_model_sha256.lower()
+                != model_registry.weights_sha256
+            ):
+                print("ERROR: CLI model SHA-256 disagrees with the model registry")
+                return 2
+        try:
+            weights_hash = (
+                verify_registry_weights(model_registry, args.weights)
+                if model_registry is not None
+                else _sha256(args.weights)
+            )
+        except ModelRegistryError as exc:
+            print(f"ERROR: {exc}")
+            return 2
+        expected_hash = (
+            model_registry.weights_sha256
+            if model_registry is not None
+            else args.expected_model_sha256
+        )
         if (
-            args.expected_model_sha256
-            and weights_hash.lower() != args.expected_model_sha256.lower()
+            model_registry is None
+            and expected_hash
+            and weights_hash.lower() != expected_hash.lower()
         ):
             print("ERROR: model SHA-256 does not match the approved value")
             return 2
         try:
             detector = YoloClaimProvider(args.weights, args.confidence)
-        except LiveDemoError as exc:
+            if model_registry is not None:
+                validate_model_class_map(model_registry, detector.class_names)
+        except (LiveDemoError, ModelRegistryError) as exc:
             print(f"ERROR: {exc}")
             return 2
 
@@ -916,6 +985,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "capture": {"width": args.width, "height": args.height, "fps": args.fps},
         "analysis_fps": args.analysis_fps,
         "model_sha256": weights_hash,
+        "model_registry": (
+            None if model_registry is None else model_registry.to_record()
+        ),
         "thresholds": {
             "max_receive_skew_ms": args.max_receive_skew_ms,
             "max_frame_age_ms": args.max_frame_age_ms,
@@ -1022,12 +1094,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 width=args.display_width,
                 height=args.display_height,
                 cv2_module=cv2,
+                model_registry=model_registry,
             )
             if recorder is not None:
                 recorder.write(dashboard)
             event_count += 1
             event = event_record(
-                event_count, specs, packets, observations, pairs, weights_hash
+                event_count,
+                specs,
+                packets,
+                observations,
+                pairs,
+                weights_hash,
+                model_registry,
             )
             events_handle.write(
                 json.dumps(event, sort_keys=True, allow_nan=False) + "\n"

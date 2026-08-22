@@ -14,18 +14,23 @@
 The tool reads private dataset directories but never edits them. Generated
 montages and audit JSON remain outside Git.
 
-## Reserved for the next accepted interface handoff
+## Second milestone: frozen registry adapter
 
-After Suyash/Samik publish the immutable rescue model-registry/class-map
-artifact, Ayush may make bounded changes to:
+Implemented independently against the frozen `veriswarm.model.v1` interface in the
+SIH 26177 plan:
 
-- the registry-loading boundary used by `codebase/tools/covis_multicam.py`;
-- its focused multi-camera tests;
-- its example configuration and documentation.
+- `codebase/tools/rescue_model_registry.py`
+- `codebase/tools/covis_multicam.py` registry-loading boundary
+- `codebase/tests/test_rescue_model_registry.py`
+- focused additions to `codebase/tests/test_covis_multicam.py`
+- `codebase/config/rescue_model_registry.example.json`
+- `codebase/docs/RESCUE_MODEL_REGISTRY.md`
 
-That change must load the frozen model hash, modality, model ID, preprocessing,
-thresholds and supported rescue classes without changing the existing 2-D
-homography, `AGREE`/`DISPUTE`/`ABSTAIN`, create-once evidence or release contract.
+The adapter validates the model hash, modality, model ID, preprocessing declaration,
+registry hashes and ordered supported rescue classes. It does not change the existing
+2-D homography, `AGREE`/`DISPUTE`/`ABSTAIN`, create-once evidence or release contract.
+The final selected registry/model bytes are still an external integration input and are
+not committed.
 
 ## Explicitly not owned
 
