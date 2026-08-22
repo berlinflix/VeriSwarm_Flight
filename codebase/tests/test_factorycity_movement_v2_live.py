@@ -21,6 +21,7 @@ from sim.cosys.factorycity.movement_v2 import (
 from sim.cosys.factorycity.tools.run_factorycity_movement_v2 import (
     AuthorizationFileProvider,
     LiveCoSimCommandAdapter,
+    _fail_closed_hover_or_disarm_landed,
     _gate_separation,
     _outbox_factory,
     _preflight_command,
@@ -85,6 +86,41 @@ class _Client:
     def landAsync(self, *, timeout_sec, vehicle_name):
         self.calls.append(("land", vehicle_name, timeout_sec))
         return _Future("land-finished")
+
+
+class _CleanupClient:
+    def __init__(self):
+        self.calls = []
+
+    def getMultirotorState(self, *, vehicle_name):
+        landed_state = (
+            cosysairsim.LandedState.Landed
+            if vehicle_name == "landed"
+            else cosysairsim.LandedState.Flying
+        )
+        return SimpleNamespace(landed_state=landed_state)
+
+    def armDisarm(self, armed, *, vehicle_name):
+        self.calls.append(("arm", vehicle_name, armed))
+        return True
+
+    def hoverAsync(self, *, vehicle_name):
+        self.calls.append(("hover", vehicle_name))
+        return _Future("hover-finished")
+
+
+def test_failure_cleanup_hovers_airborne_and_disarms_only_landed():
+    client = _CleanupClient()
+
+    failures = _fail_closed_hover_or_disarm_landed(
+        client,
+        ("flying", "landed"),
+    )
+
+    assert failures == ()
+    assert ("hover", "flying") in client.calls
+    assert ("arm", "landed", False) in client.calls
+    assert ("arm", "flying", False) not in client.calls
 
 
 def _loaded():

@@ -194,6 +194,26 @@ def _join_if_future(value: Any) -> Any:
     return join() if callable(join) else value
 
 
+def _fail_closed_hover_or_disarm_landed(
+    client: object,
+    nodes: Sequence[str],
+) -> tuple[str, ...]:
+    """Hover airborne vehicles and disarm only confirmed landed vehicles."""
+
+    failures: list[str] = []
+    for node in tuple(sorted(nodes)):
+        try:
+            state = client.getMultirotorState(vehicle_name=node)
+            if state.landed_state == cosysairsim.LandedState.Landed:
+                if not client.armDisarm(False, vehicle_name=node):
+                    failures.append(f"{node}:disarm_failed")
+                continue
+            _join_if_future(client.hoverAsync(vehicle_name=node))
+        except Exception as error:
+            failures.append(f"{node}:{type(error).__name__}:{error}")
+    return tuple(failures)
+
+
 class LiveCoSimCommandAdapter:
     """Map supervisor actions to real CoSim calls through the frozen gate."""
 
@@ -1005,11 +1025,16 @@ def main() -> None:
                 )
         raise
     finally:
-        for node in tuple(sorted(armed)):
-            try:
-                client.armDisarm(False, vehicle_name=node)
-            except Exception:
-                pass
+        if failure is not None:
+            cleanup_failures = _fail_closed_hover_or_disarm_landed(client, armed)
+            if cleanup_failures:
+                failure += "; fail_closed_cleanup=" + "|".join(cleanup_failures)
+        else:
+            for node in tuple(sorted(armed)):
+                try:
+                    client.armDisarm(False, vehicle_name=node)
+                except Exception:
+                    pass
         for node in tuple(sorted(api_enabled)):
             try:
                 client.enableApiControl(False, vehicle_name=node)
