@@ -308,10 +308,6 @@ def _parse_annotation(
                 f"non-integer VisDrone row at {annotation_path}:{line_number}"
             ) from error
         source_rows += 1
-        if box_width <= 0 or box_height <= 0:
-            raise VisDroneConversionError(
-                f"non-positive box at {annotation_path}:{line_number}"
-            )
         if score not in {0, 1}:
             raise VisDroneConversionError(
                 f"invalid score at {annotation_path}:{line_number}"
@@ -327,6 +323,15 @@ def _parse_annotation(
         if category not in PERSON_SOURCE_CATEGORIES:
             ignored_boxes += 1
             continue
+        # Official VisDrone ships a small number of zero-area rows in discarded
+        # categories (ignored regions and vehicles).  Geometry is therefore
+        # enforced only for rows this converter actually maps, so a degenerate
+        # non-person row cannot abort the whole official corpus.  Mapped person
+        # rows keep this check plus the stricter visible-area check below.
+        if box_width <= 0 or box_height <= 0:
+            raise VisDroneConversionError(
+                f"non-positive box at {annotation_path}:{line_number}"
+            )
         if score != 1:
             raise VisDroneConversionError(
                 f"mapped person row must have score 1 at {annotation_path}:{line_number}"
