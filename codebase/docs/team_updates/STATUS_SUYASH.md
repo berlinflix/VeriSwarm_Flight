@@ -30,10 +30,17 @@ Latest work commit: `510c9c2`
 - Verified the corrected repository at 469 passed and 3 dependency-gated skips.
 - Established Orin Nano 8GB at 15 W as the mandatory model deployment floor, including
   TensorRT FP16, held-out accuracy retention and a sustained full-pipeline benchmark.
+- Added native video-file camera input for synthetic/recorded drone POV clips and
+  published the two-rate native-display/newest-frame-inference contract.
+- Accepted Pratik's movement ownership update: Pratik owns nominal CoSys flight and
+  Pratik+Abhijan jointly own authorization-aware movement safety and reassignment.
+- Published the P0 Point A/Point B, route, sector, safety, event and no-person CoSys
+  negative-control freeze required from Pratik and Abhijan.
 
 ## In progress now
 
-- Integrating the new detector and CoSys calibration producers as their branches publish.
+- Integrating the new detector, movement contract and CoSys calibration producers as
+  their branches publish.
 
 ## Outputs available
 
@@ -49,12 +56,16 @@ Latest work commit: `510c9c2`
 - `codebase/examples/rescue_multiview_person_sample.json`
 - `codebase/docs/JETSON_ORIN_NANO_MODEL_GATE.md`
 - `codebase/examples/rescue_model_deployment_manifest.example.json`
+- `codebase/docs/SYNTHETIC_DRONE_POV_INPUT.md`
+- `codebase/node/frame_source.py` (`VideoFileSource`)
 
 ## Blockers
 
 - NONE for RGB dataset work, cloud training or unlocated rescue observations.
 - No code blocker for detector training, person alerts or bearing-only observations.
 - Metric map localization still needs Pratik's calibrated camera pose/depth producer.
+- Point B, the final route/search sectors and the joint movement/security contract are
+  not yet frozen.
 - The physical rig demonstrates common planar overlap; it cannot claim real 3-D location
   until its cameras are calibrated into a shared metric frame.
 - The new rescue model is not Jetson-qualified yet: training, FP16 export and sustained
