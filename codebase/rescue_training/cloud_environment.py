@@ -344,7 +344,16 @@ def _executable(argv: list[str], name: str, field: str) -> str:
     executable_name = executable.name
     if executable_name.lower().endswith(".exe"):
         executable_name = executable_name[:-4]
-    if executable_name != name:
+    if name == "python":
+        major, minor, _patch = FROZEN_RUNTIME["python"].split(".")
+        name_matches = executable_name in {
+            "python",
+            f"python{major}",
+            f"python{major}.{minor}",
+        }
+    else:
+        name_matches = executable_name == name
+    if not name_matches:
         raise CloudEnvironmentError(f"{field} must execute {name!r}")
     if not executable.is_absolute() or str(executable.resolve(strict=False)) != argv[0]:
         raise CloudEnvironmentError(f"{field} executable path must be normalized and absolute")

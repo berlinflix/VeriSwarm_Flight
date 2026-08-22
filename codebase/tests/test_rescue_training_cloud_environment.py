@@ -117,6 +117,62 @@ def _capture(
     )
 
 
+@pytest.mark.parametrize(
+    "executable_name",
+    (
+        "python",
+        "python.exe",
+        "python3",
+        "python3.exe",
+        "python3.12",
+        "python3.12.exe",
+    ),
+)
+def test_python_probe_accepts_canonical_cpython_executable_names(
+    tmp_path: Path, executable_name: str
+):
+    executable = (tmp_path / executable_name).resolve()
+    executable.write_bytes(b"python fixture")
+
+    assert (
+        cloud_environment._executable(
+            [str(executable)], "python", "runtime_probe.argv"
+        )
+        == str(executable)
+    )
+
+
+@pytest.mark.parametrize(
+    "executable_name",
+    (
+        "python-config",
+        "python3-config",
+        "python3.12-config",
+        "pythonx",
+        "python312",
+        "python0",
+        "python999",
+        "python3.13",
+        "python3.12.13",
+        "python3.12m",
+        "python3.12d",
+        "python.exe.bak",
+        "ipython",
+        "pypy3",
+    ),
+)
+def test_python_probe_rejects_non_interpreter_executable_names(
+    tmp_path: Path, executable_name: str
+):
+    executable = (tmp_path / executable_name).resolve()
+    executable.write_bytes(b"not a python interpreter")
+
+    with pytest.raises(CloudEnvironmentError, match="must execute 'python'"):
+        cloud_environment._executable(
+            [str(executable)], "python", "runtime_probe.argv"
+        )
+
+
 def _make_evidence(root: Path) -> dict[str, Path]:
     root.mkdir(parents=True)
     executables = root / "executables"
@@ -300,14 +356,22 @@ def _create_arguments(tmp_path: Path) -> dict:
     }
 
 
-def _install_fake_production(monkeypatch, root: Path) -> None:
+def _install_fake_production(
+    monkeypatch, root: Path, *, python_name: str = "python"
+) -> None:
     executables = root / "production-executables"
     executables.mkdir(parents=True)
-    resolved = {}
-    for name in ("nvidia-smi", "python", "findmnt"):
-        path = (executables / name).resolve()
-        path.write_bytes(f"executable:{name}".encode("utf-8"))
-        resolved[name] = path
+    executable_names = {
+        "nvidia-smi": "nvidia-smi",
+        "python": python_name,
+        "findmnt": "findmnt",
+    }
+    resolved = {
+        role: (executables / executable_name).resolve()
+        for role, executable_name in executable_names.items()
+    }
+    for role, path in resolved.items():
+        path.write_bytes(f"executable:{role}".encode("utf-8"))
 
     def resolve(value: str) -> Path:
         supplied = Path(value)
@@ -324,6 +388,7 @@ def _install_fake_production(monkeypatch, root: Path) -> None:
     def runner(argv) -> subprocess.CompletedProcess[str]:
         name = Path(argv[0]).name
         arguments = list(argv[1:])
+        resolved_python_name = resolved["python"].name
         if name == "nvidia-smi":
             stdout = "NVIDIA GeForce RTX 5090, 32768, GPU-12345678-abcd\n"
         elif name == "findmnt":
@@ -343,7 +408,10 @@ def _install_fake_production(monkeypatch, root: Path) -> None:
                 },
                 sort_keys=True,
             )
-        elif name == "python" and arguments == ["-c", RUNTIME_PROBE_CODE]:
+        elif name == resolved_python_name and arguments == [
+            "-c",
+            RUNTIME_PROBE_CODE,
+        ]:
             stdout = json.dumps(
                 {
                     **_runtime(),
@@ -352,13 +420,18 @@ def _install_fake_production(monkeypatch, root: Path) -> None:
                 },
                 sort_keys=True,
             )
-        elif name == "python" and arguments == ["-m", "pip", "freeze", "--all"]:
+        elif name == resolved_python_name and arguments == [
+            "-m",
+            "pip",
+            "freeze",
+            "--all",
+        ]:
             stdout = (
                 f"torch=={FROZEN_RUNTIME['torch']}\n"
                 f"torchvision=={FROZEN_RUNTIME['torchvision']}\n"
                 f"ultralytics=={FROZEN_RUNTIME['ultralytics']}\n"
             )
-        elif name == "python" and arguments == ["-m", "pip", "check"]:
+        elif name == resolved_python_name and arguments == ["-m", "pip", "check"]:
             stdout = "No broken requirements found.\n"
         else:
             return subprocess.CompletedProcess(argv, 2, "", "unexpected command")
@@ -388,6 +461,19 @@ def test_valid_hashed_runpod_environment_is_derived_and_create_once(
     with pytest.raises(CloudEnvironmentError, match="overwrite"):
         create_cloud_environment_manifest(**arguments)
     assert result.read_bytes() == original
+
+
+def test_manifest_creation_accepts_frozen_versioned_python_executable(
+    tmp_path: Path, monkeypatch
+):
+    _install_fake_production(monkeypatch, tmp_path, python_name="python3.12")
+    result = create_cloud_environment_manifest(**_create_arguments(tmp_path))
+    loaded = load_cloud_environment(result)
+
+    for evidence_name in ("runtime_probe", "pip_freeze", "pip_check"):
+        evidence_path = Path(loaded["evidence"][evidence_name]["path"])
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        assert Path(evidence["argv"][0]).name == "python3.12"
 
 
 def test_official_mcp_projection_is_secret_free_hash_bound_and_create_once(
