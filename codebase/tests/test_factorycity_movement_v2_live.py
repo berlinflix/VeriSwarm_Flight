@@ -10,7 +10,12 @@ import pytest
 
 from rescue.movement_security import load_movement_contract
 from sim.cosys.factorycity.tools import run_factorycity_movement_v2 as live_runner
-from tools.movement_authorization_link import ROSTER, build_snapshot
+from tools.movement_authorization_link import (
+    ROSTER,
+    ReceiverConfig,
+    SnapshotReceiverState,
+    build_snapshot,
+)
 from sim.cosys.factorycity.movement_v2 import (
     CellLedger,
     DurableMovementEvents,
@@ -227,6 +232,51 @@ def test_abhijan_five_lease_snapshot_is_consumed_by_live_runner(tmp_path: Path) 
         assert lease is not None
         assert lease["node"] == node
         assert lease["decision"] == "ALLOW"
+
+
+def test_receiver_delays_future_mac_snapshot_until_windows_gate_can_accept_it(
+    tmp_path: Path,
+) -> None:
+    clock = {"ms": 1_000}
+    sleeps = []
+
+    def sleep_and_advance(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["ms"] += round(seconds * 1_000)
+
+    policy = {
+        "schema": "veriswarm.factorycity.authorization_policy.v1",
+        "decisions": {
+            node: {"decision": "ALLOW", "reason": "reviewer_nominal_release"}
+            for node in ROSTER
+        },
+    }
+    snapshot = build_snapshot(
+        policy,
+        mission_id="OP-VARUNA-001",
+        sequences=tuple(range(1, len(ROSTER) + 1)),
+        observed_at_ms=1_075,
+    )
+    output = tmp_path / "authorization_snapshot.json"
+    state = SnapshotReceiverState(
+        ReceiverConfig(
+            bind="192.168.50.11",
+            port=8772,
+            peer_ip="192.168.50.14",
+            output=output,
+            mission_id="OP-VARUNA-001",
+        ),
+        clock_ms=lambda: clock["ms"],
+        sleeper=sleep_and_advance,
+    )
+
+    state.accept(snapshot)
+
+    assert sleeps == [0.075]
+    assert state.last_received_at_ms == 1_075
+    lease = AuthorizationFileProvider(output).latest("charlie")
+    assert lease is not None
+    assert lease["observed_at_ms"] == clock["ms"]
 
 
 def test_live_adapter_releases_actual_velocity_and_directional_commands(tmp_path: Path) -> None:
