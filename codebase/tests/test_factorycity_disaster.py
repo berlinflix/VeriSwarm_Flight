@@ -9,6 +9,7 @@ ROOT = Path(__file__).parents[1]
 WORLD = ROOT / "sim" / "cosys" / "factorycity"
 LAYER = WORLD / "factorycity_disaster.development.json"
 CAMERAS = WORLD / "factorycity_disaster_camera_profile.json"
+RISING_FLOOD = WORLD / "factorycity_rising_flood.development.json"
 TOOLS = WORLD / "tools"
 
 
@@ -18,7 +19,7 @@ def _json(path: Path) -> dict[str, object]:
 
 def test_disaster_layer_is_explicitly_development_only() -> None:
     config = _json(LAYER)
-    assert config["schema"] == "veriswarm.factorycity.disaster_layer.v1"
+    assert config["schema"] == "veriswarm.factorycity.disaster_layer.v2"
     assert config["development_only"] is True
     assert config["world"] == "/Game/VeriSwarm/FactoryCity_Disaster"
     assert config["point_a_exclusion_radius_cm"] > 0
@@ -45,6 +46,40 @@ def test_disaster_collision_policy_is_fail_closed() -> None:
     assert water and physical
     assert all(actor["collision_profile"] == "NoCollision" for actor in water)
     assert all(actor["collision_profile"] == "BlockAll" for actor in physical)
+
+
+def test_flood_surface_covers_landscape_and_is_runtime_movable() -> None:
+    water = [
+        actor
+        for actor in _json(LAYER)["actors"]
+        if actor["kind"] == "water_or_flood"
+    ]
+    assert len(water) == 1
+    surface = water[0]
+    assert surface["id"] == "global_flood_surface"
+    assert surface["anchor_actor"] == "Landscape1"
+    assert surface["placement_mode"] == "fit_anchor_xy_bounds"
+    assert surface["bounds_margin_cm"] > 0
+    assert surface["runtime_movable"] is True
+    assert surface["allow_within_point_a_exclusion"] is True
+
+
+def test_rising_flood_controller_has_safe_configured_clearance() -> None:
+    config = _json(RISING_FLOOD)
+    assert config["schema"] == "veriswarm.factorycity.rising_flood.v1"
+    assert config["development_only"] is True
+    assert len(config["vehicles"]) == 5
+    assert len(set(config["vehicles"])) == 5
+    flight = config["flight"]
+    flood = config["flood"]
+    assert flight["desired_clearance_above_water_m"] > flight[
+        "minimum_clearance_above_water_m"
+    ]
+    assert flight["minimum_pairwise_separation_m"] > 0
+    assert flood["rise_height_m"] > 0
+    assert flood["rise_duration_seconds"] > flood["update_period_seconds"]
+    assert flood["restore_initial_level_before_landing"] is True
+    assert all(0.0 <= value <= 1.0 for value in config["weather"].values())
 
 
 def test_camera_profile_has_rgb_and_depth_planar() -> None:

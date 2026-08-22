@@ -12,22 +12,27 @@ the Unreal project, generated settings, raw frames, logs, or development evidenc
 3. `unreal_disaster_asset_inventory.py` discovers reusable project assets before the
    builder references them.
 4. `unreal_apply_disaster_layer.py` consumes
-   `factorycity_disaster.development.json`. It refuses duplicate disaster layers, missing
-   anchors/assets, invalid transforms, unsupported collision profiles, or Point_A safety
-   violations.
+   `factorycity_disaster.development.json`. The v2 development manifest replaces only the
+   explicitly tagged prior scenario layer, fits one non-colliding flood surface to the full
+   Landscape XY bounds, and distributes physical debris/roadblocks away from Point_A.
 5. `build_disaster_settings.py` derives camera settings and placement metadata from the
    protected five-drone inputs and `factorycity_disaster_camera_profile.json`.
 6. `verify_disaster_sensor_streams.py` captures RGB, DepthPlanar, and pose from every
    declared vehicle and fails on missing/invalid streams.
 7. The PowerShell tools guard closed-editor settings/default-map mutations and preserve
    backups and operation records.
+8. `run_rising_flood_swarm.py` resolves the water actor from the retained layer result,
+   raises it through the supported CoSys scene-object API, reads the observed water pose,
+   and commands all five drones to a configuration-controlled clearance above that pose.
+   It verifies clearance, separation, collision state, roster, and safe recession before
+   landing; rain, fog, and road wetness also come from configuration.
 
 ## Collision policy
 
 - Existing road and launch-ground actors remain untouched.
 - Physical roadblocks, debris, and damaged-structure props use `BlockAll` with
   `QueryAndPhysics`.
-- Flood planes are visual overlays with `NoCollision`; they do not create a false solid
+- The map-wide flood plane is a movable visual overlay with `NoCollision`; it does not create a false solid
   ceiling over a road.
 - Every added actor is tagged `VS_Disaster`, scenario ID, kind, and development/frozen
   status.

@@ -1,0 +1,34 @@
+{
+  "schema": "veriswarm.factorycity.rising_flood.v1",
+  "scenario_id": "factorycity_rising_flood_development",
+  "development_only": true,
+  "vehicles": ["alpha", "bravo", "charlie", "delta", "echo"],
+  "water_actor_id": "global_flood_surface",
+  "rpc": {
+    "host": "127.0.0.1",
+    "port": 41451,
+    "timeout_seconds": 10.0
+  },
+  "flight": {
+    "takeoff_timeout_seconds": 20.0,
+    "command_timeout_seconds": 20.0,
+    "vertical_velocity_mps": 2.0,
+    "desired_clearance_above_water_m": 5.0,
+    "minimum_clearance_above_water_m": 3.0,
+    "minimum_pairwise_separation_m": 1.5,
+    "settle_seconds": 1.0
+  },
+  "flood": {
+    "rise_height_m": 4.6,
+    "rise_duration_seconds": 60.0,
+    "update_period_seconds": 1.0,
+    "hold_at_peak_seconds": 10.0,
+    "recede_duration_seconds": 20.0,
+    "restore_initial_level_before_landing": true
+  },
+  "weather": {
+    "Rain": 0.85,
+    "Roadwetness": 1.0,
+    "Fog": 0.25
+  }
+}

@@ -52,7 +52,10 @@ def _load_config(path: Path) -> dict[str, object]:
     missing = [key for key in required if key not in data]
     if missing:
         raise RuntimeError(f"disaster config missing fields: {missing}")
-    if data["schema"] != "veriswarm.factorycity.disaster_layer.v1":
+    if data["schema"] not in (
+        "veriswarm.factorycity.disaster_layer.v1",
+        "veriswarm.factorycity.disaster_layer.v2",
+    ):
         raise RuntimeError(f"unsupported disaster config schema {data['schema']!r}")
     if not isinstance(data["development_only"], bool):
         raise RuntimeError("development_only must be boolean")
@@ -81,6 +84,36 @@ def _load_config(path: Path) -> dict[str, object]:
         if item["collision_profile"] not in ("BlockAll", "NoCollision"):
             raise RuntimeError(
                 f"actors[{index}].collision_profile must be BlockAll or NoCollision"
+            )
+        placement_mode = str(item.get("placement_mode", "anchor_offset"))
+        if placement_mode not in ("anchor_offset", "fit_anchor_xy_bounds"):
+            raise RuntimeError(
+                f"actors[{index}].placement_mode must be anchor_offset or "
+                "fit_anchor_xy_bounds"
+            )
+        if placement_mode == "fit_anchor_xy_bounds":
+            if item["collision_profile"] != "NoCollision":
+                raise RuntimeError(
+                    f"actors[{index}] bounds-fitted surfaces must use NoCollision"
+                )
+            mesh_size = item.get("mesh_size_cm")
+            if not isinstance(mesh_size, list) or len(mesh_size) != 2:
+                raise RuntimeError(f"actors[{index}].mesh_size_cm must have two values")
+            if any(float(value) <= 0.0 for value in mesh_size):
+                raise RuntimeError(f"actors[{index}].mesh_size_cm must be positive")
+            for field in ("bounds_margin_cm", "world_z_cm"):
+                value = float(item.get(field, math.nan))
+                if not math.isfinite(value):
+                    raise RuntimeError(f"actors[{index}].{field} must be finite")
+            if float(item["bounds_margin_cm"]) < 0.0:
+                raise RuntimeError(f"actors[{index}].bounds_margin_cm cannot be negative")
+        allow_exclusion = bool(item.get("allow_within_point_a_exclusion", False))
+        if allow_exclusion and not (
+            item["kind"] == "water_or_flood"
+            and item["collision_profile"] == "NoCollision"
+        ):
+            raise RuntimeError(
+                f"actors[{index}] can bypass Point_A exclusion only for non-colliding water"
             )
     return data
 
@@ -118,16 +151,38 @@ def _main() -> None:
         raise RuntimeError(f"failed to load disaster world {world_path}")
     subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     actors_before = list(subsystem.get_all_level_actors())
-    existing_vs = [
-        actor.get_actor_label()
+    existing_actors = [
+        actor
         for actor in actors_before
         if ROOT_TAG in {str(tag) for tag in actor.tags}
     ]
+    existing_vs = [actor.get_actor_label() for actor in existing_actors]
     if existing_vs:
-        raise RuntimeError(
-            "refusing to layer over existing VS_Disaster actors: "
-            + ", ".join(sorted(existing_vs))
-        )
+        if not bool(config.get("replace_existing_scenario_layer", False)):
+            raise RuntimeError(
+                "refusing to layer over existing VS_Disaster actors: "
+                + ", ".join(sorted(existing_vs))
+            )
+        expected_tag = str(config.get("replace_existing_scenario_tag", ""))
+        if not expected_tag:
+            raise RuntimeError(
+                "replace_existing_scenario_tag is required when replacement is enabled"
+            )
+        mismatched = [
+            actor.get_actor_label()
+            for actor in existing_actors
+            if expected_tag not in {str(tag) for tag in actor.tags}
+        ]
+        if mismatched:
+            raise RuntimeError(
+                "refusing to replace disaster actors outside the declared scenario: "
+                + ", ".join(sorted(mismatched))
+            )
+        for actor in existing_actors:
+            if not subsystem.destroy_actor(actor):
+                raise RuntimeError(
+                    f"failed to remove prior disaster actor {actor.get_actor_label()}"
+                )
     labels = _actors_by_label(actors_before)
     point_a_label = str(config["point_a_actor"])
     if point_a_label not in labels:
@@ -145,13 +200,33 @@ def _main() -> None:
         anchor = labels[anchor_label]
         anchor_location = anchor.get_actor_location()
         offset = _triple(spec["offset_cm"], f"{spec['id']}.offset_cm")
-        location = unreal.Vector(
-            anchor_location.x + offset[0],
-            anchor_location.y + offset[1],
-            anchor_location.z + offset[2],
-        )
+        placement_mode = str(spec.get("placement_mode", "anchor_offset"))
+        scale = _triple(spec["scale"], f"{spec['id']}.scale")
+        if placement_mode == "fit_anchor_xy_bounds":
+            bounds_origin, bounds_extent = anchor.get_actor_bounds(False)
+            margin = float(spec["bounds_margin_cm"])
+            mesh_size = [float(value) for value in spec["mesh_size_cm"]]
+            location = unreal.Vector(
+                bounds_origin.x + offset[0],
+                bounds_origin.y + offset[1],
+                float(spec["world_z_cm"]) + offset[2],
+            )
+            scale = (
+                (2.0 * float(bounds_extent.x) + 2.0 * margin) / mesh_size[0],
+                (2.0 * float(bounds_extent.y) + 2.0 * margin) / mesh_size[1],
+                scale[2],
+            )
+        else:
+            location = unreal.Vector(
+                anchor_location.x + offset[0],
+                anchor_location.y + offset[1],
+                anchor_location.z + offset[2],
+            )
         horizontal_distance = math.hypot(location.x - point_a.x, location.y - point_a.y)
-        if horizontal_distance < exclusion_radius:
+        if (
+            horizontal_distance < exclusion_radius
+            and not bool(spec.get("allow_within_point_a_exclusion", False))
+        ):
             raise RuntimeError(
                 f"{spec['id']} violates Point_A exclusion radius: "
                 f"{horizontal_distance:.1f} < {exclusion_radius:.1f} cm"
@@ -178,12 +253,13 @@ def _main() -> None:
             f"VS_Kind_{spec['kind']}",
             "VS_Development" if config["development_only"] else "VS_Frozen",
         ]
-        scale = _triple(spec["scale"], f"{spec['id']}.scale")
         actor.set_actor_scale3d(unreal.Vector(*scale))
         component = actor.get_component_by_class(unreal.StaticMeshComponent)
         if component is None:
             raise RuntimeError(f"spawned actor {spec['id']} has no StaticMeshComponent")
         component.set_static_mesh(asset)
+        if bool(spec.get("runtime_movable", False)):
+            component.set_mobility(unreal.ComponentMobility.MOVABLE)
         component.set_collision_profile_name(str(spec["collision_profile"]))
         if spec["collision_profile"] == "BlockAll":
             component.set_collision_enabled(unreal.CollisionEnabled.QUERY_AND_PHYSICS)
@@ -201,11 +277,15 @@ def _main() -> None:
             {
                 "id": spec["id"],
                 "label": label,
+                "object_name": actor.get_name(),
                 "kind": spec["kind"],
+                "placement_mode": placement_mode,
                 "anchor_actor": anchor_label,
                 "location_unreal_cm": _vector(location),
+                "scale": {"x": scale[0], "y": scale[1], "z": scale[2]},
                 "distance_from_point_a_cm": horizontal_distance,
                 "collision_profile": spec["collision_profile"],
+                "runtime_movable": bool(spec.get("runtime_movable", False)),
                 "asset": spec["asset"],
             }
         )
@@ -228,6 +308,7 @@ def _main() -> None:
         "target_map_development_sha256": _sha256(target_map),
         "actor_count_before": len(actors_before),
         "actor_count_after": len(list(subsystem.get_all_level_actors())),
+        "replaced_actor_labels": sorted(existing_vs),
         "point_a": _vector(point_a),
         "point_a_exclusion_radius_cm": exclusion_radius,
         "created": created,

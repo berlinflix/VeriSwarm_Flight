@@ -35,11 +35,16 @@ Development milestone implemented and live-verified:
 - `/Game/VeriSwarm/FactoryCity_Disaster` is a separate derived map;
 - the protected FactoryCity map remains byte-identical to its checkpoint;
 - Point_A and `AirSimOrigin_Point_A` remain at `(13070, 2950, 130)` Unreal cm;
-- the additive development layer contains two non-colliding flood surfaces and six
-  `BlockAll` roadblock/debris/damage actors, all tagged `VS_Disaster`;
+- the replacement development manifest specifies one full-Landscape, runtime-movable,
+  non-colliding flood surface plus distributed `BlockAll` roadblock/debris/damage actors;
+- the rising-flood controller derives drone altitude from the observed water pose and
+  checks minimum clearance, swarm separation, collision state, and roster on every step;
 - every disaster actor is more than 30 m from Point_A (observed minimum: 51.7 m);
 - two independent cold boots passed for alpha, bravo, charlie, delta and echo;
 - a refined camera profile passed RGB, DepthPlanar and pose probes on all five vehicles.
+
+The new map-wide layer and controller are implemented in Git but remain pending a closed-
+editor Unreal rebuild and live cold-boot run.
 
 ## Current limitation
 
