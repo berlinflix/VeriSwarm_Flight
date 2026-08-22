@@ -6,6 +6,17 @@ Design the disaster mission, ground truth and expected outcomes. Pratik owns the
 CoSys implementation; you own what must exist, where it is, what it means and how the
 result is scored.
 
+## Direct coordination with Pratik
+
+- Use `codebase/docs/team_updates/PRATIK_ABHIJAN_DIRECT_COORDINATION.md`.
+- Send simulator, producer and command-boundary questions directly to Pratik's branch;
+  do not ask Suyash to relay them.
+- Read Pratik's latest status before changing the shared movement/event interface and
+  record `last_peer_commit_seen` in your next status checkpoint.
+- Continue owned dashboard, replay, authorization and evaluator work while Pratik answers.
+- Escalate only backward-incompatible schema, product-claim, release-merge or physical
+  safety decisions to Suyash.
+
 ## Scenario: Operation Varuna
 
 Use a derived copy of the working FactoryCity environment. Do not switch simulators in a

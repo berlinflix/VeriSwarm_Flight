@@ -4,9 +4,22 @@ Updated: 2026-08-22 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
-Latest reviewed integration parent: `bad1acc` plus `f7db83a`
+Current integration tip before this coordination update: `5e66ca3`
+
+Latest peer observations: Pratik `883df7e`; Abhijan `debf335`
 
 ## Completed since the previous update
+
+- Established direct Pratik–Abhijan Git coordination for the joint
+  CoSys/movement-security/event/dashboard lane. Routine messages, test results and
+  blockers now go between their branch-owned status/message files without Suyash relay;
+  Suyash remains responsible only for incompatible shared decisions, integration merges,
+  product claims and physical-safety gates.
+- Reviewed Pratik `883df7e`: the retained nominal five-drone A-to-B run reports PASS, but
+  does not qualify movement-v2 obstacle deflection or authorization-aware behavior.
+- Reviewed Abhijan `debf335`: the five-drone live coverage view is implemented; live
+  command-boundary HOLD/QUARANTINE, reassignment and durable producer evidence remain the
+  next direct joint checkpoint.
 
 - Implemented and pushed the offline rescue event schema, collector, deterministic
   alerts, situation report and command-dashboard integration.

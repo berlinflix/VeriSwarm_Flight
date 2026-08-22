@@ -10,6 +10,11 @@ You are not a per-file approval gate. Owners proceed independently under
 `05_FAST_INDEPENDENT_EXECUTION_RULES.md`; intervene only for interface conflicts, integration
 merges, destructive/safety-critical actions and final demo freeze.
 
+Pratik and Abhijan coordinate their joint simulator/movement/event/dashboard lane
+directly under `codebase/docs/team_updates/PRATIK_ABHIJAN_DIRECT_COORDINATION.md`. Do not
+relay routine questions or acknowledgements between them. Review only escalated shared
+decisions and consolidated integration commits.
+
 ## H0–H2: freeze the contract
 
 - [ ] Declare mission ID `OP-VARUNA-001` and one coordinate frame: NED metres.

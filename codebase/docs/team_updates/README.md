@@ -15,9 +15,12 @@ It replaces repeated chat confirmations; it is not an approval system.
 - During an active integration sprint, check the central inbox branch at least every
   30 minutes, before a rehearsal and before pushing an interface change:
   `origin/suyash/sih26177-rescue-integration`.
-- Abhijan follows this same cadence. His primary inbox is the Suyash integration branch;
-  he also checks `git log --all -- codebase/docs/team_updates` for teammate-owned status
-  and message commits.
+- Pratik and Abhijan are direct peers for the CoSys/movement/event/dashboard lane. They
+  check each other's branch-owned status and messages directly; Suyash is not their
+  routine relay. Their exact workflow and escalation boundary are frozen in
+  `PRATIK_ABHIJAN_DIRECT_COORDINATION.md`.
+- The Suyash integration branch remains the shared product baseline and release inbox,
+  not a requirement for routine peer-to-peer acknowledgements.
 - A status commit records progress. It does not freeze inputs or require another
   confirmation.
 
@@ -73,6 +76,10 @@ git push
 Each owner records `last_inbox_commit_seen` in their own status file. Reading a routine
 message does not require an acknowledgement commit or chat reply. Commit only actual
 progress, an interface decision or a real blocker.
+
+For the Pratik–Abhijan lane, also record `last_peer_commit_seen`. Questions and answers
+go directly between their two branches. Copy Suyash only for the escalation cases in
+`PRATIK_ABHIJAN_DIRECT_COORDINATION.md`.
 
 ## What belongs in Git
 

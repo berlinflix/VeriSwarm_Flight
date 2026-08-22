@@ -7,6 +7,17 @@ straight, non-avoiding 70 m demonstration with a bounded search mission. You own
 implementation, sensor/pose transport, fleet control, coverage planning, obstacle safety,
 task reassignment, landing and reset.
 
+## Direct coordination with Abhijan
+
+- Use `codebase/docs/team_updates/PRATIK_ABHIJAN_DIRECT_COORDINATION.md`.
+- Send authorization, event, replay and dashboard-interface questions directly to
+  Abhijan's branch; do not ask Suyash to relay them.
+- Read Abhijan's latest status before changing the shared movement/event interface and
+  record `last_peer_commit_seen` in your next status checkpoint.
+- Continue owned world, controller, sensor and evidence work while Abhijan answers.
+- Escalate only backward-incompatible schema, product-claim, release-merge or physical
+  safety decisions to Suyash.
+
 ## Preserve first
 
 - [ ] Keep the protected original FactoryCity project untouched.
