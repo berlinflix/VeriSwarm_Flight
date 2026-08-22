@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import math
+import sys
+import types
 from pathlib import Path
 
 
@@ -20,6 +23,16 @@ TOOLS = WORLD / "tools"
 
 def _json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_ab_controller(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cosysairsim", types.SimpleNamespace())
+    path = TOOLS / "run_factorycity_ab_swarm.py"
+    spec = importlib.util.spec_from_file_location("factorycity_ab_test_module", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_disaster_layer_is_explicitly_development_only() -> None:
@@ -205,22 +218,37 @@ def test_ab_mission_is_five_drone_straight_flood_safe_and_map_bound() -> None:
     assert config["flood"]["manage_water_to_peak"] is True
     assert config["flood"]["leave_water_at_peak_after_mission"] is True
     assert config["collision_policy"]["monitor_from_state"] == "EN_ROUTE"
-    assert config["collision_policy"]["ignore_takeoff_and_landing_collisions"] is True
+    assert config["collision_policy"]["ignore_takeoff_collisions"] is True
+    assert config["collision_policy"]["landing_contact_policy"] == (
+        "allow_only_new_configured_surface_contact_within_envelope"
+    )
     assert config["landing"]["collision_actor"] == "VS_PointB_LandingCollision"
     assert config["landing"]["collision_object_name"] == "StaticMeshActor_0"
     assert config["landing"]["controlled_descent_velocity_mps"] > 0.0
     assert config["landing"]["controlled_descent_timeout_seconds"] > 0.0
+    assert config["landing"]["controlled_descent_poll_seconds"] > 0.0
     assert config["landing"]["descent_target_below_surface_m"] > 0.0
     assert config["landing"]["confirmation_timeout_seconds"] > 0.0
-    assert config["landing"]["confirmation_poll_seconds"] > 0.0
     assert config["landing"]["contact_settle_seconds"] > 0.0
     assert config["landing"]["minimum_contact_center_height_above_surface_m"] > 0.0
     assert (
         config["landing"]["maximum_contact_center_height_above_surface_m"]
         > config["landing"]["minimum_contact_center_height_above_surface_m"]
     )
-    assert config["landing"]["maximum_contact_vertical_speed_mps"] > 0.0
-    assert config["landing"]["post_disarm_confirmation_timeout_seconds"] > 0.0
+    assert config["landing"]["maximum_touchdown_linear_speed_mps"] > 0.0
+    assert config["landing"]["maximum_touchdown_angular_speed_rps"] > 0.0
+    assert config["landing"]["maximum_touchdown_roll_pitch_deg"] > 0.0
+    assert config["landing"]["stationary_linear_speed_tolerance_mps"] > 0.0
+    assert config["landing"]["stationary_angular_speed_tolerance_rps"] > 0.0
+    assert config["landing"]["maximum_contact_penetration_depth_m"] > 0.0
+    assert config["landing"]["landing_zone_radius_m"] > 0.0
+    assert config["landing"]["post_disarm_stable_contact_seconds"] > 0.0
+    deviation = config["landing"]["landed_state_deviation"]
+    assert deviation["id"] == "QB-LANDED-STATE-001"
+    assert deviation["approved"] is False
+    assert deviation["approved_by"] is None
+    assert "Not approved for FactoryCity" in deviation["scope"]
+    assert deviation["success_label"] == "PASS_WITH_APPROVED_SIMULATOR_DEVIATION"
 
 
 def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> None:
@@ -248,12 +276,140 @@ def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> N
     assert "landing_collision_baseline" in source
     assert 'sample["stable_contact_candidate"]' in source
     assert 'states[vehicle] = "CONTACT_DISARMED"' in source
+    assert "descent_futures = {" in source
+    assert "client.moveToZAsync(" in source
+    assert "# Start all descents without joining them" in source
+    assert 'sample["contact_envelope_violations"]' in source
+    assert "client.armDisarm(False, vehicle_name=vehicle)" in source
+    assert "is not True" in source
+    assert 'return "LANDED_STABLE_CONTACT_DEVIATION", True' in source
+    assert '"landed_state_deviation": {' in source
     assert "cosysairsim.LandedState.Landed" in source
     assert "client.isApiControlEnabled" in source
     assert 'status = "PARTIAL_COLLISION"' in source
     assert "client.armDisarm(False" in source
     assert "client.enableApiControl(False" in source
     assert "finally:" in source
+
+
+def test_landing_contact_sample_requires_exact_surface_and_full_envelope(monkeypatch) -> None:
+    module = _load_ab_controller(monkeypatch)
+    landing = _json(AB_MISSION)["landing"]
+
+    class Vector:
+        def __init__(self, x=0.0, y=0.0, z=0.0):
+            self.x_val = x
+            self.y_val = y
+            self.z_val = z
+
+    class Collision:
+        has_collided = True
+        time_stamp = 2
+        object_name = landing["collision_object_name"]
+        penetration_depth = 0.01
+
+    class Client:
+        collision = Collision()
+
+        def getMultirotorState(self, *, vehicle_name):
+            assert vehicle_name == "alpha"
+            orientation = types.SimpleNamespace(
+                x_val=0.0, y_val=0.0, z_val=0.0, w_val=1.0
+            )
+            kinematics = types.SimpleNamespace(
+                position=Vector(-92.8, 20.4, -8.0),
+                linear_velocity=Vector(),
+                angular_velocity=Vector(),
+                orientation=orientation,
+            )
+            return types.SimpleNamespace(landed_state=1, kinematics_estimated=kinematics)
+
+        def simGetCollisionInfo(self, *, vehicle_name):
+            return self.collision
+
+        def simGetObjectPose(self, vehicle_name, *, ned):
+            return types.SimpleNamespace(position=Vector(z=-8.0))
+
+    client = Client()
+    sample = module._landing_contact_sample(
+        client,
+        "alpha",
+        landing,
+        -7.7,
+        1,
+        (-92.8, 20.4),
+    )
+    assert sample["stable_contact_candidate"] is True
+    assert sample["contact_envelope_violations"] == []
+
+    client.collision = types.SimpleNamespace(
+        has_collided=True,
+        time_stamp=3,
+        object_name="unexpected_debris",
+        penetration_depth=0.01,
+    )
+    unsafe = module._landing_contact_sample(
+        client,
+        "alpha",
+        landing,
+        -7.7,
+        1,
+        (-92.8, 20.4),
+    )
+    assert unsafe["stable_contact_candidate"] is False
+    assert unsafe["contact_envelope_violations"] == [
+        "unexpected_collision_object:unexpected_debris"
+    ]
+
+
+def test_roll_pitch_conversion_rejects_invalid_quaternion(monkeypatch) -> None:
+    module = _load_ab_controller(monkeypatch)
+    identity = types.SimpleNamespace(x_val=0.0, y_val=0.0, z_val=0.0, w_val=1.0)
+    assert module._roll_pitch_degrees(identity) == (0.0, 0.0)
+    zero = types.SimpleNamespace(x_val=0.0, y_val=0.0, z_val=0.0, w_val=0.0)
+    try:
+        module._roll_pitch_degrees(zero)
+    except RuntimeError as exc:
+        assert "zero norm" in str(exc)
+    else:
+        raise AssertionError("zero quaternion must fail closed")
+
+
+def test_post_disarm_landing_requires_dwell_and_scoped_deviation(monkeypatch) -> None:
+    module = _load_ab_controller(monkeypatch)
+    landing = _json(AB_MISSION)["landing"]
+    stable = {"stable_contact_candidate": True, "landed_state": 1}
+    dwell = float(landing["post_disarm_stable_contact_seconds"])
+
+    assert module._post_disarm_landing_decision(stable, landing, dwell / 2, 1) is None
+    assert module._post_disarm_landing_decision(stable, landing, dwell, 1) == (
+        "LANDED",
+        False,
+    )
+
+    stale = {"stable_contact_candidate": True, "landed_state": 0}
+    try:
+        module._post_disarm_landing_decision(stale, landing, dwell, 1)
+    except RuntimeError as exc:
+        assert "without approval" in str(exc)
+    else:
+        raise AssertionError("FactoryCity must not inherit the Blocks-only deviation")
+
+    approved = json.loads(json.dumps(landing))
+    approved["landed_state_deviation"]["approved"] = True
+    approved["landed_state_deviation"]["approved_by"] = "scenario approver"
+    assert module._post_disarm_landing_decision(stale, approved, dwell, 1) == (
+        "LANDED_STABLE_CONTACT_DEVIATION",
+        True,
+    )
+
+    unstable = {"stable_contact_candidate": False, "landed_state": 1}
+    try:
+        module._post_disarm_landing_decision(unstable, approved, dwell, 1)
+    except RuntimeError as exc:
+        assert "lost stable contact" in str(exc)
+    else:
+        raise AssertionError("post-disarm contact loss must fail")
 
 
 def test_joint_movement_contract_freezes_exact_endpoints_roster_and_cells() -> None:

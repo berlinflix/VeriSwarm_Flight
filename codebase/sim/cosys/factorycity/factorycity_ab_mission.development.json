@@ -60,7 +60,8 @@
   },
   "collision_policy": {
     "monitor_from_state": "EN_ROUTE",
-    "ignore_takeoff_and_landing_collisions": true,
+    "ignore_takeoff_collisions": true,
+    "landing_contact_policy": "allow_only_new_configured_surface_contact_within_envelope",
     "new_collision_terminal_state": "DESTROYED_BY_COLLISION",
     "terminal_behavior": "disarm_release_and_exclude"
   },
@@ -71,14 +72,27 @@
     "land_survivors_at_point_b": true,
     "controlled_descent_velocity_mps": 0.5,
     "controlled_descent_timeout_seconds": 12.0,
+    "controlled_descent_poll_seconds": 0.1,
     "descent_target_below_surface_m": 0.25,
     "confirmation_timeout_seconds": 10.0,
-    "confirmation_poll_seconds": 0.25,
     "contact_settle_seconds": 1.0,
     "minimum_contact_center_height_above_surface_m": 0.05,
     "maximum_contact_center_height_above_surface_m": 0.4,
-    "maximum_contact_vertical_speed_mps": 0.25,
-    "post_disarm_confirmation_timeout_seconds": 5.0
+    "maximum_touchdown_linear_speed_mps": 0.75,
+    "maximum_touchdown_angular_speed_rps": 0.5,
+    "maximum_touchdown_roll_pitch_deg": 15.0,
+    "stationary_linear_speed_tolerance_mps": 0.1,
+    "stationary_angular_speed_tolerance_rps": 0.2,
+    "maximum_contact_penetration_depth_m": 0.15,
+    "landing_zone_radius_m": 1.0,
+    "post_disarm_stable_contact_seconds": 1.0,
+    "landed_state_deviation": {
+      "id": "QB-LANDED-STATE-001",
+      "approved": false,
+      "approved_by": null,
+      "scope": "Not approved for FactoryCity; QB-LANDED-STATE-001 applies only to its frozen Blocks qualification",
+      "success_label": "PASS_WITH_APPROVED_SIMULATOR_DEVIATION"
+    }
   },
   "weather": {
     "Rain": 0.05,

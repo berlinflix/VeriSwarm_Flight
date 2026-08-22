@@ -90,14 +90,20 @@ def _load_config(path: Path, map_file: Path) -> dict[str, object]:
     for field in (
         "controlled_descent_velocity_mps",
         "controlled_descent_timeout_seconds",
+        "controlled_descent_poll_seconds",
         "descent_target_below_surface_m",
         "confirmation_timeout_seconds",
-        "confirmation_poll_seconds",
         "contact_settle_seconds",
         "minimum_contact_center_height_above_surface_m",
         "maximum_contact_center_height_above_surface_m",
-        "maximum_contact_vertical_speed_mps",
-        "post_disarm_confirmation_timeout_seconds",
+        "maximum_touchdown_linear_speed_mps",
+        "maximum_touchdown_angular_speed_rps",
+        "maximum_touchdown_roll_pitch_deg",
+        "stationary_linear_speed_tolerance_mps",
+        "stationary_angular_speed_tolerance_rps",
+        "maximum_contact_penetration_depth_m",
+        "landing_zone_radius_m",
+        "post_disarm_stable_contact_seconds",
     ):
         _positive(landing, field)
     collision_object_name = landing.get("collision_object_name")
@@ -107,6 +113,25 @@ def _load_config(path: Path, map_file: Path) -> dict[str, object]:
         landing["maximum_contact_center_height_above_surface_m"]
     ):
         raise RuntimeError("landing contact height bounds are invalid")
+    if float(landing["controlled_descent_poll_seconds"]) >= float(
+        landing["controlled_descent_timeout_seconds"]
+    ):
+        raise RuntimeError("landing poll period must be below descent timeout")
+    if float(landing["contact_settle_seconds"]) > float(
+        landing["confirmation_timeout_seconds"]
+    ):
+        raise RuntimeError("landing contact settle exceeds confirmation timeout")
+    deviation = landing.get("landed_state_deviation")
+    if not isinstance(deviation, dict):
+        raise RuntimeError("landing landed_state_deviation must be an object")
+    if deviation.get("id") != "QB-LANDED-STATE-001":
+        raise RuntimeError("unsupported landed-state deviation")
+    if not isinstance(deviation.get("approved"), bool):
+        raise RuntimeError("landed-state deviation approved must be boolean")
+    if deviation.get("approved"):
+        for field in ("approved_by", "scope", "success_label"):
+            if not isinstance(deviation.get(field), str) or not deviation[field].strip():
+                raise RuntimeError(f"landed-state deviation {field} is required")
     delta = tuple(float(value) for value in route["target_delta_ned_m"])
     if len(delta) != 2 or not all(math.isfinite(value) for value in delta):
         raise RuntimeError("target_delta_ned_m must contain two finite values")
@@ -142,6 +167,12 @@ def _load_config(path: Path, map_file: Path) -> dict[str, object]:
         raise RuntimeError("Point_B landing surface is unsafe at maximum flood")
     if data["collision_policy"]["monitor_from_state"] != "EN_ROUTE":
         raise RuntimeError("collision monitoring must start only after cruise is reached")
+    if data["collision_policy"].get("ignore_takeoff_collisions") is not True:
+        raise RuntimeError("takeoff collision exception must be explicit")
+    if data["collision_policy"].get("landing_contact_policy") != (
+        "allow_only_new_configured_surface_contact_within_envelope"
+    ):
+        raise RuntimeError("landing collision policy must be fail-closed")
     if data["collision_policy"]["terminal_behavior"] != "disarm_release_and_exclude":
         raise RuntimeError("unsupported collision terminal behavior")
     weather = data.get("weather", {})
@@ -294,12 +325,32 @@ def _raise_water_to_peak(
 
 def _collision_record(client: object, vehicle: str) -> dict[str, object]:
     value = client.simGetCollisionInfo(vehicle_name=vehicle)
-    return {
+    record = {
         "has_collided": bool(value.has_collided),
         "timestamp": int(value.time_stamp),
         "object_name": str(value.object_name),
         "penetration_depth_m": float(value.penetration_depth),
     }
+    if record["timestamp"] < 0:
+        raise RuntimeError(f"{vehicle} collision timestamp is negative")
+    _finite((record["penetration_depth_m"],), f"{vehicle} collision telemetry")
+    return record
+
+
+def _roll_pitch_degrees(orientation: object) -> tuple[float, float]:
+    x = float(orientation.x_val)
+    y = float(orientation.y_val)
+    z = float(orientation.z_val)
+    w = float(orientation.w_val)
+    _finite((x, y, z, w), "landing orientation")
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if norm <= 1e-9:
+        raise RuntimeError("landing orientation quaternion has zero norm")
+    x, y, z, w = (value / norm for value in (x, y, z, w))
+    roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    sin_pitch = max(-1.0, min(1.0, 2.0 * (w * y - z * x)))
+    pitch = math.asin(sin_pitch)
+    return math.degrees(roll), math.degrees(pitch)
 
 
 def _landing_contact_sample(
@@ -308,45 +359,122 @@ def _landing_contact_sample(
     landing: dict[str, object],
     landing_surface_z_ned_m: float,
     collision_baseline_timestamp: int,
+    target_xy_ned_m: tuple[float, float],
 ) -> dict[str, object]:
     state = client.getMultirotorState(vehicle_name=vehicle)
     collision = _collision_record(client, vehicle)
     pose = client.simGetObjectPose(vehicle, ned=True)
     world_z_ned_m = float(pose.position.z_val)
-    vertical_speed_mps = float(
-        state.kinematics_estimated.linear_velocity.z_val
+    kinematics = state.kinematics_estimated
+    local_position = kinematics.position
+    linear_velocity = kinematics.linear_velocity
+    angular_velocity = kinematics.angular_velocity
+    local_xy = (float(local_position.x_val), float(local_position.y_val))
+    linear_speed_mps = math.sqrt(
+        float(linear_velocity.x_val) ** 2
+        + float(linear_velocity.y_val) ** 2
+        + float(linear_velocity.z_val) ** 2
+    )
+    vertical_speed_mps = float(linear_velocity.z_val)
+    angular_speed_rps = math.sqrt(
+        float(angular_velocity.x_val) ** 2
+        + float(angular_velocity.y_val) ** 2
+        + float(angular_velocity.z_val) ** 2
+    )
+    roll_deg, pitch_deg = _roll_pitch_degrees(kinematics.orientation)
+    horizontal_error_m = math.hypot(
+        local_xy[0] - target_xy_ned_m[0],
+        local_xy[1] - target_xy_ned_m[1],
     )
     _finite(
-        (world_z_ned_m, vertical_speed_mps),
+        (
+            world_z_ned_m,
+            *local_xy,
+            linear_speed_mps,
+            vertical_speed_mps,
+            angular_speed_rps,
+            roll_deg,
+            pitch_deg,
+            horizontal_error_m,
+        ),
         f"{vehicle} landing contact telemetry",
     )
     center_height_above_surface_m = landing_surface_z_ned_m - world_z_ned_m
-    new_surface_contact = (
+    new_collision = (
         collision["has_collided"]
         and collision["timestamp"] > collision_baseline_timestamp
+    )
+    new_surface_contact = (
+        new_collision
         and collision["object_name"] == landing["collision_object_name"]
     )
-    within_contact_height = float(
-        landing["minimum_contact_center_height_above_surface_m"]
-    ) <= center_height_above_surface_m <= float(
-        landing["maximum_contact_center_height_above_surface_m"]
-    )
-    vertical_motion_settled = abs(vertical_speed_mps) <= float(
-        landing["maximum_contact_vertical_speed_mps"]
+    violations = []
+    if new_collision and not new_surface_contact:
+        violations.append(f"unexpected_collision_object:{collision['object_name']}")
+    if new_surface_contact:
+        if not (
+            float(landing["minimum_contact_center_height_above_surface_m"])
+            <= center_height_above_surface_m
+            <= float(landing["maximum_contact_center_height_above_surface_m"])
+        ):
+            violations.append("contact_height_outside_envelope")
+        if linear_speed_mps > float(landing["maximum_touchdown_linear_speed_mps"]):
+            violations.append("touchdown_linear_speed_exceeded")
+        if angular_speed_rps > float(landing["maximum_touchdown_angular_speed_rps"]):
+            violations.append("touchdown_angular_speed_exceeded")
+        if max(abs(roll_deg), abs(pitch_deg)) > float(
+            landing["maximum_touchdown_roll_pitch_deg"]
+        ):
+            violations.append("touchdown_attitude_exceeded")
+        if horizontal_error_m > float(landing["landing_zone_radius_m"]):
+            violations.append("landing_zone_radius_exceeded")
+        if not 0.0 <= collision["penetration_depth_m"] <= float(
+            landing["maximum_contact_penetration_depth_m"]
+        ):
+            violations.append("contact_penetration_exceeded")
+    stationary = (
+        linear_speed_mps
+        <= float(landing["stationary_linear_speed_tolerance_mps"])
+        and angular_speed_rps
+        <= float(landing["stationary_angular_speed_tolerance_rps"])
     )
     return {
         "landed_state": int(state.landed_state),
+        "local_xy_ned_m": list(local_xy),
         "world_z_ned_m": world_z_ned_m,
         "center_height_above_surface_m": center_height_above_surface_m,
+        "horizontal_error_m": horizontal_error_m,
+        "linear_speed_mps": linear_speed_mps,
         "vertical_speed_mps": vertical_speed_mps,
+        "angular_speed_rps": angular_speed_rps,
+        "roll_deg": roll_deg,
+        "pitch_deg": pitch_deg,
         "collision": collision,
+        "new_collision": new_collision,
         "new_surface_contact": new_surface_contact,
-        "within_contact_height": within_contact_height,
-        "vertical_motion_settled": vertical_motion_settled,
-        "stable_contact_candidate": (
-            new_surface_contact and within_contact_height and vertical_motion_settled
-        ),
+        "contact_envelope_violations": violations,
+        "stationary": stationary,
+        "stable_contact_candidate": new_surface_contact and not violations and stationary,
     }
+
+
+def _post_disarm_landing_decision(
+    sample: dict[str, object],
+    landing: dict[str, object],
+    elapsed_seconds: float,
+    landed_state_value: int,
+) -> tuple[str, bool] | None:
+    """Return the terminal landing state only after continuous post-disarm dwell."""
+    if not sample["stable_contact_candidate"]:
+        raise RuntimeError("lost stable contact after disarm")
+    if elapsed_seconds < float(landing["post_disarm_stable_contact_seconds"]):
+        return None
+    if int(sample["landed_state"]) == landed_state_value:
+        return "LANDED", False
+    deviation = landing["landed_state_deviation"]
+    if not deviation["approved"]:
+        raise RuntimeError("landed_state remained stale without approval")
+    return "LANDED_STABLE_CONTACT_DEVIATION", True
 
 
 def _terminate_collision(client: object, vehicle: str) -> None:
@@ -420,6 +548,7 @@ def main() -> None:
     events: list[dict[str, object]] = []
     status = "FAIL"
     failure = None
+    landed_state_deviation_applied = False
     started = time.monotonic()
     weather_enabled = False
     try:
@@ -778,17 +907,17 @@ def main() -> None:
             descent_target_z_ned_m = landing_surface_z_ned_m + float(
                 landing["descent_target_below_surface_m"]
             )
-            _join_all(
-                [
-                    client.moveToZAsync(
-                        descent_target_z_ned_m,
-                        float(landing["controlled_descent_velocity_mps"]),
-                        timeout_sec=float(landing["controlled_descent_timeout_seconds"]),
-                        vehicle_name=vehicle,
-                    )
-                    for vehicle in survivors
-                ]
-            )
+            # Start all descents without joining them. Contact, separation and the
+            # touchdown envelope must be monitored while the command is active.
+            descent_futures = {
+                vehicle: client.moveToZAsync(
+                    descent_target_z_ned_m,
+                    float(landing["controlled_descent_velocity_mps"]),
+                    timeout_sec=float(landing["controlled_descent_timeout_seconds"]),
+                    vehicle_name=vehicle,
+                )
+                for vehicle in survivors
+            }
             events.append(
                 {
                     "state": "CONTROLLED_DESCENT_COMMANDED",
@@ -802,11 +931,15 @@ def main() -> None:
             )
             pending_landing = set(survivors)
             contact_started: dict[str, float] = {}
+            contact_first_seen: dict[str, float] = {}
+            contact_holds: set[str] = set()
+            contact_hold_futures: dict[str, object] = {}
             disarm_started: dict[str, float] = {}
-            confirmation_started = time.monotonic()
+            landing_started = time.monotonic()
             while pending_landing:
                 landed_now = []
                 contact_disarmed_now = []
+                deviation_accepted_now = []
                 contact_samples = {}
                 positions = _world_positions(client, survivors)
                 minimum_separation = _minimum_pairwise(positions)
@@ -823,37 +956,92 @@ def main() -> None:
                         landing,
                         landing_surface_z_ned_m,
                         landing_collision_baseline[vehicle],
+                        (dx, dy),
                     )
                     contact_samples[vehicle] = sample
-                    if sample["landed_state"] == int(cosysairsim.LandedState.Landed):
-                        if vehicle in armed:
-                            client.armDisarm(False, vehicle_name=vehicle)
-                            armed.discard(vehicle)
-                        states[vehicle] = "LANDED"
-                        pending_landing.remove(vehicle)
-                        landed_now.append(vehicle)
-                        continue
+                    violations = sample["contact_envelope_violations"]
+                    if violations:
+                        raise RuntimeError(
+                            f"{vehicle} unsafe landing contact: {violations[0]}"
+                        )
+                    if (
+                        sample["landed_state"]
+                        == int(cosysairsim.LandedState.Landed)
+                        and not sample["stable_contact_candidate"]
+                    ):
+                        raise RuntimeError(
+                            f"{vehicle} reported Landed without stable verified contact"
+                        )
                     if vehicle in disarm_started:
-                        if now - disarm_started[vehicle] >= float(
-                            landing["post_disarm_confirmation_timeout_seconds"]
+                        try:
+                            decision = _post_disarm_landing_decision(
+                                sample,
+                                landing,
+                                now - disarm_started[vehicle],
+                                int(cosysairsim.LandedState.Landed),
+                            )
+                        except RuntimeError as exc:
+                            raise RuntimeError(f"{vehicle} {exc}") from exc
+                        if decision is not None:
+                            terminal_state, deviation_applied = decision
+                            states[vehicle] = terminal_state
+                            pending_landing.remove(vehicle)
+                            if deviation_applied:
+                                deviation_accepted_now.append(vehicle)
+                                landed_state_deviation_applied = True
+                            else:
+                                landed_now.append(vehicle)
+                        continue
+                    if sample["new_surface_contact"]:
+                        contact_first_seen.setdefault(vehicle, now)
+                        if vehicle not in contact_holds:
+                            # A hover supersedes the below-surface descent command so
+                            # the controller does not continue pushing into the roof.
+                            contact_hold_futures[vehicle] = client.hoverAsync(
+                                vehicle_name=vehicle
+                            )
+                            contact_holds.add(vehicle)
+                        if sample["stable_contact_candidate"]:
+                            contact_started.setdefault(vehicle, now)
+                            if now - contact_started[vehicle] >= float(
+                                landing["contact_settle_seconds"]
+                            ):
+                                if (
+                                    client.armDisarm(False, vehicle_name=vehicle)
+                                    is not True
+                                ):
+                                    raise RuntimeError(f"{vehicle} disarm returned false")
+                                armed.discard(vehicle)
+                                states[vehicle] = "CONTACT_DISARMED"
+                                disarm_started[vehicle] = now
+                                contact_disarmed_now.append(vehicle)
+                        else:
+                            contact_started.pop(vehicle, None)
+                        if now - contact_first_seen[vehicle] >= float(
+                            landing["confirmation_timeout_seconds"]
                         ):
                             raise RuntimeError(
-                                f"{vehicle} did not report Landed after stable-contact disarm"
+                                f"{vehicle} contact did not become stably stationary"
                             )
-                        continue
-                    if sample["stable_contact_candidate"]:
-                        contact_started.setdefault(vehicle, now)
-                        if now - contact_started[vehicle] >= float(
-                            landing["contact_settle_seconds"]
-                        ):
-                            client.armDisarm(False, vehicle_name=vehicle)
-                            armed.discard(vehicle)
-                            states[vehicle] = "CONTACT_DISARMED"
-                            disarm_started[vehicle] = now
-                            contact_disarmed_now.append(vehicle)
                     else:
                         contact_started.pop(vehicle, None)
-                elapsed = now - confirmation_started
+                        if vehicle in contact_holds:
+                            contact_holds.remove(vehicle)
+                            descent_futures[vehicle] = client.moveToZAsync(
+                                descent_target_z_ned_m,
+                                float(landing["controlled_descent_velocity_mps"]),
+                                timeout_sec=float(
+                                    landing["controlled_descent_timeout_seconds"]
+                                ),
+                                vehicle_name=vehicle,
+                            )
+                        if now - landing_started >= float(
+                            landing["controlled_descent_timeout_seconds"]
+                        ):
+                            raise RuntimeError(
+                                f"{vehicle} controlled descent timed out before contact"
+                            )
+                elapsed = now - landing_started
                 events.append(
                     {
                         "state": "LANDING_CONFIRMATION",
@@ -861,24 +1049,19 @@ def main() -> None:
                         "pending": sorted(pending_landing),
                         "landed_now": landed_now,
                         "contact_disarmed_now": contact_disarmed_now,
+                        "deviation_accepted_now": deviation_accepted_now,
                         "minimum_pairwise_separation_m": minimum_separation,
                         "contact_samples": contact_samples,
                     }
                 )
-                waiting_for_contact = pending_landing.difference(disarm_started)
-                if waiting_for_contact and elapsed >= float(
-                    landing["confirmation_timeout_seconds"]
-                ):
-                    remaining = ", ".join(sorted(waiting_for_contact))
-                    raise RuntimeError(
-                        f"stable Point_B contact timed out for: {remaining}"
-                    )
                 if pending_landing:
-                    time.sleep(float(landing["confirmation_poll_seconds"]))
+                    time.sleep(float(landing["controlled_descent_poll_seconds"]))
         if collided and survivors:
             status = "PARTIAL_COLLISION"
         elif collided:
             status = "COLLISION"
+        elif landed_state_deviation_applied:
+            status = str(landing["landed_state_deviation"]["success_label"])
         else:
             status = "PASS"
     except Exception as exc:
@@ -921,6 +1104,10 @@ def main() -> None:
             "config_sha256": _sha256(args.config),
             "water_object_name": water_name,
             "water_left_at_peak": bool(flood["leave_water_at_peak_after_mission"]),
+            "landed_state_deviation": {
+                **landing["landed_state_deviation"],
+                "applied": landed_state_deviation_applied,
+            },
             "vehicle_states": states,
             "events": events,
         }
