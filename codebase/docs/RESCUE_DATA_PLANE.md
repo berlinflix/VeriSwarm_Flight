@@ -100,9 +100,9 @@ The token is sent in the HTTP authorization header and is never stored in the ou
 ## Producer handoff
 
 Samik emits `observation` events after local inference. Pratik emits mission, assignment,
-coverage, vehicle, link, task-reassignment and mission-completion events. Suyash consumes
-the projected state/report. Abhijan evaluates outputs against simulator truth after the
-mission; truth is never a producer input.
+coverage, vehicle, link, movement-safety, task-reassignment and mission-completion events.
+Suyash consumes the projected state/report. Abhijan evaluates outputs against simulator
+truth after the mission; truth is never a producer input.
 
 Required top-level producer fields:
 
@@ -129,6 +129,10 @@ another node. The legacy exact-node form remains accepted for a single combined 
 no-op. Reusing the ID with different content or sending a source sequence backwards is
 rejected. A forward sequence gap is accepted with a warning so a temporarily disconnected
 producer can recover without blocking the fleet.
+
+New FactoryCity cell/coverage/reassignment producers and measured obstacle/collision
+events follow `RESCUE_CELL_MOVEMENT_EVENT_EXTENSION.md`. The extension is additive: old
+count-only evidence remains replayable, while new producers must emit exact cell IDs.
 
 ## Observation contract
 
@@ -201,6 +205,8 @@ security-review alert and autonomous-control path, not whether responders see th
   security-review alert without removing the person alert.
 - Mapped fire/smoke receives `CRITICAL`; other mapped hazards receive `HIGH`.
 - `HOLD`/`QUARANTINE` authorization events become responder-visible safety alerts.
+- Terminal cell blockage and en-route collision events become responder-visible movement
+  safety alerts; measured transition evidence remains available in `movement_safety`.
 - Reports explicitly retain uncertainty and state that candidates require human review.
 
 These are deterministic demo rules, not medically or operationally calibrated dispatch

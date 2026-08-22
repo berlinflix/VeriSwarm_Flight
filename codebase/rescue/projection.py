@@ -32,6 +32,7 @@ class MissionProjection:
         self.hazards: dict[str, dict[str, Any]] = {}
         self.alerts: dict[str, dict[str, Any]] = {}
         self.reassignments: list[dict[str, Any]] = []
+        self.movement_safety: list[dict[str, Any]] = []
         self.events_applied = 0
 
     def apply(self, event: dict[str, Any]) -> None:
@@ -62,6 +63,8 @@ class MissionProjection:
             "cells_total": payload["cells_total"],
             "event_id": event["event_id"],
         }
+        if "cell_ids" in payload:
+            assignment["cell_ids"] = payload["cell_ids"]
         self.assignments[payload["node"]] = assignment
         self._vehicle(payload["node"])["sector_id"] = payload["sector_id"]
 
@@ -256,18 +259,105 @@ class MissionProjection:
         vehicle["link_state"] = payload["state"]
         vehicle["link_observed_at_ms"] = event["observed_at_ms"]
 
+    def _apply_movement_safety(self, event: dict, payload: dict) -> None:
+        item = {
+            **payload,
+            "event_id": event["event_id"],
+            "observed_at_ms": event["observed_at_ms"],
+        }
+        self.movement_safety.append(item)
+        if payload["event_type"] in {"CELL_BLOCKED", "COLLISION_DETECTED"}:
+            priority = (
+                "CRITICAL"
+                if payload["event_type"] == "COLLISION_DETECTED"
+                else "HIGH"
+            )
+            self.alerts[f"alert:movement:{event['event_id']}"] = {
+                "alert_id": f"alert:movement:{event['event_id']}",
+                "priority": priority,
+                "kind": "MOVEMENT_SAFETY",
+                "target_id": payload["node"],
+                "message": (
+                    f"{payload['node']} {payload['event_type']} in "
+                    f"{payload['cell_id']}: {payload['reason_code']}"
+                ),
+                "updated_at_ms": event["observed_at_ms"],
+            }
+
     def _apply_mission_completed(self, event: dict, payload: dict) -> None:
         self.mission_status = payload["status"]
 
     def _coverage_summary(self) -> dict[str, Any]:
         visited = sum(item["visited_cells"] for item in self.coverage.values())
         total = sum(item["total_cells"] for item in self.coverage.values())
+        cell_detail = [
+            item
+            for item in self.coverage.values()
+            if all(
+                field in item
+                for field in (
+                    "in_progress_cell_ids",
+                    "completed_cell_ids",
+                    "blocked_cell_ids",
+                )
+            )
+        ]
+        cell_states = {
+            "in_progress_cell_ids": {
+                cell_id
+                for item in cell_detail
+                for cell_id in item["in_progress_cell_ids"]
+            },
+            "completed_cell_ids": {
+                cell_id
+                for item in cell_detail
+                for cell_id in item["completed_cell_ids"]
+            },
+            "blocked_cell_ids": {
+                cell_id
+                for item in cell_detail
+                for cell_id in item["blocked_cell_ids"]
+            },
+        }
+        cell_state_conflicts = sorted(
+            (cell_states["in_progress_cell_ids"] & cell_states["completed_cell_ids"])
+            | (cell_states["in_progress_cell_ids"] & cell_states["blocked_cell_ids"])
+            | (cell_states["completed_cell_ids"] & cell_states["blocked_cell_ids"])
+        )
+        conflict_set = set(cell_state_conflicts)
         return {
             "visited_cells": visited,
             "total_cells": total,
             "percent": round(100.0 * visited / total, 2) if total else 0.0,
             "sectors_reporting": len(self.coverage),
+            "cell_detail_sectors_reporting": len(cell_detail),
+            "cell_detail_complete": (
+                bool(self.coverage)
+                and len(cell_detail) == len(self.coverage)
+                and not cell_state_conflicts
+            ),
+            "cell_state_conflicts": cell_state_conflicts,
+            "in_progress_cell_ids": sorted(
+                cell_states["in_progress_cell_ids"] - conflict_set
+            ),
+            "completed_cell_ids": sorted(
+                cell_states["completed_cell_ids"] - conflict_set
+            ),
+            "blocked_cell_ids": sorted(
+                cell_states["blocked_cell_ids"] - conflict_set
+            ),
         }
+
+    def _assignment_conflicts(self) -> list[dict[str, Any]]:
+        owners: dict[str, set[str]] = {}
+        for assignment in self.assignments.values():
+            for cell_id in assignment.get("cell_ids", []):
+                owners.setdefault(cell_id, set()).add(assignment["node"])
+        return [
+            {"cell_id": cell_id, "owners": sorted(cell_owners)}
+            for cell_id, cell_owners in sorted(owners.items())
+            if len(cell_owners) > 1
+        ]
 
     def snapshot(self) -> dict[str, Any]:
         alerts = sorted(
@@ -288,10 +378,12 @@ class MissionProjection:
             "coverage": self._coverage_summary(),
             "vehicles": sorted(self.vehicles.values(), key=lambda item: item["node"]),
             "assignments": sorted(self.assignments.values(), key=lambda item: item["node"]),
+            "assignment_conflicts": self._assignment_conflicts(),
             "people": sorted(self.people.values(), key=lambda item: item["marker_id"]),
             "hazards": sorted(self.hazards.values(), key=lambda item: item["hazard_id"]),
             "alerts": alerts,
             "reassignments": list(self.reassignments),
+            "movement_safety": list(self.movement_safety),
         })
 
     def report(self) -> dict[str, Any]:

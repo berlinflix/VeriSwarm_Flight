@@ -1,0 +1,114 @@
+{
+  "schema": "veriswarm.rescue.event_extension.cell_movement.v1",
+  "base_event_schema": "veriswarm.rescue.event.v1",
+  "compatibility": {
+    "policy": "ADDITIVE",
+    "legacy_count_only_events": "ACCEPTED_FOR_REPLAY_ONLY",
+    "new_factorycity_producers": "MUST_EMIT_ADDITIVE_FIELDS"
+  },
+  "cell_geometry_authority": "immutable movement configuration",
+  "events_must_not_duplicate_cell_geometry": true,
+  "assignment": {
+    "required_additive_fields": ["cell_ids"],
+    "invariants": [
+      "cell_ids are unique",
+      "len(cell_ids) equals cells_total",
+      "every cell_id exists in the immutable movement configuration"
+    ]
+  },
+  "coverage": {
+    "required_additive_fields": [
+      "in_progress_cell_ids",
+      "completed_cell_ids",
+      "blocked_cell_ids"
+    ],
+    "cell_state_definitions": {
+      "IN_PROGRESS": "assigned and entered, but the configured completion boundary has not passed",
+      "COMPLETED": "the vehicle passed the configured cell end boundary while required sensing and evidence enqueue succeeded",
+      "BLOCKED": "no permitted sensor-driven deflection remained; this cell is unreachable for the current run and must not count as completed"
+    },
+    "invariants": [
+      "the three cell-state lists are pairwise disjoint",
+      "len(completed_cell_ids) equals visited_cells",
+      "the union is a subset of the producer's currently assigned cells",
+      "blocked cells remain blocked unless a later assignment event explicitly transfers ownership"
+    ]
+  },
+  "task_reassigned": {
+    "required_additive_fields": ["cell_ids"],
+    "invariants": [
+      "cell_ids are unique",
+      "len(cell_ids) equals cells_count",
+      "the source owns assignment authority",
+      "positive person and hazard observations remain preserved"
+    ]
+  },
+  "movement_safety": {
+    "required_payload_fields": [
+      "node",
+      "cell_id",
+      "event_type",
+      "measurement_source",
+      "measured_distance_m",
+      "reason_code",
+      "result"
+    ],
+    "measurement_sources": [
+      "front_depth",
+      "front_depth_and_vehicle_state",
+      "simGetCollisionInfo",
+      "simGetCollisionInfo_and_vehicle_state"
+    ],
+    "event_reason_result_map": {
+      "OBSTACLE_DETECTED": [
+        "depth_below_stopping_boundary",
+        "NON_TERMINAL"
+      ],
+      "SAFETY_HOLD": [
+        "obstacle_safety_hold",
+        "NON_TERMINAL"
+      ],
+      "DEFLECTION_SELECTED": [
+        "safe_deflection_selected",
+        "NON_TERMINAL"
+      ],
+      "ROUTE_REJOINED": [
+        "nominal_route_rejoined",
+        "NON_TERMINAL"
+      ],
+      "CELL_BLOCKED": [
+        "no_safe_deflection",
+        "TERMINAL_CELL"
+      ],
+      "COLLISION_DETECTED": [
+        "cosys_collision_detected",
+        "TERMINAL_VEHICLE"
+      ]
+    },
+    "controller_inputs_allowed": [
+      "front_depth",
+      "simGetCollisionInfo",
+      "vehicle_state",
+      "immutable route and safety limits",
+      "fresh authorization lease"
+    ],
+    "controller_inputs_forbidden": [
+      "evaluation-only obstacle actor coordinates",
+      "survivor ground truth",
+      "post-run evaluator output"
+    ]
+  },
+  "timing_boundaries_ms": {
+    "authorization_lease_max_age": 2000,
+    "control_loop_period_max": 200,
+    "depth_sample_max_age_at_decision": 250,
+    "hold_command_dispatch_deadline": 400,
+    "movement_transition_durable_enqueue_deadline": 500,
+    "policy_on_any_timing_miss": "HOLD"
+  },
+  "ordering": {
+    "within_source": "source_seq is authoritative and strictly monotonic",
+    "event_time": "observed_at_ms is UTC Unix epoch milliseconds captured at the producer transition",
+    "cross_source": "collector persistence order is authoritative for replay; clocks never override source_seq"
+  }
+}
