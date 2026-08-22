@@ -81,7 +81,17 @@ class MissionProjection:
         position = payload.get("position_ned")
         if position is None:
             return None
+        capture_group = payload.get("capture_group_id")
         for marker_id, marker in self.people.items():
+            marker_groups = marker.get("capture_groups", [])
+            # Calibrated multi-view observations merge only when the fusion layer
+            # independently associated them and their measured locations agree.
+            # A nearby but differently grouped person must remain a separate alert.
+            if capture_group is not None:
+                if capture_group not in marker_groups:
+                    continue
+            elif marker_groups:
+                continue
             existing = marker.get("position_ned")
             if existing is not None and _distance(position, existing) <= self.person_dedup_radius_m:
                 return marker_id
@@ -99,31 +109,97 @@ class MissionProjection:
                     "sources": [],
                     "observation_ids": [],
                     "modalities": [],
+                    "capture_groups": [],
+                    "camera_ids": [],
+                    "localization_methods": [],
+                    "corroborated_sources": [],
+                    "expected_visible_misses": [],
+                    "evidence_security_states": [],
+                    "security_reasons": [],
+                    "bearing_evidence": [],
+                    "corroborated": False,
+                    "security_review_required": False,
                     "requires_responder_confirmation": True,
                 },
             )
             marker["confidence"] = max(marker["confidence"], payload["confidence"])
             marker["last_observed_at_ms"] = event["observed_at_ms"]
-            marker["position_ned"] = payload.get("position_ned", marker.get("position_ned"))
-            marker["uncertainty_m"] = payload.get("uncertainty_m", marker.get("uncertainty_m"))
+            new_position = payload.get("position_ned")
+            new_uncertainty = payload.get("uncertainty_m")
+            current_uncertainty = marker.get("uncertainty_m")
+            if new_position is not None and (
+                marker.get("position_ned") is None
+                or current_uncertainty is None
+                or (new_uncertainty is not None and new_uncertainty < current_uncertainty)
+            ):
+                marker["position_ned"] = new_position
+                marker["uncertainty_m"] = new_uncertainty
             for field, value in (
                 ("sources", payload["node"]),
                 ("observation_ids", payload["observation_id"]),
                 ("modalities", payload["modality"]),
+                ("capture_groups", payload.get("capture_group_id")),
+                ("camera_ids", payload.get("camera_id")),
+                ("localization_methods", payload.get("localization_method")),
+                ("evidence_security_states", payload.get("evidence_security")),
             ):
-                if value not in marker[field]:
+                if value is not None and value not in marker[field]:
                     marker[field].append(value)
                     marker[field].sort()
-            priority = "HIGH" if marker["confidence"] >= 0.8 or len(marker["sources"]) >= 2 else "REVIEW"
+            for field in (
+                "corroborated_sources",
+                "expected_visible_misses",
+                "security_reasons",
+            ):
+                for value in payload.get(field, []):
+                    if value not in marker[field]:
+                        marker[field].append(value)
+                        marker[field].sort()
+            if payload.get("viewpoint_ned") is not None:
+                bearing = {
+                    "observation_id": payload["observation_id"],
+                    "camera_id": payload.get("camera_id"),
+                    "viewpoint_ned": payload["viewpoint_ned"],
+                    "bearing_ned": payload["bearing_ned"],
+                    "bearing_uncertainty_deg": payload["bearing_uncertainty_deg"],
+                }
+                if not any(
+                    item["observation_id"] == bearing["observation_id"]
+                    for item in marker["bearing_evidence"]
+                ):
+                    marker["bearing_evidence"].append(bearing)
+            marker["corroborated"] = len(marker["corroborated_sources"]) >= 2
+            security_review = (
+                "DISPUTED" in marker["evidence_security_states"]
+                or bool(marker["expected_visible_misses"])
+                or bool(marker["security_reasons"])
+            )
+            marker["security_review_required"] = (
+                marker["security_review_required"] or security_review
+            )
             self.alerts[f"alert:{marker_id}"] = {
                 "alert_id": f"alert:{marker_id}",
-                "priority": priority,
+                # A model-thresholded positive is never suppressed by a missing view.
+                # It remains a candidate requiring urgent responder confirmation.
+                "priority": "HIGH",
                 "kind": "PERSON_CANDIDATE",
                 "target_id": marker_id,
-                "message": "Person candidate requires responder review",
+                "message": "Person candidate requires urgent responder review",
                 "source_count": len(marker["sources"]),
                 "updated_at_ms": event["observed_at_ms"],
             }
+            if marker["security_review_required"]:
+                self.alerts[f"alert:security:{marker_id}"] = {
+                    "alert_id": f"alert:security:{marker_id}",
+                    "priority": "HIGH",
+                    "kind": "PERCEPTION_SECURITY_REVIEW",
+                    "target_id": marker_id,
+                    "message": (
+                        "Preserve person candidate; verify disputed or unexpectedly "
+                        "missing camera evidence"
+                    ),
+                    "updated_at_ms": event["observed_at_ms"],
+                }
         elif payload["class_id"] in HAZARD_CLASSES:
             # Detector-originated hazards remain observations until promoted by a
             # hazard event. Keep the raw item visible without inventing geometry.

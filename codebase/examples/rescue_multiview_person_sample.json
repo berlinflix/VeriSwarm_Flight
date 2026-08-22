@@ -1,0 +1,49 @@
+{
+  "schema": "veriswarm.rescue.multiview.input.v1",
+  "candidate_id": "broken-building-7-person-1",
+  "positive_views": [
+    {
+      "observation_id": "bravo-person-0001",
+      "source": "bravo",
+      "frame_id": "bravo-frame-0104",
+      "observed_at_ms": 1787394601200,
+      "confidence": 0.87,
+      "bbox_norm": [0.46, 0.30, 0.54, 0.70],
+      "range_m": 10.0,
+      "range_uncertainty_m": 0.30,
+      "evidence_security": "VERIFIED",
+      "camera": {
+        "camera_id": "camera-b",
+        "calibration_id": "factorycity-camera-b-v1",
+        "width_px": 1000,
+        "height_px": 1000,
+        "fx_px": 1000.0,
+        "fy_px": 1000.0,
+        "cx_px": 500.0,
+        "cy_px": 500.0,
+        "position_ned": [0.0, 0.0, 0.0],
+        "rotation_camera_to_ned": [
+          [1.0, 0.0, 0.0],
+          [0.0, 1.0, 0.0],
+          [0.0, 0.0, 1.0]
+        ],
+        "pose_uncertainty_m": 0.10,
+        "bearing_uncertainty_deg": 0.50
+      }
+    }
+  ],
+  "missing_views": [
+    {
+      "camera_id": "camera-a",
+      "source": "alpha",
+      "frame_id": "alpha-frame-0104",
+      "observed_at_ms": 1787394601200,
+      "healthy": true,
+      "inference_succeeded": true,
+      "shares_scene": true,
+      "expected_in_frame": true,
+      "line_of_sight_proven": false,
+      "reason": "collapsed wall occludes the person from Camera A"
+    }
+  ]
+}

@@ -151,13 +151,48 @@ Accepted classes are `person_candidate`, `water_or_flood`, `road_blocked`, `debr
 `fire`, `smoke`, `structure_damage` and `landslide`. No event may call a person a confirmed
 survivor.
 
+Calibrated multi-view producers may also include:
+
+```json
+{
+  "capture_group_id": "building-7-person-1",
+  "camera_id": "camera-b",
+  "camera_calibration_id": "factorycity-camera-b-v1",
+  "viewpoint_ned": [0.0, 0.0, 0.0],
+  "bearing_ned": [0.0, 0.0, 1.0],
+  "bearing_uncertainty_deg": 0.5,
+  "localization_method": "metric_range",
+  "metric_range_m": 10.0,
+  "range_uncertainty_m": 0.3,
+  "corroborated_sources": ["bravo"],
+  "expected_visible_misses": [],
+  "evidence_security": "VERIFIED",
+  "security_reasons": []
+}
+```
+
+See `MULTIVIEW_SURVIVOR_FUSION.md`. The capture group is produced only by tracking,
+calibrated geometry, simulator identity or another measured association method; raw box
+IoU across unregistered viewpoints is not sufficient.
+
+`evidence_security` is not detector-supplied trust. The producer uses
+`rescue.assess_consensus_security(...)` to bind the real VeriSwarm consensus result to the
+expected receipt digest plus receipt/model/runtime verification. A positive person event
+is still sent when that result is `UNVERIFIED` or `DISPUTED`; the state controls the
+security-review alert and autonomous-control path, not whether responders see the person.
+
 ## Projection behavior
 
 - Nearby geolocated person observations are merged within a five-metre development gate,
   retaining every source and observation ID.
 - Non-geolocated people stay separate because image-plane overlap does not prove identity.
-- High-confidence or multi-source person candidates receive `HIGH`; others receive
-  `REVIEW`.
+- Every detector-thresholded person candidate receives `HIGH` responder priority. Missing
+  views never veto it; every candidate remains explicitly unconfirmed.
+- Calibrated positive views merge only when both their association group and measured NED
+  positions agree. A capture-group ID or spatial proximity alone cannot merge them. Bearing
+  evidence is retained and the most precise available NED location is preferred.
+- A disputed positive view or independently proven expected-visible miss adds a separate
+  security-review alert without removing the person alert.
 - Mapped fire/smoke receives `CRITICAL`; other mapped hazards receive `HIGH`.
 - `HOLD`/`QUARANTINE` authorization events become responder-visible safety alerts.
 - Reports explicitly retain uncertainty and state that candidates require human review.
