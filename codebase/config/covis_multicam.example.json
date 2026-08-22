@@ -16,6 +16,7 @@
   "width": 640,
   "height": 360,
   "fps": 15,
+  "capture_fourcc": "MJPG",
   "analysis_fps": 3,
   "release_timeout": 20,
   "display_width": 1600,

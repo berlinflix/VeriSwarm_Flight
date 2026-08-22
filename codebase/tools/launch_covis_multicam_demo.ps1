@@ -259,6 +259,10 @@ if ($deviceBoundSpecs.Count -gt 0) {
 $width = [int](Get-NumberSetting $config "width" 640 1)
 $height = [int](Get-NumberSetting $config "height" 360 1)
 $fps = Get-NumberSetting $config "fps" 15 0.01
+$captureFourcc = if ($null -eq $config.capture_fourcc) { $null } else { [string]$config.capture_fourcc }
+if ($null -ne $captureFourcc -and ($captureFourcc.Length -ne 4 -or $captureFourcc -notmatch '^[\x20-\x7E]{4}$')) {
+    throw "capture_fourcc must contain exactly four printable ASCII characters."
+}
 $analysisFps = Get-NumberSetting $config "analysis_fps" 3 0.01
 $appearanceThreshold = Get-NumberSetting $config "appearance_threshold" 0.60 0
 if ($appearanceThreshold -gt 1) {
@@ -315,6 +319,7 @@ if ($ValidateOnly) {
     Write-Host "Cameras: $($cameraSpecs.Count); pairs: $(($cameraSpecs.Count * ($cameraSpecs.Count - 1)) / 2)"
     Write-Host "Appearance assumption threshold: $(Convert-Invariant $appearanceThreshold)"
     Write-Host "YOLO confidence threshold: $(Convert-Invariant $confidence)"
+    Write-Host "Capture FOURCC: $(if ($null -eq $captureFourcc) { 'driver default' } else { $captureFourcc })"
     foreach ($camera in $cameraSpecs) {
         $identity = if ($null -eq $camera.ResolvedDeviceName) {
             ""
@@ -351,6 +356,9 @@ $runnerArguments += @(
     "--display-height", $displayHeight.ToString(),
     "--run-id", $runId
 )
+if ($null -ne $captureFourcc) {
+    $runnerArguments += @("--capture-fourcc", $captureFourcc)
+}
 if ($recordVideo) {
     $runnerArguments += @(
         "--record-video",
