@@ -1,0 +1,44 @@
+# FactoryCity Disaster world lane
+
+This directory owns Pratik's additive CoSys disaster-world tooling. It does not contain
+the Unreal project, generated settings, raw frames, logs, or development evidence.
+
+## Implemented contract
+
+1. `unreal_duplicate_disaster_world.py` creates a separate world and never loads the
+   duplicated `UWorld` in the same process. A fresh commandlet must inventory it.
+2. `unreal_disaster_inventory.py` verifies Point_A, the AirSim origin, roads, floors,
+   collision profiles, and tagged disaster actors without modifying the level.
+3. `unreal_disaster_asset_inventory.py` discovers reusable project assets before the
+   builder references them.
+4. `unreal_apply_disaster_layer.py` consumes
+   `factorycity_disaster.development.json`. It refuses duplicate disaster layers, missing
+   anchors/assets, invalid transforms, unsupported collision profiles, or Point_A safety
+   violations.
+5. `build_disaster_settings.py` derives camera settings and placement metadata from the
+   protected five-drone inputs and `factorycity_disaster_camera_profile.json`.
+6. `verify_disaster_sensor_streams.py` captures RGB, DepthPlanar, and pose from every
+   declared vehicle and fails on missing/invalid streams.
+7. The PowerShell tools guard closed-editor settings/default-map mutations and preserve
+   backups and operation records.
+
+## Collision policy
+
+- Existing road and launch-ground actors remain untouched.
+- Physical roadblocks, debris, and damaged-structure props use `BlockAll` with
+  `QueryAndPhysics`.
+- Flood planes are visual overlays with `NoCollision`; they do not create a false solid
+  ceiling over a road.
+- Every added actor is tagged `VS_Disaster`, scenario ID, kind, and development/frozen
+  status.
+
+## Current development scenario
+
+The development file uses audited existing road actor labels as anchors. Its values are
+configuration data, not controller constants. It is intentionally marked
+`development_only: true` because Abhijan's final `SCENARIO_MANIFEST.json` has not yet been
+published. Do not present these provisional locations as evaluator truth.
+
+The Unreal project path is supplied by the operator and is intentionally absent from
+portable Git configuration. Development evidence belongs under the owner's external
+`scratch/<owner>/<task>/latest/` area and may be regenerated.

@@ -1,0 +1,92 @@
+{
+  "schema": "veriswarm.factorycity.disaster_layer.v1",
+  "scenario_id": "factorycity_disaster_development",
+  "development_only": true,
+  "world": "/Game/VeriSwarm/FactoryCity_Disaster",
+  "point_a_actor": "Point_A",
+  "point_a_exclusion_radius_cm": 3000.0,
+  "actors": [
+    {
+      "id": "flood_road_east_01",
+      "kind": "water_or_flood",
+      "anchor_actor": "SM_street_15",
+      "asset": "/Engine/BasicShapes/Plane.Plane",
+      "material": "/DatasmithContent/Materials/Water/M_Water.M_Water",
+      "offset_cm": [0.0, 0.0, 14.0],
+      "rotation_rpy_deg": [0.0, 0.0, 0.0],
+      "scale": [21.0, 21.0, 1.0],
+      "collision_profile": "NoCollision"
+    },
+    {
+      "id": "flood_road_east_02",
+      "kind": "water_or_flood",
+      "anchor_actor": "SM_Street_13",
+      "asset": "/Engine/BasicShapes/Plane.Plane",
+      "material": "/DatasmithContent/Materials/Water/M_Water.M_Water",
+      "offset_cm": [0.0, 0.0, 14.0],
+      "rotation_rpy_deg": [0.0, 0.0, 0.0],
+      "scale": [36.0, 36.0, 1.0],
+      "collision_profile": "NoCollision"
+    },
+    {
+      "id": "roadblock_south_01",
+      "kind": "road_blocked",
+      "anchor_actor": "SM_street_3",
+      "asset": "/Game/Factory_Pack_V1/Meshes/SM_barrier_2.SM_barrier_2",
+      "offset_cm": [-450.0, 0.0, 20.0],
+      "rotation_rpy_deg": [0.0, 0.0, 90.0],
+      "scale": [1.0, 1.0, 1.0],
+      "collision_profile": "BlockAll"
+    },
+    {
+      "id": "roadblock_south_02",
+      "kind": "road_blocked",
+      "anchor_actor": "SM_street_3",
+      "asset": "/Game/Factory_Pack_V1/Meshes/SM_barrier_2.SM_barrier_2",
+      "offset_cm": [0.0, 0.0, 20.0],
+      "rotation_rpy_deg": [0.0, 0.0, 90.0],
+      "scale": [1.0, 1.0, 1.0],
+      "collision_profile": "BlockAll"
+    },
+    {
+      "id": "roadblock_south_03",
+      "kind": "road_blocked",
+      "anchor_actor": "SM_street_3",
+      "asset": "/Game/Factory_Pack_V1/Meshes/SM_barrier_2.SM_barrier_2",
+      "offset_cm": [450.0, 0.0, 20.0],
+      "rotation_rpy_deg": [0.0, 0.0, 90.0],
+      "scale": [1.0, 1.0, 1.0],
+      "collision_profile": "BlockAll"
+    },
+    {
+      "id": "debris_barrel_01",
+      "kind": "debris",
+      "anchor_actor": "SM_street_22",
+      "asset": "/Game/Factory_Pack_V1/Meshes/SM_barrel_1.SM_barrel_1",
+      "offset_cm": [-220.0, -170.0, 20.0],
+      "rotation_rpy_deg": [8.0, 22.0, 14.0],
+      "scale": [1.0, 1.0, 1.0],
+      "collision_profile": "BlockAll"
+    },
+    {
+      "id": "debris_trash_01",
+      "kind": "debris",
+      "anchor_actor": "SM_street_22",
+      "asset": "/Game/Factory_Pack_V1/Meshes/SM_Trash_1.SM_Trash_1",
+      "offset_cm": [130.0, 90.0, 25.0],
+      "rotation_rpy_deg": [17.0, -12.0, 38.0],
+      "scale": [1.2, 1.2, 1.2],
+      "collision_profile": "BlockAll"
+    },
+    {
+      "id": "debris_pipe_01",
+      "kind": "structure_damage",
+      "anchor_actor": "SM_street_22",
+      "asset": "/Game/Factory_Pack_V1/Meshes/SM_Double_pipe.SM_Double_pipe",
+      "offset_cm": [330.0, -120.0, 35.0],
+      "rotation_rpy_deg": [12.0, 34.0, -28.0],
+      "scale": [0.8, 0.8, 0.8],
+      "collision_profile": "BlockAll"
+    }
+  ]
+}
