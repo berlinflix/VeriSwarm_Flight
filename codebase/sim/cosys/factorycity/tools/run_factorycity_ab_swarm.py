@@ -91,8 +91,20 @@ def _load_config(path: Path, map_file: Path) -> dict[str, object]:
         "command_timeout_seconds",
         "confirmation_timeout_seconds",
         "confirmation_poll_seconds",
+        "contact_settle_seconds",
+        "minimum_contact_center_height_above_surface_m",
+        "maximum_contact_center_height_above_surface_m",
+        "maximum_contact_vertical_speed_mps",
+        "post_disarm_confirmation_timeout_seconds",
     ):
         _positive(landing, field)
+    collision_object_name = landing.get("collision_object_name")
+    if not isinstance(collision_object_name, str) or not collision_object_name.strip():
+        raise RuntimeError("landing collision_object_name must be a non-empty string")
+    if float(landing["minimum_contact_center_height_above_surface_m"]) >= float(
+        landing["maximum_contact_center_height_above_surface_m"]
+    ):
+        raise RuntimeError("landing contact height bounds are invalid")
     delta = tuple(float(value) for value in route["target_delta_ned_m"])
     if len(delta) != 2 or not all(math.isfinite(value) for value in delta):
         raise RuntimeError("target_delta_ned_m must contain two finite values")
@@ -288,6 +300,53 @@ def _collision_record(client: object, vehicle: str) -> dict[str, object]:
     }
 
 
+def _landing_contact_sample(
+    client: object,
+    vehicle: str,
+    landing: dict[str, object],
+    landing_surface_z_ned_m: float,
+    collision_baseline_timestamp: int,
+) -> dict[str, object]:
+    state = client.getMultirotorState(vehicle_name=vehicle)
+    collision = _collision_record(client, vehicle)
+    pose = client.simGetObjectPose(vehicle, ned=True)
+    world_z_ned_m = float(pose.position.z_val)
+    vertical_speed_mps = float(
+        state.kinematics_estimated.linear_velocity.z_val
+    )
+    _finite(
+        (world_z_ned_m, vertical_speed_mps),
+        f"{vehicle} landing contact telemetry",
+    )
+    center_height_above_surface_m = landing_surface_z_ned_m - world_z_ned_m
+    new_surface_contact = (
+        collision["has_collided"]
+        and collision["timestamp"] > collision_baseline_timestamp
+        and collision["object_name"] == landing["collision_object_name"]
+    )
+    within_contact_height = float(
+        landing["minimum_contact_center_height_above_surface_m"]
+    ) <= center_height_above_surface_m <= float(
+        landing["maximum_contact_center_height_above_surface_m"]
+    )
+    vertical_motion_settled = abs(vertical_speed_mps) <= float(
+        landing["maximum_contact_vertical_speed_mps"]
+    )
+    return {
+        "landed_state": int(state.landed_state),
+        "world_z_ned_m": world_z_ned_m,
+        "center_height_above_surface_m": center_height_above_surface_m,
+        "vertical_speed_mps": vertical_speed_mps,
+        "collision": collision,
+        "new_surface_contact": new_surface_contact,
+        "within_contact_height": within_contact_height,
+        "vertical_motion_settled": vertical_motion_settled,
+        "stable_contact_candidate": (
+            new_surface_contact and within_contact_height and vertical_motion_settled
+        ),
+    }
+
+
 def _terminate_collision(client: object, vehicle: str) -> None:
     try:
         client.hoverAsync(vehicle_name=vehicle).join()
@@ -338,6 +397,15 @@ def main() -> None:
     route = config["route"]
     limits = config["limits"]
     flood = config["flood"]
+    landing = config["landing"]
+    transform = config["coordinate_transform"]
+    landing_surface_z_ned_m = (
+        (
+            float(transform["point_b_landing_surface_world_z_cm"])
+            - float(transform["point_a_unreal_cm"][2])
+        )
+        / float(transform["world_to_meters"])
+    ) / float(transform["ned_to_unreal_axis_sign"]["z"])
     water_name = _resolve_water_object(args.layer_result, str(flood["water_actor_id"]))
     client = cosysairsim.MultirotorClient(
         ip=str(rpc["host"]),
@@ -698,51 +766,97 @@ def main() -> None:
                 "arrival_errors": arrival_errors,
             }
         )
-        if survivors and bool(config["landing"]["land_survivors_at_point_b"]):
+        if survivors and bool(landing["land_survivors_at_point_b"]):
             for vehicle in survivors:
                 states[vehicle] = "LANDING"
+            landing_collision_baseline = {
+                vehicle: int(_collision_record(client, vehicle)["timestamp"])
+                for vehicle in survivors
+            }
             _join_all(
                 [
                     client.landAsync(
-                        timeout_sec=float(config["landing"]["command_timeout_seconds"]),
+                        timeout_sec=float(landing["command_timeout_seconds"]),
                         vehicle_name=vehicle,
                     )
                     for vehicle in survivors
                 ]
             )
             pending_landing = set(survivors)
+            contact_started: dict[str, float] = {}
+            disarm_started: dict[str, float] = {}
             confirmation_started = time.monotonic()
             while pending_landing:
                 landed_now = []
-                landed_states = {}
+                contact_disarmed_now = []
+                contact_samples = {}
+                positions = _world_positions(client, survivors)
+                minimum_separation = _minimum_pairwise(positions)
+                if minimum_separation < float(limits["minimum_pairwise_separation_m"]):
+                    raise RuntimeError(
+                        "formation separation breached during landing: "
+                        f"{minimum_separation:.3f} m"
+                    )
+                now = time.monotonic()
                 for vehicle in tuple(sorted(pending_landing)):
-                    landed = client.getMultirotorState(vehicle_name=vehicle).landed_state
-                    landed_states[vehicle] = int(landed)
-                    if landed == cosysairsim.LandedState.Landed:
-                        client.armDisarm(False, vehicle_name=vehicle)
-                        armed.discard(vehicle)
+                    sample = _landing_contact_sample(
+                        client,
+                        vehicle,
+                        landing,
+                        landing_surface_z_ned_m,
+                        landing_collision_baseline[vehicle],
+                    )
+                    contact_samples[vehicle] = sample
+                    if sample["landed_state"] == int(cosysairsim.LandedState.Landed):
+                        if vehicle in armed:
+                            client.armDisarm(False, vehicle_name=vehicle)
+                            armed.discard(vehicle)
                         states[vehicle] = "LANDED"
                         pending_landing.remove(vehicle)
                         landed_now.append(vehicle)
-                elapsed = time.monotonic() - confirmation_started
+                        continue
+                    if vehicle in disarm_started:
+                        if now - disarm_started[vehicle] >= float(
+                            landing["post_disarm_confirmation_timeout_seconds"]
+                        ):
+                            raise RuntimeError(
+                                f"{vehicle} did not report Landed after stable-contact disarm"
+                            )
+                        continue
+                    if sample["stable_contact_candidate"]:
+                        contact_started.setdefault(vehicle, now)
+                        if now - contact_started[vehicle] >= float(
+                            landing["contact_settle_seconds"]
+                        ):
+                            client.armDisarm(False, vehicle_name=vehicle)
+                            armed.discard(vehicle)
+                            states[vehicle] = "CONTACT_DISARMED"
+                            disarm_started[vehicle] = now
+                            contact_disarmed_now.append(vehicle)
+                    else:
+                        contact_started.pop(vehicle, None)
+                elapsed = now - confirmation_started
                 events.append(
                     {
                         "state": "LANDING_CONFIRMATION",
                         "elapsed_seconds": elapsed,
                         "pending": sorted(pending_landing),
                         "landed_now": landed_now,
-                        "landed_states": landed_states,
+                        "contact_disarmed_now": contact_disarmed_now,
+                        "minimum_pairwise_separation_m": minimum_separation,
+                        "contact_samples": contact_samples,
                     }
                 )
-                if pending_landing and elapsed >= float(
-                    config["landing"]["confirmation_timeout_seconds"]
+                waiting_for_contact = pending_landing.difference(disarm_started)
+                if waiting_for_contact and elapsed >= float(
+                    landing["confirmation_timeout_seconds"]
                 ):
-                    remaining = ", ".join(sorted(pending_landing))
+                    remaining = ", ".join(sorted(waiting_for_contact))
                     raise RuntimeError(
-                        f"landing confirmation timed out at Point_B for: {remaining}"
+                        f"stable Point_B contact timed out for: {remaining}"
                     )
                 if pending_landing:
-                    time.sleep(float(config["landing"]["confirmation_poll_seconds"]))
+                    time.sleep(float(landing["confirmation_poll_seconds"]))
         if collided and survivors:
             status = "PARTIAL_COLLISION"
         elif collided:
