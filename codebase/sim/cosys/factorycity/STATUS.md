@@ -43,8 +43,12 @@ Development milestone implemented and live-verified:
 - two independent cold boots passed for alpha, bravo, charlie, delta and echo;
 - a refined camera profile passed RGB, DepthPlanar and pose probes on all five vehicles.
 
-The new map-wide layer and controller are implemented in Git but remain pending a closed-
-editor Unreal rebuild and live cold-boot run.
+The rebuilt development map passed a live cold run on 2026-08-22: 60 paced rising
+steps produced an observed 4.5999998 m water rise, followed by a peak hold and 20 paced
+recession steps. Across the retained run, minimum drone clearance above water was
+3.7410 m (configured abort floor: 3.0 m), minimum pairwise separation was 2.8284 m,
+no new post-climb collision occurred, the water returned to its initial pose, all five
+drones landed, and API control was released.
 
 ## Current limitation
 

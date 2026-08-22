@@ -100,3 +100,12 @@ def test_unreal_python_tools_parse_without_importing_unreal() -> None:
     assert paths
     for path in paths:
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def test_rising_flood_uses_shared_world_frame_for_separation() -> None:
+    source = (TOOLS / "run_rising_flood_swarm.py").read_text(encoding="utf-8")
+    assert "simGetObjectPose(vehicle, ned=True)" in source
+    assert "pose = client.simGetVehiclePose(vehicle_name=vehicle)" not in source
+    assert "transition_started = time.monotonic()" in source
+    assert "scheduled_step_end = transition_started + duration_seconds * fraction" in source
+    assert 'value["timestamp"] > collision_baseline[name]' in source

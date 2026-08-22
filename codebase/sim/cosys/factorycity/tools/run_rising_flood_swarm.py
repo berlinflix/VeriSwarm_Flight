@@ -150,12 +150,16 @@ def _verify_fleet(
     vehicles: tuple[str, ...],
     water_z_ned_m: float,
     flight: dict[str, object],
+    collision_baseline: dict[str, int] | None = None,
 ) -> dict[str, object]:
     positions: dict[str, tuple[float, float, float]] = {}
     clearances: dict[str, float] = {}
     collisions: dict[str, object] = {}
     for vehicle in vehicles:
-        pose = client.simGetVehiclePose(vehicle_name=vehicle)
+        # simGetVehiclePose is start-relative for each vehicle, so five correctly
+        # separated drones can all report local X=Y=0. Scene-object poses share the
+        # world NED frame used by the movable flood actor and are required here.
+        pose = client.simGetObjectPose(vehicle, ned=True)
         _finite_pose(pose, vehicle)
         positions[vehicle] = (
             float(pose.position.x_val),
@@ -169,6 +173,7 @@ def _verify_fleet(
             "has_collided": bool(collision.has_collided),
             "object_name": str(collision.object_name),
             "penetration_depth_m": float(collision.penetration_depth),
+            "timestamp": int(collision.time_stamp),
         }
     minimum_clearance = min(clearances.values())
     minimum_separation = _pairwise_minimum(positions)
@@ -180,7 +185,13 @@ def _verify_fleet(
         raise RuntimeError(
             f"swarm separation breached: {minimum_separation:.3f} m"
         )
-    collided = [name for name, value in collisions.items() if value["has_collided"]]
+    collided = [
+        name
+        for name, value in collisions.items()
+        if collision_baseline is not None
+        and value["has_collided"]
+        and value["timestamp"] > collision_baseline[name]
+    ]
     if collided:
         raise RuntimeError(f"vehicle collision detected: {collided}")
     return {
@@ -188,6 +199,9 @@ def _verify_fleet(
         "minimum_pairwise_separation_m": minimum_separation,
         "clearances_m": clearances,
         "collisions": collisions,
+        "collision_timestamps": {
+            name: int(value["timestamp"]) for name, value in collisions.items()
+        },
     }
 
 
@@ -202,8 +216,10 @@ def _water_transition(
     update_period_seconds: float,
     events: list[dict[str, object]],
     phase: str,
+    collision_baseline: dict[str, int],
 ) -> None:
     steps = max(1, math.ceil(duration_seconds / update_period_seconds))
+    transition_started = time.monotonic()
     for index in range(1, steps + 1):
         fraction = index / steps
         requested_z = float(initial_pose.position.z_val) - height_m * fraction
@@ -214,7 +230,9 @@ def _water_transition(
         _finite_pose(observed, "water actor")
         observed_z = float(observed.position.z_val)
         _move_fleet_to_water_clearance(client, vehicles, observed_z, flight)
-        observation = _verify_fleet(client, vehicles, observed_z, flight)
+        observation = _verify_fleet(
+            client, vehicles, observed_z, flight, collision_baseline
+        )
         events.append(
             {
                 "phase": phase,
@@ -224,6 +242,10 @@ def _water_transition(
                 **observation,
             }
         )
+        scheduled_step_end = transition_started + duration_seconds * fraction
+        remaining = scheduled_step_end - time.monotonic()
+        if remaining > 0.0:
+            time.sleep(remaining)
 
 
 def main() -> None:
@@ -279,7 +301,9 @@ def main() -> None:
         initial_z = float(initial_water_pose.position.z_val)
         _move_fleet_to_water_clearance(client, vehicles, initial_z, flight)
         time.sleep(float(flight["settle_seconds"]))
-        events.append({"phase": "initial_climb", **_verify_fleet(client, vehicles, initial_z, flight)})
+        initial_observation = _verify_fleet(client, vehicles, initial_z, flight)
+        collision_baseline = initial_observation["collision_timestamps"]
+        events.append({"phase": "initial_climb", **initial_observation})
         _water_transition(
             client,
             water_name,
@@ -291,10 +315,22 @@ def main() -> None:
             float(flood["update_period_seconds"]),
             events,
             "rising",
+            collision_baseline,
         )
         time.sleep(float(flood["hold_at_peak_seconds"]))
         peak = client.simGetObjectPose(water_name, ned=True)
-        events.append({"phase": "peak_hold", **_verify_fleet(client, vehicles, float(peak.position.z_val), flight)})
+        events.append(
+            {
+                "phase": "peak_hold",
+                **_verify_fleet(
+                    client,
+                    vehicles,
+                    float(peak.position.z_val),
+                    flight,
+                    collision_baseline,
+                ),
+            }
+        )
         if not bool(flood["restore_initial_level_before_landing"]):
             raise RuntimeError("landing is forbidden while floodwater remains raised")
         peak_pose = _copy_pose(
@@ -312,6 +348,7 @@ def main() -> None:
             float(flood["update_period_seconds"]),
             events,
             "receding",
+            collision_baseline,
         )
         status = "PASS"
     except Exception as exc:
