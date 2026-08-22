@@ -1,0 +1,30 @@
+{
+  "schema": "veriswarm.internal_qualifier.v1",
+  "run_id": "DEV-RESCUE-MODEL-SWAP-001",
+  "created_ns": 1787394604000000000,
+  "pass": true,
+  "actual": {
+    "outcome": "REJECTED",
+    "disputes": 2,
+    "semantic_acks": 0
+  },
+  "receipt": {
+    "model_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "authorization": {
+    "allowed": false,
+    "released": [0.0, 0.0, 0.0]
+  },
+  "dashboard_proof": {
+    "schema": "veriswarm.qualification_dashboard.v1",
+    "case": "model_swap",
+    "approved_model_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tampered_model_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "observed_model_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "observed_is_approved": false,
+    "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "signer_backend": "optee",
+    "policy_reason": "model_hash_not_approved",
+    "proof_valid": true
+  }
+}
