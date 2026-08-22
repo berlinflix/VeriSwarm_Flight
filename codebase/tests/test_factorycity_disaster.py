@@ -246,6 +246,8 @@ def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> N
     assert '"state": "LANDING_CONFIRMATION"' in source
     assert "pending_landing = set(survivors)" in source
     assert "landing_collision_baseline" in source
+    assert "verified_contact_timestamps" in source
+    assert 'sample["surface_contact_latched"]' in source
     assert 'sample["stable_contact_candidate"]' in source
     assert 'states[vehicle] = "CONTACT_DISARMED"' in source
     assert "cosysairsim.LandedState.Landed" in source

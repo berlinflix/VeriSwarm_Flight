@@ -802,6 +802,7 @@ def main() -> None:
             )
             pending_landing = set(survivors)
             contact_started: dict[str, float] = {}
+            verified_contact_timestamps: dict[str, int] = {}
             disarm_started: dict[str, float] = {}
             confirmation_started = time.monotonic()
             while pending_landing:
@@ -823,6 +824,23 @@ def main() -> None:
                         landing,
                         landing_surface_z_ned_m,
                         landing_collision_baseline[vehicle],
+                    )
+                    if sample["new_surface_contact"]:
+                        verified_contact_timestamps[vehicle] = int(
+                            sample["collision"]["timestamp"]
+                        )
+                    surface_contact_latched = (
+                        vehicle in verified_contact_timestamps
+                        and sample["collision"]["object_name"]
+                        == landing["collision_object_name"]
+                        and int(sample["collision"]["timestamp"])
+                        == verified_contact_timestamps[vehicle]
+                    )
+                    sample["surface_contact_latched"] = surface_contact_latched
+                    sample["stable_contact_candidate"] = (
+                        surface_contact_latched
+                        and sample["within_contact_height"]
+                        and sample["vertical_motion_settled"]
                     )
                     contact_samples[vehicle] = sample
                     if sample["landed_state"] == int(cosysairsim.LandedState.Landed):
