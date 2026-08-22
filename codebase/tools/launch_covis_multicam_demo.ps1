@@ -268,10 +268,6 @@ $appearanceThreshold = Get-NumberSetting $config "appearance_threshold" 0.60 0
 if ($appearanceThreshold -gt 1) {
     throw "Configuration value appearance_threshold must not exceed 1."
 }
-$personColourThreshold = Get-NumberSetting $config "person_colour_threshold" 0.60 0
-if ($personColourThreshold -gt 1) {
-    throw "Configuration value person_colour_threshold must not exceed 1."
-}
 $confidence = Get-NumberSetting $config "confidence" 0.25 0.01
 if ($confidence -gt 1) {
     throw "Configuration value confidence must not exceed 1."
@@ -322,7 +318,6 @@ if ($ValidateOnly) {
     Write-Host "Configuration: $CameraConfigPath"
     Write-Host "Cameras: $($cameraSpecs.Count); pairs: $(($cameraSpecs.Count * ($cameraSpecs.Count - 1)) / 2)"
     Write-Host "Appearance assumption threshold: $(Convert-Invariant $appearanceThreshold)"
-    Write-Host "Person torso colour threshold: $(Convert-Invariant $personColourThreshold)"
     Write-Host "YOLO confidence threshold: $(Convert-Invariant $confidence)"
     Write-Host "Capture FOURCC: $(if ($null -eq $captureFourcc) { 'driver default' } else { $captureFourcc })"
     foreach ($camera in $cameraSpecs) {
@@ -356,7 +351,6 @@ $runnerArguments += @(
     "--fps", (Convert-Invariant $fps),
     "--analysis-fps", (Convert-Invariant $analysisFps),
     "--appearance-threshold", (Convert-Invariant $appearanceThreshold),
-    "--person-colour-threshold", (Convert-Invariant $personColourThreshold),
     "--release-timeout", (Convert-Invariant $releaseTimeout),
     "--display-width", $displayWidth.ToString(),
     "--display-height", $displayHeight.ToString(),

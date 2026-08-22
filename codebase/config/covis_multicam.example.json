@@ -18,7 +18,6 @@
   "fps": 15,
   "capture_fourcc": "MJPG",
   "analysis_fps": 3,
-  "person_colour_threshold": 0.60,
   "release_timeout": 20,
   "display_width": 1600,
   "display_height": 900,
