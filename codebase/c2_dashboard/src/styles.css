@@ -138,6 +138,69 @@ button {
   font-weight: 800;
 }
 
+.topbar-statuses {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.data-mode-badge {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 7px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-radius: 8px;
+  color: #fbbf24;
+  background: rgba(18, 19, 22, 0.56);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.09);
+}
+
+.data-mode-badge > i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 14px currentColor;
+}
+
+.data-mode-badge div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.data-mode-badge span,
+.data-mode-badge small {
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.data-mode-badge span {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+}
+
+.data-mode-badge small {
+  color: #64748b;
+  font-size: 7px;
+  letter-spacing: 0.05em;
+}
+
+.data-mode-badge.mode-live {
+  border-color: rgba(52, 211, 153, 0.28);
+  color: #86efac;
+}
+
+.data-mode-badge.mode-reference {
+  border-color: rgba(251, 191, 36, 0.34);
+  color: #fbbf24;
+}
+
 .mission-status {
   display: flex;
   align-items: center;
@@ -296,8 +359,22 @@ button {
   white-space: nowrap;
 }
 
-.node-online.unverified {
+.node-online.unverified,
+.node-online.freshness-awaiting,
+.node-online.freshness-unverified {
   color: #fbbf24;
+}
+
+.node-online.freshness-stale {
+  color: #fca5a5;
+}
+
+.node-online.freshness-offline {
+  color: #fb7185;
+}
+
+.node-online.freshness-live i {
+  animation: telemetryPulse 1.8s ease-in-out infinite;
 }
 
 .node-online i,
@@ -708,6 +785,99 @@ button {
   font-weight: 800;
 }
 
+.map-person,
+.map-hazard {
+  filter: drop-shadow(0 0 7px rgba(2, 6, 23, 0.92));
+}
+
+.map-person text,
+.map-hazard text {
+  paint-order: stroke;
+  stroke: rgba(3, 7, 11, 0.98);
+  stroke-width: 3px;
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.map-person text { fill: #fde68a; }
+.map-hazard text { fill: #fda4af; }
+
+.map-person .person-head {
+  fill: #fde68a;
+  stroke: #f59e0b;
+  stroke-width: 1.5;
+}
+
+.map-person .person-body {
+  fill: none;
+  stroke: #fde68a;
+  stroke-linecap: round;
+  stroke-width: 2.2;
+}
+
+.map-person.security-review .person-head,
+.map-person.security-review .person-body {
+  stroke: #fb7185;
+}
+
+.map-hazard rect {
+  fill: rgba(190, 18, 60, 0.9);
+  stroke: #fda4af;
+  stroke-width: 1.6;
+}
+
+.map-entity-pulse {
+  fill: rgba(251, 191, 36, 0.08);
+  stroke: rgba(251, 191, 36, 0.5);
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mapEntityPulse 2s ease-out infinite;
+}
+
+.map-hazard .map-entity-pulse {
+  fill: rgba(244, 63, 94, 0.09);
+  stroke: rgba(251, 113, 133, 0.55);
+}
+
+.map-entity-legend {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 7px;
+  background: rgba(3, 7, 11, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.map-entity-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #94a3b8;
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 6px;
+  letter-spacing: 0.06em;
+}
+
+.map-entity-legend span::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #67e8f9;
+  box-shadow: 0 0 7px currentColor;
+}
+
+.map-entity-legend .entity-person::before { background: #fde68a; }
+.map-entity-legend .entity-hazard::before { background: #fb7185; border-radius: 1px; transform: rotate(45deg); }
+
 .map-axis-label {
   fill: #64748b;
   font-size: 12px;
@@ -964,6 +1134,38 @@ button {
   min-width: 0;
 }
 
+.report-export {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  margin-top: 7px;
+  padding: 5px 8px;
+  border: 1px solid rgba(103, 232, 249, 0.2);
+  border-radius: 6px;
+  color: #67e8f9;
+  background: rgba(14, 116, 144, 0.08);
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.report-export:hover:not(:disabled),
+.report-export:focus-visible:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(103, 232, 249, 0.48);
+  background: rgba(14, 116, 144, 0.18);
+}
+
+.report-export:disabled {
+  color: #475569;
+  border-color: rgba(71, 85, 105, 0.18);
+  cursor: not-allowed;
+}
+
 .rescue-title {
   display: flex;
   flex-direction: column;
@@ -1120,6 +1322,206 @@ button {
   border-radius: 50%;
   background: currentColor;
   box-shadow: 0 0 10px currentColor;
+}
+
+.movement-authority {
+  margin: 9px 0;
+  padding: 9px;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 86% 0%, rgba(251, 191, 36, 0.08), transparent 38%),
+    rgba(5, 8, 12, 0.62);
+  transition: border-color 220ms ease, box-shadow 220ms ease;
+}
+
+.movement-authority.link-live {
+  border-color: rgba(74, 222, 128, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.035), 0 0 24px rgba(34, 197, 94, 0.035);
+}
+
+.movement-authority-heading,
+.movement-authority-actions,
+.movement-authority-row,
+.movement-authority-row > div,
+.movement-decision-buttons {
+  display: flex;
+  align-items: center;
+}
+
+.movement-authority-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.movement-authority-heading > div:first-child,
+.movement-authority-status {
+  display: flex;
+  flex-direction: column;
+}
+
+.movement-authority-heading span,
+.movement-authority-status small,
+.movement-authority-actions span,
+.movement-authority-row,
+.movement-authority button {
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+}
+
+.movement-authority-heading span {
+  color: #64748b;
+  font-size: 7px;
+  letter-spacing: 0.12em;
+}
+
+.movement-authority-heading b {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.movement-authority-status {
+  position: relative;
+  min-width: 210px;
+  padding-left: 13px;
+  text-align: right;
+}
+
+.movement-authority-status i {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fbbf24;
+  box-shadow: 0 0 10px #f59e0b;
+}
+
+.link-live .movement-authority-status i {
+  background: #4ade80;
+  box-shadow: 0 0 10px #22c55e;
+  animation: telemetryPulse 1.6s ease-in-out infinite;
+}
+
+.movement-authority-status strong {
+  color: #fcd34d;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.link-live .movement-authority-status strong { color: #86efac; }
+
+.movement-authority-status small {
+  max-width: 360px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 7px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.movement-authority-actions {
+  gap: 6px;
+  margin: 7px 0;
+}
+
+.movement-authority-actions span {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 7px;
+  letter-spacing: 0.06em;
+}
+
+.movement-authority button {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.5);
+  cursor: pointer;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.movement-authority button:hover:not(:disabled),
+.movement-authority button:focus-visible {
+  color: #f8fafc;
+  border-color: rgba(103, 232, 249, 0.48);
+  background: rgba(8, 145, 178, 0.13);
+  transform: translateY(-1px);
+}
+
+.movement-authority button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.movement-authority-actions button {
+  min-height: 24px;
+  padding: 4px 9px;
+}
+
+.movement-authority-actions button:first-child {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.movement-authority-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.movement-authority-row {
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid rgba(255,255,255,0.055);
+  border-radius: 7px;
+  background: rgba(255,255,255,0.018);
+}
+
+.movement-authority-row > div:first-child {
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.movement-authority-row b { font-size: 8px; }
+.movement-authority-row span { color: #fcd34d; font-size: 7px; }
+.movement-authority-row.decision-allow span { color: #86efac; }
+.movement-authority-row.decision-quarantine span { color: #fb7185; }
+
+.movement-decision-buttons {
+  gap: 3px;
+}
+
+.movement-decision-buttons button {
+  min-width: 0;
+  flex: 1;
+  padding: 4px 2px;
+  font-size: 5px;
+}
+
+.movement-authority-row.decision-allow button.active {
+  color: #86efac;
+  border-color: rgba(74, 222, 128, 0.38);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.movement-authority-row.decision-hold button.active {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.38);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.movement-authority-row.decision-quarantine button.active {
+  color: #fda4af;
+  border-color: rgba(251, 113, 133, 0.42);
+  background: rgba(225, 29, 72, 0.1);
 }
 
 .cell-scoreboard {
@@ -2077,6 +2479,16 @@ button {
   50% { box-shadow: 0 0 22px rgba(251,191,36,0.16); }
 }
 
+@keyframes telemetryPulse {
+  0%, 100% { transform: scale(0.82); opacity: 0.72; }
+  50% { transform: scale(1.24); opacity: 1; }
+}
+
+@keyframes mapEntityPulse {
+  0% { transform: scale(0.55); opacity: 0.78; }
+  72%, 100% { transform: scale(1.3); opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .orbital-bg::before,
   .scroll-cue i,
@@ -2084,7 +2496,10 @@ button {
   .lower-zone::after,
   .glass-panel::before,
   .scanline,
-  .attack-control.pending {
+  .attack-control.pending,
+  .node-online.freshness-live i,
+  .link-live .movement-authority-status i,
+  .map-entity-pulse {
     animation: none;
   }
 }
@@ -2109,6 +2524,10 @@ button {
 
   .rescue-mission {
     grid-template-columns: 1fr 1.4fr;
+  }
+
+  .topbar-statuses {
+    flex-wrap: wrap;
   }
 
   .rescue-alerts {
@@ -2176,6 +2595,19 @@ button {
   .analytics-intro {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .topbar-statuses {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .topbar-statuses > * {
+    flex: 1;
+  }
+
+  .data-mode-badge {
+    justify-content: center;
   }
 
   .mission-status {
@@ -2257,6 +2689,13 @@ button {
     grid-template-columns: 1fr 1fr;
   }
 
+  .map-entity-legend {
+    left: 10px;
+    right: auto;
+    flex-wrap: wrap;
+    max-width: calc(100% - 20px);
+  }
+
   .rescue-alerts {
     grid-column: 1 / -1;
   }
@@ -2269,6 +2708,43 @@ button {
 
   .cell-scoreboard {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .movement-authority-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .movement-authority-status {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .movement-authority-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .movement-authority-actions span {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .movement-authority-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .movement-authority-row {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .movement-authority-row > div:first-child {
+    min-width: 76px;
+  }
+
+  .movement-decision-buttons {
+    flex: 1;
   }
 
   .drone-coverage-grid {

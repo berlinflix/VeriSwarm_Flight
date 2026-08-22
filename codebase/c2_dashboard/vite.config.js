@@ -19,6 +19,7 @@ const qualifierUrl = (process.env.VERISWARM_QUALIFIER_URL ?? "").replace(/\/$/, 
 const qualifierToken = process.env.VERISWARM_QUALIFIER_TOKEN ?? "";
 const rescueUrl = (process.env.VERISWARM_RESCUE_URL ?? "").replace(/\/$/, "");
 const rescueToken = process.env.VERISWARM_RESCUE_TOKEN ?? "";
+const movementAuthorizationUrl = (process.env.VERISWARM_MOVEMENT_AUTH_URL ?? "").replace(/\/$/, "");
 
 const clearedAttacks = {
   model_swap: [],
@@ -88,6 +89,31 @@ async function callRescue(path) {
       : {};
     const response = await fetch(`${rescueUrl}${path}`, {
       headers,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({ ok: false, error: "invalid_backend_response" }));
+    return { status: response.status, payload };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function callMovementAuthorization(path, options = {}) {
+  if (!movementAuthorizationUrl) {
+    const error = new Error("movement authorization backend is not configured");
+    error.code = "movement_authorization_not_configured";
+    throw error;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const response = await fetch(`${movementAuthorizationUrl}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers ?? {}),
+      },
       cache: "no-store",
       signal: controller.signal,
     });
@@ -292,6 +318,31 @@ function dashboardApi() {
         } catch (error) {
           const message = error.name === "AbortError"
             ? "rescue_timeout"
+            : error.code ?? error.message;
+          sendJson(response, 503, { ok: false, error: message });
+        }
+      });
+
+      server.middlewares.use("/api/movement-authorization", async (request, response) => {
+        try {
+          if (request.method === "GET" && request.url === "/status") {
+            const result = await callMovementAuthorization("/health");
+            sendJson(response, result.status, result.payload);
+            return;
+          }
+          if (request.method === "POST" && request.url === "/policy") {
+            const body = JSON.parse((await readRequestBody(request)) || "{}");
+            const result = await callMovementAuthorization("/policy", {
+              method: "POST",
+              body: JSON.stringify(body),
+            });
+            sendJson(response, result.status, result.payload);
+            return;
+          }
+          sendJson(response, 404, { ok: false, error: "not_found" });
+        } catch (error) {
+          const message = error.name === "AbortError"
+            ? "movement_authorization_timeout"
             : error.code ?? error.message;
           sendJson(response, 503, { ok: false, error: message });
         }

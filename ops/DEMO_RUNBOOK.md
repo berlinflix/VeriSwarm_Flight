@@ -111,6 +111,27 @@ evidence filename. Abhijan publishes it with:
 The target is `alpha`: Alpha originated the signed approved/unapproved provenance cases;
 Bravo and Charlie independently voted on them. This is not a runtime model hot-load.
 
+### Separate FactoryCity movement-v2 integration
+
+Run this as a separate simulation demonstration; do not imply that the Jetson model-hash
+case caused a simulated drone decision.
+
+1. Pratik starts `ops/start_pratik_authorization_receiver.ps1` on Windows.
+2. Abhijan runs `./ops/start_abhijan_movement_v2_mac.sh` on the Mac.
+3. Abhijan verifies `LEASE LINK LIVE`; all five vehicles begin in fail-closed `HOLD`.
+4. Pratik starts `ops/start_pratik_rescue_sender.ps1`, then starts Unreal/CoSim and enters
+   Play mode. Do not start movement-v2 while the five leases are still `HOLD`.
+5. After the team confirms the scene is safe, Abhijan selects `ALLOW ALL`.
+6. Pratik starts `ops/start_pratik_movement_v2.ps1`; all five preflight leases must now
+   resolve to `ALLOW`.
+7. Retain a normal run, a transient one-vehicle `HOLD`, and a separate one-vehicle
+   `QUARANTINE` run. Quarantine is terminal for that run and must lead to reassignment of
+   unfinished cells.
+
+The dashboard controls desired authorization; Pratik's runner remains the sole movement
+executor. Coverage, positions, person candidates and hazards appear only through genuine
+validated simulator producer events.
+
 ---
 
 ## Phase 3 — kill a drone, on camera

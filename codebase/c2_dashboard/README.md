@@ -104,10 +104,48 @@ fabricated.
 The producer schema and exact Samik/Pratik handoff are in
 `../docs/RESCUE_DATA_PLANE.md`.
 
+For Pratik's direct wired feed, do not expose this collector or the Vite server to the LAN.
+Run `ops/start_abhijan_pratik_mac.sh` for the simulation-only path. It keeps both
+loopback-only and starts a separate `:8771` ingress restricted to Pratik's exact Ethernet
+source IP; it does not contact the Jetson/model-hash peers. Pratik runs
+`ops/start_pratik_rescue_sender.ps1`; no rescue bearer token is shared. See
+`../docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_DIRECT_ETHERNET_DATA_HANDOFF_2026-08-22.md`.
+
+For Pratik's authorization-aware movement-v2 runner, use the two-way launcher instead:
+
+```bash
+./ops/start_abhijan_movement_v2_mac.sh
+```
+
+Pratik must first start `ops/start_pratik_authorization_receiver.ps1`. The Mac then
+publishes a complete snapshot containing fresh canonical authorization events for Alpha,
+Bravo, Charlie, Delta and Echo every 500 ms. The dashboard proxies its controls only to
+the loopback policy service at `127.0.0.1:8773`; the browser never talks directly to
+Windows. Missing policy, receiver failure, stale snapshots, invalid data and replay all
+fail closed. The panel reports `LEASE LINK LIVE` only after Windows has accepted a recent
+snapshot. See
+`../docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_SUYASH_MOVEMENT_V2_AUTHORIZATION_LINK_2026-08-23.md`.
+
+The dashboard labels the rescue source explicitly and fails closed when it is not set:
+
+- `LIVE_PRATIK` is set by the two Abhijan launchers and means the collector is receiving
+  Pratik's direct Ethernet data plane.
+- `REFERENCE_REPLAY` is only for retained sample/rehearsal events; the UI says replay and
+  never labels that state live.
+- an unset or unknown `VITE_RESCUE_DATA_MODE` is shown as `SOURCE UNVERIFIED`.
+- `VITE_RESCUE_STALE_AFTER_MS` optionally changes the telemetry freshness threshold from
+  its 8000 ms default.
+
+Person and hazard symbols are drawn on the NED map only when their validated rescue
+events contain a genuine `position_ned`. The dashboard never invents a marker position.
+`EXPORT REPORT` downloads the collector's current `/api/rescue/report` projection.
+
 ## Current Scope
 
-- Translucent telemetry deck for Alpha, Bravo and Charlie.
-- Ethernet-ready real-time stream viewport with a clear disconnected state.
+- Translucent telemetry deck for Pratik's Alpha, Bravo, Charlie, Delta and Echo vehicles,
+  including link state, event age and fail-closed freshness labels.
+- Ethernet-ready NED coverage map with exact cell states, five vehicle positions and
+  genuine positioned person/hazard markers.
 - Live analytics sourced from retained `results/live_events.jsonl` consensus,
   semantic ACK, pose and reputation events.
 - A functional clean-plus-model-hash control backed by Alpha's Jetson service.

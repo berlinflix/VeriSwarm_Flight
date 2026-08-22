@@ -121,6 +121,46 @@ Suyash.
 
 ---
 
+## Pratik simulation movement-v2 run — separate from model hash
+
+This path controls only the five simulated vehicles. It does not contact the Jetson and
+does not translate model-hash results into simulator controls.
+
+First, Pratik starts this on Windows and leaves it open:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ops\start_pratik_authorization_receiver.ps1
+```
+
+Then, on the Mac:
+
+```bash
+cd /Volumes/HyperDrive/Development/VERISWARM_SIH_RESCUE_SECURITY
+./ops/start_abhijan_movement_v2_mac.sh
+```
+
+Open `http://127.0.0.1:5175` and scroll to **Coverage Heatmap & Movement Safety**. The
+movement controls remain fail-closed until the panel says `LEASE LINK LIVE`. First
+startup is intentionally all `HOLD`. Pratik starts Unreal/CoSim and enters Play mode,
+then Abhijan selects `ALLOW ALL`, and only then does Pratik start movement-v2. Starting
+movement-v2 while any vehicle is still `HOLD` correctly fails its preflight.
+
+Pratik separately starts the rescue sender first. After Unreal is ready and Abhijan has
+selected `ALLOW ALL`, he starts the movement-v2 launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ops\start_pratik_rescue_sender.ps1
+powershell -ExecutionPolicy Bypass -File .\ops\start_pratik_movement_v2.ps1
+```
+
+Use `HOLD` to cancel new route motion and hover without asserting an attack. Use
+`QUARANTINE` to make that simulated vehicle terminally unavailable and request its
+hover-land/reassignment path. A quarantined vehicle is not resumed in the same run.
+Person/hazard detections and coverage remain inputs from Pratik's producer events; the
+dashboard never invents them.
+
+---
+
 ## Rules while running
 
 - **Do not double-click** the run button. After a proof is retained, the button changes to
