@@ -1,6 +1,6 @@
 # STATUS — SUYASH
 
-Updated: 2026-08-22 IST
+Updated: 2026-08-23 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
@@ -9,6 +9,16 @@ Current integration tip before this coordination update: `5e66ca3`
 Latest peer observations: Pratik `883df7e`; Abhijan `debf335`
 
 ## Completed since the previous update
+
+- Brought up an isolated JetPack 6.2.1 rescue-inference environment on the physical
+  Jetson Orin Nano with CUDA Torch 2.8.0, Torchvision 0.23.0, Ultralytics 8.4.56 and the
+  Owl Lite camera without altering the OP-TEE/protocol environment.
+- Completed the COCO infrastructure baseline: the empty scene produced zero person
+  alerts in 120 measured frames; the accepted full-body distance case detected one
+  person in all 120 frames at 29.19 end-to-end FPS with no overlap ambiguity.
+- Preserved two important failures: the occlusion case produced duplicate nested person
+  boxes in 51/120 frames, and a sideways 90-degree frame misclassified the person as a
+  dog. Published raw-versus-cluster diagnostics and a direct Git handoff to Samik.
 
 - Established direct Pratik–Abhijan Git coordination for the joint
   CoSys/movement-security/event/dashboard lane. Routine messages, test results and
@@ -105,6 +115,9 @@ Latest peer observations: Pratik `883df7e`; Abhijan `debf335`
 - `codebase/docs/MULTIVIEW_SURVIVOR_FUSION.md`
 - `codebase/examples/rescue_multiview_person_sample.json`
 - `codebase/docs/JETSON_ORIN_NANO_MODEL_GATE.md`
+- `codebase/docs/JETSON_RESCUE_CAMERA_ACCEPTANCE.md`
+- `codebase/tools/jetson_camera_acceptance.py`
+- `codebase/docs/team_updates/MESSAGE_SUYASH_TO_TEAM_JETSON_COCO_BASELINE_RESULTS_2026-08-23.md`
 - `codebase/examples/rescue_model_deployment_manifest.example.json`
 - `codebase/docs/SYNTHETIC_DRONE_POV_INPUT.md`
 - `codebase/node/frame_source.py` (`VideoFileSource`)
@@ -129,8 +142,9 @@ Latest peer observations: Pratik `883df7e`; Abhijan `debf335`
   still missing and must remain outside Git.
 - The physical rig demonstrates common planar overlap; it cannot claim real 3-D location
   until its cameras are calibrated into a shared metric frame.
-- The new rescue model is not Jetson-qualified yet: training, FP16 export and sustained
-  Nano measurements have not been produced.
+- The physical camera/CUDA infrastructure is ready, but the new rescue model is not
+  Jetson-qualified yet: training, checkpoint handoff, FP16 export and sustained
+  model-specific measurements have not been produced.
 
 ## Shared-interface changes
 
