@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 from pathlib import Path
 
 
@@ -10,6 +11,9 @@ WORLD = ROOT / "sim" / "cosys" / "factorycity"
 LAYER = WORLD / "factorycity_disaster.development.json"
 CAMERAS = WORLD / "factorycity_disaster_camera_profile.json"
 RISING_FLOOD = WORLD / "factorycity_rising_flood.development.json"
+POINT_B_AUDIT = WORLD / "factorycity_point_b_audit.development.json"
+POINT_B_COLLISION = WORLD / "factorycity_point_b_landing_collision.development.json"
+AB_MISSION = WORLD / "factorycity_ab_mission.development.json"
 TOOLS = WORLD / "tools"
 
 
@@ -115,3 +119,106 @@ def test_rising_flood_uses_shared_world_frame_for_separation() -> None:
     assert "transition_started = time.monotonic()" in source
     assert "scheduled_step_end = transition_started + duration_seconds * fraction" in source
     assert 'value["timestamp"] > collision_baseline[name]' in source
+
+
+def test_point_b_audit_contract_covers_five_drone_landing_footprint() -> None:
+    config = _json(POINT_B_AUDIT)
+    assert config["schema"] == "veriswarm.factorycity.point_b_audit.v1"
+    assert config["development_only"] is True
+    assert config["world"] == "/Game/VeriSwarm/FactoryCity_Disaster"
+    assert config["point_a_actor"] == "Point_A"
+    assert config["point_b_actor"] == "Point_B"
+    assert set(config["formation_offsets_cm"]) == {
+        "alpha",
+        "bravo",
+        "charlie",
+        "delta",
+        "echo",
+    }
+    assert len(config["footprint_probe_offsets_cm"]) >= 9
+    validation = config["validation"]
+    assert validation["minimum_route_distance_m"] > 0
+    assert validation["maximum_route_distance_m"] > validation[
+        "minimum_route_distance_m"
+    ]
+    assert validation["minimum_roof_above_peak_flood_m"] > 0
+    assert validation["trace_complex"] is False
+    assert 0.0 < validation["minimum_surface_normal_z"] <= 1.0
+
+
+def test_point_b_audit_is_read_only_and_config_driven() -> None:
+    source = (TOOLS / "unreal_point_b_audit.py").read_text(encoding="utf-8")
+    assert "line_trace_single" in source
+    assert "save_current_level" not in source
+    assert "save_map" not in source
+    assert "set_actor_" not in source
+    assert 'config["footprint_probe_offsets_cm"]' in source
+
+
+def test_point_b_collision_contract_is_invisible_physical_and_bounded() -> None:
+    config = _json(POINT_B_COLLISION)
+    assert config["schema"] == "veriswarm.factorycity.point_b_landing_collision.v1"
+    assert config["development_only"] is True
+    assert config["point_b_actor"] == "Point_B"
+    assert config["support_actor"]
+    assert config["collision_profile"] == "BlockAll"
+    assert config["hidden_in_game"] is True
+    assert len(config["platform_size_cm"]) == 3
+    assert config["platform_size_cm"][0] >= 500.0
+    assert config["platform_size_cm"][1] >= 500.0
+    assert config["platform_size_cm"][2] > 0.0
+    assert config["minimum_support_edge_margin_cm"] > 0.0
+
+
+def test_point_b_collision_builder_is_fail_closed() -> None:
+    source = (TOOLS / "unreal_add_point_b_landing_collision.py").read_text(
+        encoding="utf-8"
+    )
+    assert "refusing to replace existing actor" in source
+    assert "QUERY_AND_PHYSICS" in source
+    assert 'set_collision_profile_name("BlockAll")' in source
+    assert "set_visibility(False" in source
+    assert "save_current_level" in source
+
+
+def test_ab_mission_is_five_drone_straight_flood_safe_and_map_bound() -> None:
+    config = _json(AB_MISSION)
+    assert config["schema"] == "veriswarm.factorycity.ab_mission.v1"
+    assert config["development_only"] is True
+    assert len(config["source_map"]["sha256"]) == 64
+    assert len(config["vehicles"]) == 5
+    assert set(config["vehicles"]) == set(config["formation_offsets_ned_m"])
+    route = config["route"]
+    assert len(route["target_delta_ned_m"]) == 2
+    assert math.isclose(
+        math.hypot(*route["target_delta_ned_m"]),
+        route["horizontal_distance_m"],
+        abs_tol=1e-6,
+    )
+    assert route["cruise_z_ned_m"] == -10.0
+    assert route["control_step_seconds"] > 0.0
+    assert config["flood"]["manage_water_to_peak"] is True
+    assert config["flood"]["leave_water_at_peak_after_mission"] is True
+    assert config["collision_policy"]["monitor_from_state"] == "EN_ROUTE"
+    assert config["collision_policy"]["ignore_takeoff_and_landing_collisions"] is True
+    assert config["landing"]["collision_actor"] == "VS_PointB_LandingCollision"
+
+
+def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> None:
+    source = (TOOLS / "run_factorycity_ab_swarm.py").read_text(encoding="utf-8")
+    assert "moveByVelocityZAsync" in source
+    assert 'states[vehicle] = "EN_ROUTE"' in source
+    assert 'sample["timestamp"] > collision_baseline[vehicle]' in source
+    assert 'states[vehicle] = "DESTROYED_BY_COLLISION"' in source
+    assert "target_z = min(" in source
+    assert "_raise_water_to_peak(" in source
+    assert "simSetObjectPose" in source
+    assert "initial_clearance_z = max(" in source
+    assert "route_started = time.monotonic()" in source
+    assert "client.landAsync(" in source
+    assert "cosysairsim.LandedState.Landed" in source
+    assert "client.isApiControlEnabled" in source
+    assert 'status = "PARTIAL_COLLISION"' in source
+    assert "client.armDisarm(False" in source
+    assert "client.enableApiControl(False" in source
+    assert "finally:" in source

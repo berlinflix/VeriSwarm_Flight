@@ -55,10 +55,25 @@ controller keeps issuing altitude commands and verifies clearance/separation/col
 while the flood remains visible. Ctrl+C is the explicit operator signal for recession and
 the already-validated landing/cleanup path.
 
+Point_B is now saved and collision-qualified at
+`(3787.536049, 4993.491058, 921.693295)` Unreal cm. It is 95.0474 m horizontally from
+Point_A and 4.2169 m above the configured peak-water plane. The source hall advertises
+`BlockAll` but its mesh collision does not contain a usable rooftop surface, so the
+derived map contains one invisible, bounded 5.5 x 5.5 m `BlockAll` landing surface named
+`VS_PointB_LandingCollision`. All nine 5 x 5 m footprint probes hit that surface with
+zero height variation and surface-normal Z=1.0.
+
+The configuration-bound nominal A-to-B controller is implemented but not yet claimed as
+live-qualified. It raises the flood while the drones climb with it, establishes a 10 m
+cruise height, flies the five vehicles along the same 95.0474 m horizontal vector,
+monitors only new en-route collisions, terminates collided vehicles by disarming and
+excluding them, and lands survivors at Point_B before API cleanup. Its first live run is
+the next acceptance gate.
+
 ## Current limitation
 
 `SCENARIO_MANIFEST.json` has not been handed off. The checked-in layout is explicitly
 `development_only`; it proves the world/tooling/collision integration but is not final
-scenario truth. Replace its anchors/transforms with Abhijan's frozen manifest before the
-final demo freeze. No Point_B, survivor truth actor, fire claim or detector truth has been
-invented here.
+scenario truth. Replace its disaster anchors/transforms with Abhijan's frozen manifest
+before the final demo freeze. Point_B is a Pratik-owned nominal navigation endpoint; no
+survivor truth actor, fire claim or detector truth has been invented here.

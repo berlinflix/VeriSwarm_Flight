@@ -26,6 +26,15 @@ the Unreal project, generated settings, raw frames, logs, or development evidenc
    and commands all five drones to a configuration-controlled clearance above that pose.
    It verifies clearance, separation, collision state, roster, and safe recession before
    landing; rain, fog, and road wetness also come from configuration.
+9. `unreal_point_b_audit.py` validates the saved Point_B, route distance, peak-flood
+   clearance, marker rotation, and nine collision probes across the 5x5 m landing area.
+10. `unreal_add_point_b_landing_collision.py` adds one invisible, bounded `BlockAll`
+    collision surface when a visually solid source roof lacks usable landing collision.
+11. `run_factorycity_ab_swarm.py` performs the nominal five-drone mission. It climbs to
+    the configured 10 m NED cruise height, starts collision monitoring only after takeoff,
+    advances every active drone along the same straight horizontal vector, dynamically
+    increases water clearance if required, terminates newly collided drones, and lands
+    surviving drones at the audited Point_B before disarm/API cleanup.
 
 The development weather profile prioritizes demo visibility: light rain and wet roads
 remain enabled, while fog, dust, snow, and airborne-leaf effects are explicitly zeroed.
