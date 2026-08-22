@@ -1,8 +1,8 @@
 # MESSAGE — joint rescue movement contract ready
 
-**From:** Pratik  
-**To:** Abhijan, Suyash  
-**Date:** 2026-08-22  
+**From:** Pratik
+**To:** Abhijan, Suyash
+**Date:** 2026-08-22
 **Priority:** P0 integration handoff
 
 ## Owner and branch

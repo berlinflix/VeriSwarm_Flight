@@ -4,7 +4,7 @@ Updated: 2026-08-22 IST
 
 Branch: `suyash/sih26177-rescue-integration`
 
-Latest work commit: `510c9c2`
+Latest reviewed integration parent: `e432f42`
 
 ## Completed since the previous update
 
@@ -36,11 +36,25 @@ Latest work commit: `510c9c2`
   Pratik+Abhijan jointly own authorization-aware movement safety and reassignment.
 - Published the P0 Point A/Point B, route, sector, safety, event and no-person CoSys
   negative-control freeze required from Pratik and Abhijan.
+- Independently reviewed Pratik's FactoryCity movement lane through `f2bbd65`: the
+  focused contract suite passed `18/18`, the full branch passed `379 passed, 3 skipped`,
+  and every FactoryCity Python file compiled.
+- Integrated Pratik's frozen Point A/Point B, five-drone roster, 10 route cells, nominal
+  A-to-B controller and joint movement/security contract through merge parent `e432f42`.
+  This accepts the artifacts for development integration, not as live flight or
+  authorization-aware movement qualification.
+- Verified the merged Suyash/Pratik integration at `490 passed, 3 skipped`; the only
+  warning was pytest cache creation being denied by the local Windows sandbox.
+- Reviewed Abhijan's staged dashboard change `dd70244`. The production build passed, but
+  the clean-stage transition must also require
+  `cleanEvidence.dashboard_proof.proof_valid === true` before the UI may claim an
+  approved baseline or enable the model-hash attack stage.
 
 ## In progress now
 
-- Integrating the new detector, movement contract and CoSys calibration producers as
-  their branches publish.
+- Integrating the new detector and CoSys producers as their branches publish.
+- Waiting for Abhijan's configuration-driven `HOLD`/`QUARANTINE`/reassignment tests and
+  the staged-dashboard proof-gate correction.
 
 ## Outputs available
 
@@ -58,14 +72,23 @@ Latest work commit: `510c9c2`
 - `codebase/examples/rescue_model_deployment_manifest.example.json`
 - `codebase/docs/SYNTHETIC_DRONE_POV_INPUT.md`
 - `codebase/node/frame_source.py` (`VideoFileSource`)
+- `codebase/sim/cosys/factorycity/factorycity_joint_movement_contract.development.json`
+- `codebase/sim/cosys/factorycity/factorycity_ab_mission.development.json`
+- `codebase/sim/cosys/factorycity/tools/run_factorycity_ab_swarm.py`
 
 ## Blockers
 
 - NONE for RGB dataset work, cloud training or unlocated rescue observations.
 - No code blocker for detector training, person alerts or bearing-only observations.
 - Metric map localization still needs Pratik's calibrated camera pose/depth producer.
-- Point B, the final route/search sectors and the joint movement/security contract are
-  not yet frozen.
+- Point B, the straight A-to-B route, roster, route cells and joint movement/security
+  contract are now frozen for development. The first retained live five-drone A-to-B
+  run is still missing.
+- The nominal controller does not yet consume live `ALLOW`/`HOLD`/`QUARANTINE` decisions;
+  geofence/acceleration enforcement, durable rescue-event production and deterministic
+  unfinished-cell reassignment remain joint Pratik/Abhijan work.
+- The required original 10-second no-person CoSys RGB negative-control recording is
+  still missing and must remain outside Git.
 - The physical rig demonstrates common planar overlap; it cannot claim real 3-D location
   until its cameras are calibrated into a shared metric frame.
 - The new rescue model is not Jetson-qualified yet: training, FP16 export and sustained
@@ -87,6 +110,11 @@ Latest work commit: `510c9c2`
 
 ## Next checkpoint
 
+- Accept Abhijan's proof-gate correction and movement-security tests against Pratik's
+  published contract, including preservation of positive survivor observations after a
+  drone is held or quarantined.
+- Review Pratik's first retained live A-to-B run, durable rescue-event producer and
+  original no-person CoSys RGB control when published.
 - Accept the first real detector-derived multi-view observation from Samik and the first
   calibrated RGB/depth/pose capture group from Pratik, then run the one-view-occluded
   broken-building scenario through the collector and dashboard.
