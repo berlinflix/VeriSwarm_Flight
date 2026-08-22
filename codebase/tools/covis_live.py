@@ -763,6 +763,7 @@ class CaptureWorker:
         width: int,
         height: int,
         fps: float,
+        preferred_fourcc: str | None = None,
     ) -> None:
         self.name = name
         self.source = source
@@ -771,6 +772,7 @@ class CaptureWorker:
         self.width = width
         self.height = height
         self.fps = fps
+        self.preferred_fourcc = preferred_fourcc
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._ready = threading.Event()
@@ -810,6 +812,11 @@ class CaptureWorker:
                 return
             self.actual_backend = _actual_backend(capture)
             capture.set(self.cv2.CAP_PROP_BUFFERSIZE, 1)
+            if self.preferred_fourcc is not None:
+                capture.set(
+                    self.cv2.CAP_PROP_FOURCC,
+                    self.cv2.VideoWriter_fourcc(*self.preferred_fourcc),
+                )
             capture.set(self.cv2.CAP_PROP_FRAME_WIDTH, self.width)
             capture.set(self.cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             capture.set(self.cv2.CAP_PROP_FPS, self.fps)

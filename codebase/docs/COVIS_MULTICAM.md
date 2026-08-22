@@ -106,6 +106,12 @@ camera from inheriting a disconnected USB webcam's index and appearing under the
 wrong label. The `source` remains a numeric compatibility value; the resolved
 index is printed during validation.
 
+If concurrent USB capture shows corrupted scan lines, set `capture_fourcc` to a
+four-character codec verified for the physical camera, such as `MJPG`, and use a
+resolution the device actually exposes in that format. The requested codec is
+recorded in `run_config.json`; unsupported virtual cameras may retain their own
+native format, but the runner does not silently change the requested value.
+
 From `codebase`, validate the local configuration and frozen semantic runtime:
 
 ```powershell

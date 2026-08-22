@@ -768,6 +768,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=360)
     parser.add_argument("--fps", type=float, default=15.0)
+    parser.add_argument(
+        "--capture-fourcc",
+        help="optional four-character capture codec requested from every source",
+    )
     parser.add_argument("--analysis-fps", type=float, default=3.0)
     parser.add_argument("--open-timeout", type=float, default=15.0)
     parser.add_argument("--frame-set-timeout", type=float, default=5.0)
@@ -834,6 +838,11 @@ def _validate_args(args: argparse.Namespace) -> tuple[CameraSpec, ...]:
         raise ValueError("luma bounds must satisfy 0 <= min < max <= 255")
     if args.min_focus < 0:
         raise ValueError("min-focus cannot be negative")
+    if args.capture_fourcc is not None and (
+        len(args.capture_fourcc) != 4
+        or not all(0x20 <= ord(character) <= 0x7E for character in args.capture_fourcc)
+    ):
+        raise ValueError("capture-fourcc must contain exactly four printable ASCII characters")
     if args.display_width < 800 or args.display_height < 600:
         raise ValueError("dashboard display must be at least 800x600")
     if args.duration_seconds is not None and args.duration_seconds <= 0:
@@ -913,7 +922,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             for spec in specs
         ],
         "pair_count": len(camera_pairs(specs)),
-        "capture": {"width": args.width, "height": args.height, "fps": args.fps},
+        "capture": {
+            "width": args.width,
+            "height": args.height,
+            "fps": args.fps,
+            "preferred_fourcc": args.capture_fourcc,
+        },
         "analysis_fps": args.analysis_fps,
         "model_sha256": weights_hash,
         "thresholds": {
@@ -951,6 +965,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             width=args.width,
             height=args.height,
             fps=args.fps,
+            preferred_fourcc=args.capture_fourcc,
         )
         for spec in specs
     }

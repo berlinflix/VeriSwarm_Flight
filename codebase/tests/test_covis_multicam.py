@@ -134,6 +134,46 @@ def test_semantic_cli_requires_weights_and_frozen_hash_together():
         _validate_args(args)
 
 
+def test_capture_fourcc_is_validated_and_retained():
+    args = _parser().parse_args(
+        [
+            "--camera",
+            "cam1",
+            "0",
+            "dshow",
+            "--camera",
+            "cam2",
+            "2",
+            "dshow",
+            "--capture-fourcc",
+            "MJPG",
+        ]
+    )
+
+    _validate_args(args)
+    assert args.capture_fourcc == "MJPG"
+
+
+def test_capture_fourcc_rejects_malformed_values():
+    args = _parser().parse_args(
+        [
+            "--camera",
+            "cam1",
+            "0",
+            "dshow",
+            "--camera",
+            "cam2",
+            "2",
+            "dshow",
+            "--capture-fourcc",
+            "MJG",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="exactly four printable"):
+        _validate_args(args)
+
+
 @pytest.mark.parametrize("count, expected", [(2, 1), (3, 3), (4, 6), (5, 10)])
 def test_all_unordered_camera_pairs_are_generated(count, expected):
     pairs = camera_pairs(_specs(count))
