@@ -9,6 +9,7 @@ import cosysairsim
 import pytest
 
 from rescue.movement_security import load_movement_contract
+from sim.cosys.factorycity.tools import run_factorycity_movement_v2 as live_runner
 from tools.movement_authorization_link import ROSTER, build_snapshot
 from sim.cosys.factorycity.movement_v2 import (
     CellLedger,
@@ -334,6 +335,36 @@ def test_durable_sequences_survive_producer_restart(tmp_path: Path) -> None:
     assert first["source_seq"] == 1
     assert second["source_seq"] == 2
     assert first["event_id"] != second["event_id"]
+
+
+def test_vehicle_state_enqueue_deadline_starts_after_slow_pose_rpc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contract, extension = _loaded()
+    clock = {"ms": 1_000}
+    client = _Client()
+    original_pose = client.simGetObjectPose
+
+    def slow_pose(name, *, ned):
+        clock["ms"] += 600
+        return original_pose(name, ned=ned)
+
+    client.simGetObjectPose = slow_pose
+    monkeypatch.setattr(live_runner, "_now_ms", lambda: clock["ms"])
+    events = DurableMovementEvents(
+        contract=contract,
+        ledger=CellLedger(contract),
+        outbox_factory=_outbox_factory(
+            mission_id=contract["mission_id"], output_directory=tmp_path
+        ),
+        enqueue_deadline_ms=extension["timing_boundaries_ms"][
+            "movement_transition_durable_enqueue_deadline"
+        ],
+        clock_ms=lambda: clock["ms"],
+    )
+    event = live_runner._emit_vehicle_state(events, client, "alpha", "READY")
+    assert event["observed_at_ms"] == 1_600
+    assert event["payload"]["position_ned"] == [0.0, 0.0, -10.0]
 
 
 def test_live_runner_is_additive_and_uses_no_evaluator_truth() -> None:

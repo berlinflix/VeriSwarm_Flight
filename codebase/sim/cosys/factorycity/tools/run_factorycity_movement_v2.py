@@ -348,15 +348,19 @@ def _emit_vehicle_state(
     client: object,
     node: str,
     state: str,
-    observed_at_ms: int,
 ) -> dict[str, Any]:
+    # The pose RPC can be slow on a freshly started Unreal session.  Timestamp the
+    # completed observation, not the beginning of the RPC, so the durable-enqueue
+    # deadline measures only transition-to-persistence latency.
+    position = list(_world_position(client, node))
+    observed_at_ms = _now_ms()
     return events.emit(
         source=f"{node}.telemetry",
         kind="vehicle_state",
         payload={
             "node": node,
             "state": state,
-            "position_ned": list(_world_position(client, node)),
+            "position_ned": position,
         },
         observed_at_ms=observed_at_ms,
     )
@@ -366,7 +370,6 @@ def _capture_depth(
     client: object,
     node: str,
     extension: Mapping[str, Any],
-    decided_at_ms: int,
 ) -> Any:
     response = client.simGetImages(
         [
@@ -383,7 +386,7 @@ def _capture_depth(
         raise MovementV2Error(f"front_depth_response_count_invalid:{node}")
     return depth_sample_from_response(
         response[0],
-        decided_at_ms=decided_at_ms,
+        decided_at_ms=_now_ms(),
         config=extension["depth_sensor"],
     )
 
@@ -712,7 +715,7 @@ def main() -> None:
                 payload={"node": node, "state": "ONLINE"},
                 observed_at_ms=_now_ms(),
             )
-            _emit_vehicle_state(movement_events, client, node, "READY", _now_ms())
+            _emit_vehicle_state(movement_events, client, node, "READY")
 
         if mission.get("weather"):
             client.simEnableWeather(True)
@@ -840,9 +843,9 @@ def main() -> None:
             futures = []
             terminal_nodes: list[tuple[str, str]] = []
             for node in tuple(sorted(active)):
-                decided_at_ms = _now_ms()
-                depth = _capture_depth(client, node, extension, decided_at_ms)
+                depth = _capture_depth(client, node, extension)
                 local = _local_position(client, node)
+                transition_at_ms = _now_ms()
                 progress, cross_track = _route_metrics(local, dx, dy, distance)
                 completed_progress[node] = progress
                 cell_id = _mark_coverage(
@@ -851,7 +854,7 @@ def main() -> None:
                     events=movement_events,
                     node=node,
                     progress=progress,
-                    observed_at_ms=decided_at_ms,
+                    observed_at_ms=transition_at_ms,
                 )
                 collision = _collision_record(client, node)
                 collision_detected = bool(
@@ -881,7 +884,7 @@ def main() -> None:
                             if transition == "COLLISION_DETECTED"
                             else float(depth.center_m)
                         ),
-                        observed_at_ms=decided_at_ms,
+                        observed_at_ms=transition_at_ms,
                         position_ned=positions[node],
                     )
                 decision, future = adapter.execute(
@@ -909,11 +912,11 @@ def main() -> None:
                 if future is not None:
                     futures.append(future)
                 _emit_vehicle_state(
-                    movement_events, client, node, states[node], _now_ms()
+                    movement_events, client, node, states[node]
                 )
                 if (
                     "SAFETY_HOLD" in transitions
-                    and _now_ms() - decided_at_ms
+                    and _now_ms() - transition_at_ms
                     > int(
                         extension["timing_boundaries_ms"][
                             "hold_command_dispatch_deadline"
@@ -950,7 +953,7 @@ def main() -> None:
                 if cell_id not in ledger.completed[node] and cell_id not in ledger.blocked[node]:
                     ledger.mark(node, cell_id, "COMPLETED")
             movement_events.coverage(node=node, observed_at_ms=_now_ms())
-            _emit_vehicle_state(movement_events, client, node, "LANDING", _now_ms())
+            _emit_vehicle_state(movement_events, client, node, "LANDING")
         if survivors:
             _controlled_point_b_land(
                 client=client,
@@ -962,7 +965,7 @@ def main() -> None:
             )
             for node in survivors:
                 states[node] = "LANDED"
-                _emit_vehicle_state(movement_events, client, node, "LANDED", _now_ms())
+                _emit_vehicle_state(movement_events, client, node, "LANDED")
 
         completed_cells = len(set().union(*ledger.completed.values()))
         blocked_cells = len(set().union(*ledger.blocked.values()))
