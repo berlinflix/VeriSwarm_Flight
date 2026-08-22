@@ -141,10 +141,12 @@ cd /Volumes/HyperDrive/Development/VERISWARM_SIH_RESCUE_SECURITY
 
 Open `http://127.0.0.1:5175` and scroll to **Coverage Heatmap & Movement Safety**. The
 movement controls remain fail-closed until the panel says `LEASE LINK LIVE`. First
-startup is intentionally all `HOLD`; select `ALLOW ALL` only after Pratik confirms that
-Unreal, CoSim and the movement-v2 runner are ready.
+startup is intentionally all `HOLD`. Pratik starts Unreal/CoSim and enters Play mode,
+then Abhijan selects `ALLOW ALL`, and only then does Pratik start movement-v2. Starting
+movement-v2 while any vehicle is still `HOLD` correctly fails its preflight.
 
-Pratik separately runs the rescue sender and movement-v2 launcher:
+Pratik separately starts the rescue sender first. After Unreal is ready and Abhijan has
+selected `ALLOW ALL`, he starts the movement-v2 launcher:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\ops\start_pratik_rescue_sender.ps1

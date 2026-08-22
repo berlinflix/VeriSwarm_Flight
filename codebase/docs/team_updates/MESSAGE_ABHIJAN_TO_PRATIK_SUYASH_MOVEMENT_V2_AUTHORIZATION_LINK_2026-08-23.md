@@ -96,17 +96,21 @@ the dashboard on the Mac.
    powershell -ExecutionPolicy Bypass -File .\ops\start_pratik_rescue_sender.ps1
    ```
 
-5. Pratik starts Unreal/CoSim and, in Windows terminal C, runs movement-v2:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\ops\start_pratik_movement_v2.ps1
-   ```
+5. Pratik starts Unreal/CoSim, enters Play mode and confirms that the scene is ready. Do
+   not start movement-v2 while the dashboard still shows `HOLD`; the runner requires
+   `ALLOW` for all five vehicles at preflight.
 
 6. After all operators confirm the scene is safe, Abhijan selects **ALLOW ALL** in the
    dashboard. The CLI equivalent is:
 
    ```bash
    ./ops/set_pratik_movement_authorization.sh ALLOW reviewer_nominal_release all
+   ```
+
+7. Pratik immediately starts movement-v2 in Windows terminal C:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\ops\start_pratik_movement_v2.ps1
    ```
 
 ## Retained qualifications still required
