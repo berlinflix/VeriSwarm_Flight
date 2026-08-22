@@ -1,0 +1,56 @@
+{
+  "schema": "veriswarm.factorycity.sensor_movement_extension.v2",
+  "development_only": true,
+  "base_movement_contract": {
+    "file": "factorycity_joint_movement_contract.development.json",
+    "schema": "veriswarm.factorycity.joint_movement_contract.v1",
+    "sha256": "1932b7e587af7407e1d5bd245c918f4ba5db568cf6575365f28c8b82f2b71770"
+  },
+  "cell_event_extension": {
+    "file": "../../../config/rescue_cell_movement_event_extension.v1.json",
+    "schema": "veriswarm.rescue.event_extension.cell_movement.v1",
+    "sha256": "deb97518aed516d53bc35889a8fd138d9048fa4d14b081664f0136bec7bda752"
+  },
+  "depth_sensor": {
+    "camera": "front_depth",
+    "image_type": "DepthPlanar",
+    "minimum_valid_distance_m": 0.05,
+    "maximum_valid_distance_m": 100.0,
+    "center_band_fraction": 0.34,
+    "minimum_valid_fraction": 0.5
+  },
+  "safety": {
+    "obstacle_stopping_boundary_m": 5.0,
+    "clearance_release_boundary_m": 7.0,
+    "side_deflection_clearance_m": 6.0,
+    "deflection_velocity_mps": 1.0,
+    "deflection_duration_seconds": 0.2,
+    "maximum_cross_track_deflection_m": 3.0,
+    "route_rejoin_lateral_velocity_mps": 1.0,
+    "route_rejoin_tolerance_m": 0.5,
+    "clear_samples_required": 3,
+    "maximum_deflection_attempts": 2
+  },
+  "timing_boundaries_ms": {
+    "authorization_lease_max_age": 2000,
+    "control_loop_period_max": 200,
+    "depth_sample_max_age_at_decision": 250,
+    "hold_command_dispatch_deadline": 400,
+    "movement_transition_durable_enqueue_deadline": 500,
+    "policy_on_any_timing_miss": "HOLD"
+  },
+  "controller_inputs": {
+    "allowed": [
+      "front_depth",
+      "simGetCollisionInfo",
+      "vehicle_state",
+      "immutable route and safety limits",
+      "fresh authorization lease"
+    ],
+    "forbidden": [
+      "evaluation-only obstacle actor coordinates",
+      "survivor ground truth",
+      "post-run evaluator output"
+    ]
+  }
+}
