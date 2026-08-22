@@ -111,6 +111,21 @@ source IP; it does not contact the Jetson/model-hash peers. Pratik runs
 `ops/start_pratik_rescue_sender.ps1`; no rescue bearer token is shared. See
 `../docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_DIRECT_ETHERNET_DATA_HANDOFF_2026-08-22.md`.
 
+For Pratik's authorization-aware movement-v2 runner, use the two-way launcher instead:
+
+```bash
+./ops/start_abhijan_movement_v2_mac.sh
+```
+
+Pratik must first start `ops/start_pratik_authorization_receiver.ps1`. The Mac then
+publishes a complete snapshot containing fresh canonical authorization events for Alpha,
+Bravo, Charlie, Delta and Echo every 500 ms. The dashboard proxies its controls only to
+the loopback policy service at `127.0.0.1:8773`; the browser never talks directly to
+Windows. Missing policy, receiver failure, stale snapshots, invalid data and replay all
+fail closed. The panel reports `LEASE LINK LIVE` only after Windows has accepted a recent
+snapshot. See
+`../docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_SUYASH_MOVEMENT_V2_AUTHORIZATION_LINK_2026-08-23.md`.
+
 The dashboard labels the rescue source explicitly and fails closed when it is not set:
 
 - `LIVE_PRATIK` is set by the two Abhijan launchers and means the collector is receiving

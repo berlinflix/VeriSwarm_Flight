@@ -174,29 +174,28 @@ ops/DEMO_RUNBOOK.md
 
 ## Current blockers
 
-- The accepted contract still freezes one straight route with no deviation and makes
-  depth evaluation-only. Autonomous obstacle deflection requires a coordinated contract
-  revision; it cannot be claimed from this checkpoint.
-- The policy gate and configuration-driven tests are complete, but Pratik's live CoSys
-  controller must still call the gate at every command boundary, execute the returned
-  hover/abort instruction, perform the returned cell reassignments and durably publish the
-  corresponding rescue events. No live authorization-aware flight is claimed yet.
-- The first retained live A-to-B RPC run, transient-HOLD flight and quarantined-Alpha
-  flight remain open simulator qualifications.
-- The dashboard and collector now consume the frozen cell-ID/state fields. The remaining
-  dependency is Pratik's first retained live five-drone stream using those fields.
+- Pratik's movement-v2 code now connects measured depth/collision/vehicle state to
+  command gating, deflection/rejoin, HOLD hover, quarantine hover-land and durable rescue
+  outboxes. Abhijan's reverse five-lease link is also implemented and tested.
+- Pratik must still take the two Windows receiver files from Abhijan commit `c74fb42`.
+- The first retained live A-to-B RPC run, transient-HOLD flight and quarantined-vehicle
+  flight remain open simulator qualifications. No live authorization-aware flight PASS is
+  claimed yet.
+- The dashboard and collector consume the frozen cell-ID/state fields. Their remaining
+  live dependency is Pratik's first retained five-drone stream using those fields.
 - A physical model-hash rerun still operationally requires Alpha, Bravo and Charlie to be
   reachable, Charlie's peer service to be running, and `vs dash` to be started on Alpha.
   This is not a code blocker for the already retained evidence or dashboard.
 
 ## Next checkpoint
 
-- Hand `rescue.movement_security` to Pratik for the live CoSys integration. The controller
-  must supply only normalized authorization plus measured/configured command inputs and
-  must not read `evaluation_truth`.
-- Verify the quarantined-drone case live: no unauthorized motion, Alpha unavailable,
-  unfinished cells reassigned, survivor observations preserved, and authorization,
-  vehicle-state and reassignment events projected through the frozen rescue data plane.
+- Pratik takes `movement_authorization_link.py` and
+  `start_pratik_authorization_receiver.ps1`, starts the receiver before movement-v2 and
+  confirms that its atomic snapshot path matches the runner default.
+- Verify the quarantined-drone case live: no unauthorized motion, selected vehicle
+  unavailable, unfinished cells reassigned, survivor observations preserved, and
+  authorization, vehicle-state and reassignment events projected through the frozen
+  rescue data plane.
 - Retain proof for the normal A-to-B, transient-HOLD and quarantined-Alpha simulator runs;
   report measured outcomes without claiming autonomous obstacle avoidance.
 - Keep attack evidence separate from genuine mission observations and use hidden simulator
@@ -220,3 +219,29 @@ ops/DEMO_RUNBOOK.md
   five-drone events plus one positioned person and one positioned hazard. All five cards,
   the NED map, the analytics view and the vehicle-detail modal rendered without browser
   console errors. Replay mode was verified to say `Coverage Replay` / `REPLAY EVENTS`.
+
+## 2026-08-23 movement-v2 authorization-link checkpoint
+
+- Reviewed Pratik's live movement-v2 implementation `b32f562` and handoff `809af65`, plus
+  Suyash's rescue-integration tip `d0bd417`. The remaining peer task was the reverse
+  Mac-to-Windows authorization refresher, not another movement controller.
+- Published implementation commit `c74fb42` on `codex/abhijan-rescue-security`.
+- Added a fail-closed Mac publisher that emits one fresh canonical `authorization` event
+  for each of Alpha, Bravo, Charlie, Delta and Echo every 500 ms.
+- Added Pratik's source-locked Windows receiver on `192.168.50.11:8772`. It accepts only
+  Abhijan's exact wired address `192.168.50.14`, rejects malformed/stale/future/replayed
+  snapshots and atomically replaces the file consumed by movement-v2.
+- Added restart-safe source sequencing. A missing policy becomes five `HOLD` leases; a
+  corrupt sequence-state file stops allocation instead of restarting IDs.
+- Added a loopback-only Mac policy/control service on `127.0.0.1:8773` and a dashboard
+  panel for per-vehicle/all-vehicle `ALLOW`, `HOLD` and `QUARANTINE` decisions. The panel
+  declares the link live only after a recent Windows acceptance.
+- Kept the control plane separate from Jetson/model-hash qualification and from genuine
+  person/hazard observations. The dashboard never issues CoSim commands directly.
+- Validation:
+  - movement authorization link: `9 passed`;
+  - focused authorization/movement/ingress: `23 passed`;
+  - dashboard regressions: `13 passed`;
+  - Vite production build: passed, `1983` modules transformed.
+- Remaining live work: Pratik takes the receiver files, then retain nominal, transient
+  HOLD and quarantined-vehicle FactoryCity runs. No live movement-v2 PASS is claimed yet.
