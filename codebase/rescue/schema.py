@@ -27,8 +27,45 @@ EVENT_KINDS = frozenset({
     "authorization",
     "task_reassigned",
     "link_state",
+    "movement_safety",
     "mission_completed",
 })
+
+MOVEMENT_SAFETY_EVENTS = frozenset({
+    "OBSTACLE_DETECTED",
+    "SAFETY_HOLD",
+    "DEFLECTION_SELECTED",
+    "ROUTE_REJOINED",
+    "CELL_BLOCKED",
+    "COLLISION_DETECTED",
+})
+MOVEMENT_SAFETY_RESULTS = frozenset({
+    "NON_TERMINAL",
+    "TERMINAL_CELL",
+    "TERMINAL_VEHICLE",
+})
+MOVEMENT_MEASUREMENT_SOURCES = frozenset({
+    "front_depth",
+    "front_depth_and_vehicle_state",
+    "simGetCollisionInfo",
+    "simGetCollisionInfo_and_vehicle_state",
+})
+MOVEMENT_REASON_BY_EVENT = {
+    "OBSTACLE_DETECTED": "depth_below_stopping_boundary",
+    "SAFETY_HOLD": "obstacle_safety_hold",
+    "DEFLECTION_SELECTED": "safe_deflection_selected",
+    "ROUTE_REJOINED": "nominal_route_rejoined",
+    "CELL_BLOCKED": "no_safe_deflection",
+    "COLLISION_DETECTED": "cosys_collision_detected",
+}
+MOVEMENT_RESULT_BY_EVENT = {
+    "OBSTACLE_DETECTED": "NON_TERMINAL",
+    "SAFETY_HOLD": "NON_TERMINAL",
+    "DEFLECTION_SELECTED": "NON_TERMINAL",
+    "ROUTE_REJOINED": "NON_TERMINAL",
+    "CELL_BLOCKED": "TERMINAL_CELL",
+    "COLLISION_DETECTED": "TERMINAL_VEHICLE",
+}
 
 PERSON_CLASS = "person_candidate"
 HAZARD_CLASSES = frozenset({
@@ -42,7 +79,23 @@ HAZARD_CLASSES = frozenset({
 })
 OBSERVATION_CLASSES = frozenset({PERSON_CLASS, *HAZARD_CLASSES})
 MODALITIES = frozenset({"rgb", "thermal", "synthetic_thermal"})
+LOCALIZATION_METHODS = frozenset({
+    "bearing_only",
+    "metric_range",
+    "ray_triangulation",
+    "multi_view_fusion",
+    "external_pose_fusion",
+})
+EVIDENCE_SECURITY_STATES = frozenset({"VERIFIED", "UNVERIFIED", "DISPUTED"})
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+NODE_STREAM_ROLES = {
+    "coverage": frozenset({"telemetry"}),
+    "vehicle_state": frozenset({"telemetry"}),
+    "observation": frozenset({"perception"}),
+    "hazard": frozenset({"fusion"}),
+    "link_state": frozenset({"telemetry"}),
+    "movement_safety": frozenset({"telemetry"}),
+}
 
 
 class RescueEventError(ValueError):
@@ -92,6 +145,38 @@ def _vector(value: Any, field: str, *, length: int) -> list[float]:
     return [_number(item, f"{field}[{index}]") for index, item in enumerate(value)]
 
 
+def _identifier_list(value: Any, field: str, *, maximum: int = 32) -> list[str]:
+    if not isinstance(value, (list, tuple)) or len(value) > maximum:
+        raise RescueEventError(f"{field} must be a list of at most {maximum} identifiers")
+    normalized = [_identifier(item, f"{field}[{index}]") for index, item in enumerate(value)]
+    if len(set(normalized)) != len(normalized):
+        raise RescueEventError(f"{field} must not contain duplicates")
+    return sorted(normalized)
+
+
+def _text_list(value: Any, field: str, *, maximum: int = 32) -> list[str]:
+    if not isinstance(value, (list, tuple)) or len(value) > maximum:
+        raise RescueEventError(f"{field} must be a list of at most {maximum} strings")
+    normalized = [
+        _text(item, f"{field}[{index}]", maximum=256)
+        for index, item in enumerate(value)
+    ]
+    return sorted(set(normalized))
+
+
+def _source_owns_node(source: str, node: str, kind: str) -> bool:
+    """Return whether a producer stream is authorized to speak for its node.
+
+    Exact node sources remain valid for backward compatibility. Role-scoped sources let
+    telemetry, perception and fusion processes keep independent monotonic sequences.
+    """
+    if source == node:
+        return True
+    return any(
+        source == f"{node}.{role}" for role in NODE_STREAM_ROLES.get(kind, ())
+    )
+
+
 def _optional_position(payload: dict[str, Any]) -> None:
     if "position_ned" in payload and payload["position_ned"] is not None:
         payload["position_ned"] = _vector(payload["position_ned"], "position_ned", length=3)
@@ -112,6 +197,12 @@ def _validate_assignment(payload: dict[str, Any]) -> None:
     payload["node"] = _identifier(payload.get("node"), "node")
     payload["sector_id"] = _identifier(payload.get("sector_id"), "sector_id")
     payload["cells_total"] = _integer(payload.get("cells_total"), "cells_total", minimum=1)
+    if "cell_ids" in payload:
+        payload["cell_ids"] = _identifier_list(
+            payload["cell_ids"], "cell_ids", maximum=1024
+        )
+        if len(payload["cell_ids"]) != payload["cells_total"]:
+            raise RescueEventError("cell_ids count must equal cells_total")
 
 
 def _validate_coverage(payload: dict[str, Any]) -> None:
@@ -121,6 +212,30 @@ def _validate_coverage(payload: dict[str, Any]) -> None:
     payload["total_cells"] = _integer(payload.get("total_cells"), "total_cells", minimum=1)
     if payload["visited_cells"] > payload["total_cells"]:
         raise RescueEventError("visited_cells cannot exceed total_cells")
+    cell_fields = (
+        "in_progress_cell_ids",
+        "completed_cell_ids",
+        "blocked_cell_ids",
+    )
+    supplied = [field in payload for field in cell_fields]
+    if any(supplied) and not all(supplied):
+        raise RescueEventError(
+            "cell-level coverage requires in_progress, completed and blocked cell IDs"
+        )
+    if all(supplied):
+        for field in cell_fields:
+            payload[field] = _identifier_list(payload[field], field, maximum=1024)
+        in_progress = set(payload["in_progress_cell_ids"])
+        completed = set(payload["completed_cell_ids"])
+        blocked = set(payload["blocked_cell_ids"])
+        if in_progress & completed or in_progress & blocked or completed & blocked:
+            raise RescueEventError("coverage cell-state lists must be disjoint")
+        if len(completed) != payload["visited_cells"]:
+            raise RescueEventError(
+                "completed_cell_ids count must equal visited_cells"
+            )
+        if len(in_progress | completed | blocked) > payload["total_cells"]:
+            raise RescueEventError("coverage cell-state count exceeds total_cells")
 
 
 def _validate_vehicle_state(payload: dict[str, Any]) -> None:
@@ -163,6 +278,69 @@ def _validate_observation(payload: dict[str, Any]) -> None:
         raise RescueEventError("bbox_norm must satisfy x2>x1 and y2>y1")
     payload["bbox_norm"] = bbox
     _optional_position(payload)
+    if ("camera_id" in payload) != ("camera_calibration_id" in payload):
+        raise RescueEventError(
+            "camera_id and camera_calibration_id must be supplied together"
+        )
+    if "camera_id" in payload:
+        payload["camera_id"] = _identifier(payload["camera_id"], "camera_id")
+        payload["camera_calibration_id"] = _identifier(
+            payload["camera_calibration_id"], "camera_calibration_id"
+        )
+    if "capture_group_id" in payload:
+        payload["capture_group_id"] = _identifier(
+            payload["capture_group_id"], "capture_group_id"
+        )
+    if ("viewpoint_ned" in payload) != ("bearing_ned" in payload):
+        raise RescueEventError("viewpoint_ned and bearing_ned must be supplied together")
+    if "viewpoint_ned" in payload:
+        payload["viewpoint_ned"] = _vector(
+            payload["viewpoint_ned"], "viewpoint_ned", length=3
+        )
+        bearing = _vector(payload["bearing_ned"], "bearing_ned", length=3)
+        bearing_norm = math.sqrt(sum(component**2 for component in bearing))
+        if abs(bearing_norm - 1.0) > 1e-4:
+            raise RescueEventError("bearing_ned must be a unit vector")
+        payload["bearing_ned"] = bearing
+        payload["bearing_uncertainty_deg"] = _number(
+            payload.get("bearing_uncertainty_deg"),
+            "bearing_uncertainty_deg",
+            minimum=0.000001,
+            maximum=45.0,
+        )
+    elif "bearing_uncertainty_deg" in payload:
+        raise RescueEventError("bearing_uncertainty_deg requires viewpoint/bearing data")
+    if "localization_method" in payload:
+        method = payload["localization_method"]
+        if method not in LOCALIZATION_METHODS:
+            raise RescueEventError("unsupported localization_method")
+        if method == "bearing_only" and payload.get("position_ned") is not None:
+            raise RescueEventError("bearing_only localization cannot contain position_ned")
+        if method != "bearing_only" and payload.get("position_ned") is None:
+            raise RescueEventError(f"{method} localization requires position_ned")
+        if method != "bearing_only" and payload.get("uncertainty_m") is None:
+            raise RescueEventError(f"{method} localization requires uncertainty_m")
+    if ("metric_range_m" in payload) != ("range_uncertainty_m" in payload):
+        raise RescueEventError(
+            "metric_range_m and range_uncertainty_m must be supplied together"
+        )
+    if "metric_range_m" in payload:
+        payload["metric_range_m"] = _number(
+            payload["metric_range_m"], "metric_range_m", minimum=0.000001
+        )
+        payload["range_uncertainty_m"] = _number(
+            payload["range_uncertainty_m"], "range_uncertainty_m", minimum=0.0
+        )
+    if "evidence_security" in payload:
+        if payload["evidence_security"] not in EVIDENCE_SECURITY_STATES:
+            raise RescueEventError("unsupported evidence_security state")
+    for field in ("corroborated_sources", "expected_visible_misses"):
+        if field in payload:
+            payload[field] = _identifier_list(payload[field], field)
+    if "security_reasons" in payload:
+        payload["security_reasons"] = _text_list(
+            payload["security_reasons"], "security_reasons"
+        )
 
 
 def _validate_hazard(payload: dict[str, Any]) -> None:
@@ -190,12 +368,51 @@ def _validate_task_reassigned(payload: dict[str, Any]) -> None:
         raise RescueEventError("task reassignment requires different nodes")
     payload["cells_count"] = _integer(payload.get("cells_count"), "cells_count", minimum=1)
     payload["reason"] = _text(payload.get("reason"), "reason", maximum=256)
+    if "cell_ids" in payload:
+        payload["cell_ids"] = _identifier_list(
+            payload["cell_ids"], "cell_ids", maximum=1024
+        )
+        if len(payload["cell_ids"]) != payload["cells_count"]:
+            raise RescueEventError("cell_ids count must equal cells_count")
 
 
 def _validate_link_state(payload: dict[str, Any]) -> None:
     payload["node"] = _identifier(payload.get("node"), "node")
     if payload.get("state") not in {"ONLINE", "DEGRADED", "OFFLINE"}:
         raise RescueEventError("link state must be ONLINE, DEGRADED or OFFLINE")
+
+
+def _validate_movement_safety(payload: dict[str, Any]) -> None:
+    payload["node"] = _identifier(payload.get("node"), "node")
+    payload["cell_id"] = _identifier(payload.get("cell_id"), "cell_id")
+    payload["measurement_source"] = _identifier(
+        payload.get("measurement_source"), "measurement_source"
+    )
+    if payload["measurement_source"] not in MOVEMENT_MEASUREMENT_SOURCES:
+        raise RescueEventError("unsupported movement measurement_source")
+    payload["measured_distance_m"] = _number(
+        payload.get("measured_distance_m"),
+        "measured_distance_m",
+        minimum=0.0,
+    )
+    event_type = payload.get("event_type")
+    if event_type not in MOVEMENT_SAFETY_EVENTS:
+        raise RescueEventError("unsupported movement safety event_type")
+    result = payload.get("result")
+    if result not in MOVEMENT_SAFETY_RESULTS:
+        raise RescueEventError("unsupported movement safety result")
+    reason_code = payload.get("reason_code")
+    expected_reason = MOVEMENT_REASON_BY_EVENT[event_type]
+    expected_result = MOVEMENT_RESULT_BY_EVENT[event_type]
+    if reason_code != expected_reason:
+        raise RescueEventError(
+            f"reason_code for {event_type} must be {expected_reason}"
+        )
+    if result != expected_result:
+        raise RescueEventError(
+            f"result for {event_type} must be {expected_result}"
+        )
+    _optional_position(payload)
 
 
 def _validate_mission_completed(payload: dict[str, Any]) -> None:
@@ -217,6 +434,7 @@ _PAYLOAD_VALIDATORS = {
     "authorization": _validate_authorization,
     "task_reassigned": _validate_task_reassigned,
     "link_state": _validate_link_state,
+    "movement_safety": _validate_movement_safety,
     "mission_completed": _validate_mission_completed,
 }
 
@@ -255,13 +473,19 @@ def validate_rescue_event(
         raise RescueEventError(f"payload is not finite JSON: {error}") from error
     _PAYLOAD_VALIDATORS[kind](payload)
 
-    # Telemetry-producing nodes may speak only for themselves. Mission-manager
-    # events (assignment/authorization/reassignment) intentionally target other
-    # nodes and are excluded from this binding.
-    if kind in {"coverage", "vehicle_state", "observation", "hazard", "link_state"}:
-        if payload["node"] != source:
+    # Node producers may speak only for their own subject. Mission-manager events
+    # (assignment/authorization/reassignment) intentionally target other nodes and are
+    # excluded. Role-scoped sources prevent independent producer sequence collisions.
+    if kind in NODE_STREAM_ROLES:
+        if not _source_owns_node(source, payload["node"], kind):
             raise RescueEventError(
-                f"source/payload node mismatch: source={source}, node={payload['node']}"
+                "source is not an authorized stream for payload node: "
+                f"source={source}, node={payload['node']}, kind={kind}"
+            )
+    if kind == "observation" and payload.get("corroborated_sources"):
+        if payload["node"] not in payload["corroborated_sources"]:
+            raise RescueEventError(
+                "corroborated_sources must include the observation-producing node"
             )
 
     return {

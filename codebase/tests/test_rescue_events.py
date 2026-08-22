@@ -114,8 +114,74 @@ def test_collector_rejects_another_mission(tmp_path):
 def test_telemetry_source_must_match_payload_node(tmp_path):
     collector = RescueCollector("OP-VARUNA-001", tmp_path / "rescue.jsonl")
     event = _event("observation", _observation(node="bravo"), source="alpha")
-    with pytest.raises(RescueEventError, match="source/payload node mismatch"):
+    with pytest.raises(RescueEventError, match="not an authorized stream"):
         collector.collect(event)
+
+
+@pytest.mark.parametrize(
+    "kind, source, payload",
+    [
+        (
+            "observation",
+            "alpha.perception",
+            _observation(node="alpha", observation_id="role-source-person"),
+        ),
+        (
+            "coverage",
+            "alpha.telemetry",
+            {
+                "node": "alpha",
+                "sector_id": "sector-a",
+                "visited_cells": 2,
+                "total_cells": 10,
+            },
+        ),
+        (
+            "hazard",
+            "alpha.fusion",
+            {
+                "node": "alpha",
+                "hazard_id": "fire-1",
+                "class_id": "fire",
+                "confidence": 0.9,
+                "position_ned": [1.0, 2.0, 0.0],
+                "uncertainty_m": 1.0,
+            },
+        ),
+    ],
+)
+def test_role_scoped_node_sources_have_independent_sequences(kind, source, payload):
+    event = validate_rescue_event(_event(kind, payload, source=source, seq=1))
+    assert event["source"] == source
+
+
+@pytest.mark.parametrize(
+    "kind, source",
+    [
+        ("observation", "alpha.telemetry"),
+        ("coverage", "alpha.perception"),
+        ("hazard", "bravo.fusion"),
+    ],
+)
+def test_wrong_role_or_node_cannot_publish_node_events(kind, source):
+    payloads = {
+        "observation": _observation(node="alpha"),
+        "coverage": {
+            "node": "alpha",
+            "sector_id": "sector-a",
+            "visited_cells": 2,
+            "total_cells": 10,
+        },
+        "hazard": {
+            "node": "alpha",
+            "hazard_id": "fire-1",
+            "class_id": "fire",
+            "confidence": 0.9,
+            "position_ned": [1.0, 2.0, 0.0],
+        },
+    }
+    with pytest.raises(RescueEventError, match="not an authorized stream"):
+        validate_rescue_event(_event(kind, payloads[kind], source=source, seq=1))
 
 
 def test_nearby_person_observations_merge_and_retain_sources(tmp_path):

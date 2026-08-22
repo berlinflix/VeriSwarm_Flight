@@ -12,6 +12,12 @@ It replaces repeated chat confirmations; it is not an approval system.
   changes, or when a real blocker appears.
 - At the start of a work session and before changing a shared interface, fetch and
   inspect the latest team-update commits.
+- During an active integration sprint, check the central inbox branch at least every
+  30 minutes, before a rehearsal and before pushing an interface change:
+  `origin/suyash/sih26177-rescue-integration`.
+- Abhijan follows this same cadence. His primary inbox is the Suyash integration branch;
+  he also checks `git log --all -- codebase/docs/team_updates` for teammate-owned status
+  and message commits.
 - A status commit records progress. It does not freeze inputs or require another
   confirmation.
 
@@ -43,6 +49,13 @@ git fetch origin
 git log --oneline --all -- codebase/docs/team_updates
 ```
 
+Check only the central integration inbox:
+
+```text
+git log --oneline origin/suyash/sih26177-rescue-integration -- \
+  codebase/docs/team_updates
+```
+
 Read a message without switching branches:
 
 ```text
@@ -56,6 +69,10 @@ git add codebase/docs/team_updates/STATUS_<NAME>.md <actual-work-files>
 git commit -m "status(<name>): <checkpoint>"
 git push
 ```
+
+Each owner records `last_inbox_commit_seen` in their own status file. Reading a routine
+message does not require an acknowledgement commit or chat reply. Commit only actual
+progress, an interface decision or a real blocker.
 
 ## What belongs in Git
 

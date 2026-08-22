@@ -12,14 +12,15 @@ import {
   ShieldCheck,
   ShieldX,
   TerminalSquare,
-  Video,
-  Wifi,
   X,
   Zap,
 } from "lucide-react";
 import flightDrone from "./assets/flight-drone.png";
+import { buildCellMissionView } from "./cellMissionView.js";
+import { buildMissionMap } from "./missionMap.js";
+import { isApprovedCleanEvidence } from "./modelHashQualification.js";
 
-const liveFeedUrl = import.meta.env.VITE_DRONE_STREAM_URL;
+const pratikTopViewUrl = import.meta.env.VITE_PRATIK_TOP_VIEW_URL;
 const QUALIFICATION_VIEW_KEY = "veriswarm.qualification.proof.v1";
 
 const scenarios = {
@@ -225,48 +226,60 @@ const attackControls = [
 
 const baseDrones = [
   {
+    id: "DELTA",
+    serial: "DELTA",
+    role: "CoSys rescue vehicle",
+    endpoint: "cosys://delta",
+    slot: -2,
+  },
+  {
     id: "ALPHA",
     serial: "ALPHA",
-    alt: 50,
-    spd: 35,
-    bat: 85,
-    role: "OP-TEE originator",
-    hash: "awaiting receipt",
-    endpoint: "192.168.50.10",
-    trust: "100%",
-    latency: "12.4ms",
-    signer: "OP-TEE VERIFIED",
-    x: "-92%",
+    role: "CoSys rescue vehicle",
+    endpoint: "cosys://alpha",
+    slot: -1,
   },
   {
     id: "BRAVO",
     serial: "BRAVO",
-    alt: 50,
-    spd: 35,
-    bat: 85,
-    role: "semantic peer",
-    hash: "policy verifier",
-    endpoint: "192.168.50.12",
-    trust: "98%",
-    latency: "14.1ms",
-    signer: "MISSION CA VERIFIED",
-    x: "0%",
+    role: "CoSys rescue vehicle",
+    endpoint: "cosys://bravo",
+    slot: 0,
   },
   {
     id: "CHARLIE",
     serial: "CHARLIE",
-    alt: 49,
-    spd: 33,
-    bat: 81,
-    role: "semantic peer",
-    hash: "policy verifier",
-    endpoint: "192.168.50.13",
-    trust: "96%",
-    latency: "15.7ms",
-    signer: "MISSION CA VERIFIED",
-    x: "92%",
+    role: "CoSys rescue vehicle",
+    endpoint: "cosys://charlie",
+    slot: 1,
+  },
+  {
+    id: "ECHO",
+    serial: "ECHO",
+    role: "CoSys rescue vehicle",
+    endpoint: "cosys://echo",
+    slot: 2,
   },
 ];
+
+const deckOffset = {
+  [-2]: "-200%",
+  [-1]: "-100%",
+  0: "0%",
+  1: "100%",
+  2: "200%",
+};
+
+function metricValue(value, suffix = "") {
+  return Number.isFinite(value) ? `${Math.round(value)}${suffix}` : "—";
+}
+
+function nedLabel(position) {
+  if (!Array.isArray(position) || position.length !== 3 || !position.every((value) => Number.isFinite(Number(value)))) {
+    return "—";
+  }
+  return position.map((value) => Number(value).toFixed(1)).join(", ");
+}
 
 function toneClass(tone) {
   return {
@@ -431,17 +444,13 @@ function useModelHashQualification() {
     setRunError(null);
     try {
       const cleanEvidence = proof?.clean?.evidence;
-      const cleanPassed = cleanEvidence?.actual?.outcome === "ACCEPTED"
-        && Number(cleanEvidence?.actual?.semantic_acks ?? 0) >= 2;
+      const cleanPassed = isApprovedCleanEvidence(cleanEvidence);
       if (!cleanPassed) {
         setProof(null);
         setRunningStage("clean");
         const clean = await runCase("clean");
         setProof({ clean, attack: null });
-        if (
-          clean.evidence.actual?.outcome !== "ACCEPTED"
-          || Number(clean.evidence.actual?.semantic_acks ?? 0) < 2
-        ) {
+        if (!isApprovedCleanEvidence(clean.evidence)) {
           throw new Error("clean_baseline_gate_failed");
         }
       } else {
@@ -521,17 +530,18 @@ function CursorGravity() {
 }
 
 function DroneCard({ drone, index, activeCard, setActiveCard, onSelect }) {
-  const isCenter = index === 1;
+  const isCenter = drone.slot === 0;
   const isActive = activeCard === index;
   const hasActiveCard = activeCard !== null;
+  const depth = 3 - Math.abs(drone.slot);
   return (
     <motion.article
       className={`drone-card ${isActive ? "active" : ""} ${hasActiveCard && !isActive ? "receded" : ""}`}
-      style={{ zIndex: isActive ? 20 : isCenter ? 2 : 1 }}
+      style={{ zIndex: isActive ? 20 : depth }}
       initial={false}
       animate={{
-        x: drone.x,
-        y: isActive ? -18 : isCenter ? -6 : 8,
+        x: deckOffset[drone.slot],
+        y: isActive ? -18 : isCenter ? -7 : -Math.abs(drone.slot) * 2,
         scale: isActive ? 1.055 : hasActiveCard ? 0.985 : 1,
       }}
       transition={{ type: "spring", stiffness: 165, damping: 22, mass: 0.8 }}
@@ -553,22 +563,22 @@ function DroneCard({ drone, index, activeCard, setActiveCard, onSelect }) {
       <div className="drone-glass">
         <div className="card-header">
           <div>
-            <span className="node-kicker">TRUSTED NODE</span>
+            <span className="node-kicker">SIMULATED VEHICLE</span>
             <h2>{drone.id}</h2>
           </div>
-          <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.online ? "READY" : "UNVERIFIED"}</span>
+          <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.status}</span>
         </div>
         <div className="telemetry-cluster">
-          <div><span>ALTITUDE</span><b><AnimatedMetric value={drone.alt} suffix="m" /></b></div>
-          <div><span>SPEED</span><b><AnimatedMetric value={drone.spd} suffix="kph" /></b></div>
-          <div><span>BATTERY</span><b><AnimatedMetric value={drone.bat} suffix="%" /></b></div>
+          <div><span>ALTITUDE</span><b>{Number.isFinite(drone.alt) ? <AnimatedMetric value={drone.alt} suffix="m" /> : "—"}</b></div>
+          <div><span>STATE</span><b className="state-metric">{drone.vehicleState ?? "—"}</b></div>
+          <div><span>BATTERY</span><b>{Number.isFinite(drone.bat) ? <AnimatedMetric value={drone.bat} suffix="%" /> : "—"}</b></div>
         </div>
         <div className="signal-band" aria-hidden="true">
           {Array.from({ length: 18 }).map((_, bar) => <i key={bar} style={{ height: `${18 + ((bar * 17) % 34)}%` }} />)}
         </div>
         <div className="card-meta">
-          <span>{drone.role}</span>
-          <span className="hash-value">{drone.hash}</span>
+          <span>{drone.linkState}</span>
+          <span className="coverage-value">{drone.completedCells}/{drone.totalCells} CELLS</span>
         </div>
       </div>
     </motion.article>
@@ -590,12 +600,12 @@ function DroneDetailsModal({ drone, onClose }) {
   }, [onClose]);
 
   const details = [
-    ["Mesh endpoint", drone.endpoint],
-    ["Swarm role", drone.role],
-    ["Identity signer", drone.signer],
-    ["Runtime hash", drone.hash],
-    ["Trust score", drone.trust],
-    ["Link latency", drone.latency],
+    ["Simulation endpoint", drone.endpoint],
+    ["Simulation role", drone.role],
+    ["NED position (N, E, D)", nedLabel(drone.position)],
+    ["Link state", drone.linkState],
+    ["Owned cells", drone.cellIds.length ? drone.cellIds.join(", ") : "—"],
+    ["Blocked cells", String(drone.blockedCells)],
   ];
 
   return (
@@ -620,12 +630,12 @@ function DroneDetailsModal({ drone, onClose }) {
       >
         <div className="modal-drone-header">
           <div>
-            <span className="node-kicker">TRUSTED SWARM NODE</span>
+            <span className="node-kicker">PRATIK COSYS SIMULATION VEHICLE</span>
             <h2 id={`drone-modal-${drone.id}`}>{drone.id}</h2>
-            <p>{drone.role} · encrypted Ethernet mesh</p>
+            <p>{drone.role} · retained rescue telemetry</p>
           </div>
           <div className="modal-header-actions">
-            <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.online ? "READY" : "UNVERIFIED"}</span>
+            <span className={`node-online ${drone.online ? "" : "unverified"}`}><i /> {drone.status}</span>
             <button className="modal-close" onClick={onClose} aria-label="Close drone details" autoFocus>
               <X size={19} />
             </button>
@@ -633,9 +643,9 @@ function DroneDetailsModal({ drone, onClose }) {
         </div>
 
         <div className="modal-telemetry">
-          <div><span>ALTITUDE</span><b>{drone.alt}m</b></div>
-          <div><span>GROUND SPEED</span><b>{drone.spd}kph</b></div>
-          <div><span>BATTERY</span><b>{drone.bat}%</b></div>
+          <div><span>ALTITUDE</span><b>{metricValue(drone.alt, "m")}</b></div>
+          <div><span>MISSION STATE</span><b>{drone.vehicleState ?? "—"}</b></div>
+          <div><span>BATTERY</span><b>{metricValue(drone.bat, "%")}</b></div>
         </div>
 
         <div className="modal-detail-grid">
@@ -648,9 +658,9 @@ function DroneDetailsModal({ drone, onClose }) {
         </div>
 
         <div className="modal-signal-row">
-          <span>SECURE TELEMETRY CHANNEL</span>
+          <span>SIMULATION TELEMETRY CHANNEL</span>
           <div aria-hidden="true">{Array.from({ length: 22 }).map((_, index) => <i key={index} style={{ height: `${8 + ((index * 19) % 25)}px` }} />)}</div>
-          <b>LINK NOMINAL</b>
+          <b>{drone.linkState}</b>
         </div>
         <p className="modal-dismiss-hint">Click outside this card or press ESC to return to command view.</p>
       </motion.section>
@@ -658,19 +668,39 @@ function DroneDetailsModal({ drone, onClose }) {
   );
 }
 
-function DroneDeck({ proof, backend }) {
+function DroneDeck({ rescue }) {
   const [activeCard, setActiveCard] = useState(null);
   const [selectedDrone, setSelectedDrone] = useState(null);
-  const dashboardProof = proof?.attack?.evidence?.dashboard_proof;
-  const drones = baseDrones.map((drone) => ({
-    ...drone,
-    online: backend.ready,
-    hash: dashboardProof
-      ? drone.id === "ALPHA"
-        ? shortHash(dashboardProof.observed_model_sha256)
-        : shortHash(dashboardProof.approved_model_sha256)
-      : drone.hash,
-  }));
+  const missionView = useMemo(
+    () => buildCellMissionView(rescue.state, rescue.movementConfig),
+    [rescue.state, rescue.movementConfig],
+  );
+  const coverageByDrone = new Map((missionView.byDrone ?? []).map((item) => [item.node.toUpperCase(), item]));
+  const projectedVehicles = new Map(
+    (rescue?.state?.vehicles ?? []).map((vehicle) => [String(vehicle.node).toUpperCase(), vehicle]),
+  );
+  const drones = baseDrones.map((drone) => {
+    const vehicle = projectedVehicles.get(drone.id);
+    const position = vehicle?.position_ned;
+    const altitude = Array.isArray(position) && Number.isFinite(Number(position[2]))
+      ? Math.abs(Number(position[2]))
+      : null;
+    const coverage = coverageByDrone.get(drone.id);
+    return {
+      ...drone,
+      alt: altitude,
+      bat: Number.isFinite(Number(vehicle?.battery_pct)) ? Number(vehicle.battery_pct) : null,
+      online: Boolean(vehicle) && vehicle.link_state !== "OFFLINE",
+      status: vehicle?.state ?? "AWAITING",
+      vehicleState: vehicle?.state ?? null,
+      position,
+      linkState: vehicle?.link_state ?? "AWAITING LINK",
+      cellIds: coverage?.cellIds ?? [],
+      completedCells: coverage?.completed ?? 0,
+      blockedCells: coverage?.blocked ?? 0,
+      totalCells: coverage?.cellIds?.length ?? 0,
+    };
+  });
   return (
     <>
       <section className="drone-deck">
@@ -688,7 +718,7 @@ function DroneDeck({ proof, backend }) {
           />
         ))}
         <div className="deck-caption">
-          SELECT A NODE · ALPHA / BRAVO / CHARLIE · {backend.ready ? "QUALIFIER READY" : "LINK UNVERIFIED"}
+          PRATIK FIVE-DRONE SIMULATION · DELTA / ALPHA / BRAVO / CHARLIE / ECHO · {rescue?.state ? "RETAINED TELEMETRY LIVE" : "AWAITING SIMULATION EVENTS"}
         </div>
       </section>
       <AnimatePresence>
@@ -698,45 +728,97 @@ function DroneDeck({ proof, backend }) {
   );
 }
 
-function RealTimeView({ scenario }) {
-  const [feedFailed, setFeedFailed] = useState(false);
-  const showFeed = Boolean(liveFeedUrl) && !feedFailed;
+function RealTimeView({ rescue }) {
+  const [topViewFailed, setTopViewFailed] = useState(false);
+  const missionView = useMemo(
+    () => buildCellMissionView(rescue.state, rescue.movementConfig),
+    [rescue.state, rescue.movementConfig],
+  );
+  const missionMap = useMemo(
+    () => buildMissionMap(missionView, rescue.movementConfig, rescue.state?.vehicles ?? []),
+    [missionView, rescue.movementConfig, rescue.state?.vehicles],
+  );
+  const showTopView = Boolean(pratikTopViewUrl) && !topViewFailed;
+  const eventCount = Number(rescue.state?.events_applied ?? 0);
   return (
     <section className="capsule">
       <div className="panel-heading">
         <div>
-          <span className="section-kicker">ETHERNET INGEST</span>
-          <div className="panel-title">Real-Time View</div>
+          <span className="section-kicker">PRATIK SIMULATION · NED TOP VIEW</span>
+          <div className="panel-title">Live Coverage Map</div>
         </div>
-        <span className={`feed-state ${showFeed ? "connected" : "standby"}`}>
-          <i /> {showFeed ? "LIVE" : "AWAITING FEED"}
+        <span className={`feed-state ${rescue.state ? "connected" : "standby"}`}>
+          <i /> {rescue.state ? "LIVE EVENTS" : "AWAITING EVENTS"}
         </span>
       </div>
-      <div className="camera-shell">
-        <div className="camera-stage">
-          {showFeed ? (
+      <div className="mission-map-shell">
+        <div className="mission-map-stage">
+          {showTopView && (
             <img
-              className="live-feed"
-              src={liveFeedUrl}
-              alt="Live drone simulation feed"
-              onError={() => setFeedFailed(true)}
+              className="mission-top-view-bg"
+              src={pratikTopViewUrl}
+              alt="Pratik simulation top-view background"
+              onError={() => setTopViewFailed(true)}
             />
+          )}
+          {missionMap.ready ? (
+            <svg
+              className="mission-map-svg"
+              viewBox={`0 0 ${missionMap.width} ${missionMap.height}`}
+              preserveAspectRatio="xMidYMid slice"
+              role="img"
+              aria-label="Live Pratik simulation coverage heatmap"
+            >
+              <defs>
+                <pattern id="ned-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(148,163,184,0.12)" strokeWidth="1" />
+                </pattern>
+              </defs>
+              <rect width={missionMap.width} height={missionMap.height} fill="url(#ned-grid)" />
+              <text className="map-axis-label" x="22" y="26">N ↑</text>
+              <text className="map-axis-label" x={missionMap.width - 50} y={missionMap.height - 18}>E →</text>
+              {missionMap.cells.map((cell) => (
+                <g key={cell.id}>
+                  <polygon
+                    className={`map-cell state-${cell.state.toLowerCase()}`}
+                    points={cell.points}
+                  >
+                    <title>{cell.id} · {cell.state} · owner {cell.owner ?? "unknown"}</title>
+                  </polygon>
+                  <text className="map-cell-label" x={cell.label.x} y={cell.label.y + 3} textAnchor="middle">
+                    {cell.id.replace("route_cell_", "")}
+                  </text>
+                </g>
+              ))}
+              <g className="map-endpoint start" transform={`translate(${missionMap.start.x} ${missionMap.start.y})`}>
+                <circle r="12" /><text textAnchor="middle" y="4">A</text>
+              </g>
+              <g className="map-endpoint end" transform={`translate(${missionMap.end.x} ${missionMap.end.y})`}>
+                <circle r="12" /><text textAnchor="middle" y="4">B</text>
+              </g>
+              {missionMap.vehicles.map((vehicle) => (
+                <g key={vehicle.node} className="map-vehicle" transform={`translate(${vehicle.x} ${vehicle.y})`}>
+                  <circle className="map-vehicle-pulse" r="15" />
+                  <circle r="6" />
+                  <text x="11" y="4">{String(vehicle.node).toUpperCase()}</text>
+                  <title>{String(vehicle.node).toUpperCase()} · {vehicle.state ?? "state unavailable"}</title>
+                </g>
+              ))}
+            </svg>
           ) : (
-            <div className="feed-placeholder">
-              <Video size={30} />
-              <b>PRATIK SIMULATION FEED</b>
-              <span>Connect the Ethernet stream bridge to populate this viewport.</span>
+            <div className="map-placeholder">
+              <b>IMMUTABLE MAP CONFIGURATION UNAVAILABLE</b>
+              <span>The dashboard will not invent route cells or vehicle coordinates.</span>
             </div>
           )}
-          <div className="feed-overlay">
-            <span><Wifi size={13} /> ETH0</span>
-            <span>COSYS-AIRSIM / RPC 41451</span>
+          <div className="map-source-badge">
+            <span>{showTopView ? "PRATIK TOP VIEW + NED OVERLAY" : "NED EVENT OVERLAY"}</span>
+            <b>{missionMap.vehicles.length}/5 POSITIONED</b>
           </div>
-            <div className="scanline" />
         </div>
         <div className="feed-footer">
-          <span><Server size={14} /> SOURCE: {liveFeedUrl ? "VITE_DRONE_STREAM_URL" : "NOT CONFIGURED"}</span>
-          <b>{scenario.reason}</b>
+          <span><Server size={14} /> SOURCE: PRATIK COSYS RETAINED RESCUE EVENTS</span>
+          <b>{rescue.state ? `${eventCount} EVENTS APPLIED` : "AWAITING STATE"}</b>
         </div>
       </div>
     </section>
@@ -776,6 +858,32 @@ function useLiveTelemetry() {
 function useRescueMission() {
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
+  const [movementConfig, setMovementConfig] = useState(null);
+  const [configError, setConfigError] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    const loadConfig = async () => {
+      try {
+        const response = await fetch("/api/rescue/config", { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || !payload.config) {
+          throw new Error(payload.error ?? "movement_config_unavailable");
+        }
+        if (active) {
+          setMovementConfig(payload.config);
+          setConfigError(null);
+        }
+      } catch (requestError) {
+        if (active) {
+          setMovementConfig(null);
+          setConfigError(requestError.message);
+        }
+      }
+    };
+    loadConfig();
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -805,7 +913,7 @@ function useRescueMission() {
     };
   }, []);
 
-  return { state, error };
+  return { state, error, movementConfig, configError };
 }
 
 function RescueMission({ rescue }) {
@@ -849,6 +957,123 @@ function RescueMission({ rescue }) {
             <b>{missionOnline ? "No active rescue alerts" : "No rescue state is being fabricated"}</b>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function CellMovementPanel({ rescue }) {
+  const view = useMemo(
+    () => buildCellMissionView(rescue.state, rescue.movementConfig),
+    [rescue.state, rescue.movementConfig],
+  );
+  const recentMovement = view.movement.slice(-4).reverse();
+  const validationLabel = !view.ready
+    ? "CONFIGURATION HOLD"
+    : view.issues.length
+      ? `VALIDATION HOLD · ${view.issues.length} ISSUE${view.issues.length === 1 ? "" : "S"}`
+      : rescue.state
+        ? "REPLAYABLE CELL STATE"
+        : "WAITING FOR CELL EVENTS";
+  return (
+    <section className={`cell-movement-panel ${view.issues.length ? "has-conflicts" : ""}`}>
+      <div className="cell-panel-heading">
+        <div>
+          <span className="section-kicker">READ-ONLY FACTORYCITY CELL EVIDENCE</span>
+          <div className="panel-title">Coverage Heatmap & Movement Safety</div>
+        </div>
+        <span className={`cell-validation ${view.issues.length ? "invalid" : ""}`}>
+          <i /> {validationLabel}
+        </span>
+      </div>
+
+      <div className="cell-scoreboard" aria-label="Exact cell scoreboard">
+        <div><span>ASSIGNED</span><b>{view.scoreboard.assigned}</b></div>
+        <div><span>IN PROGRESS</span><b>{view.scoreboard.inProgress}</b></div>
+        <div><span>COMPLETED</span><b>{view.scoreboard.completed}</b></div>
+        <div><span>BLOCKED</span><b>{view.scoreboard.blocked}</b></div>
+        <div><span>CONFLICTS</span><b>{view.scoreboard.conflicts}</b></div>
+      </div>
+
+      <div className="drone-coverage-grid" aria-label="Five-drone coverage breakdown">
+        {(view.byDrone ?? []).map((drone) => (
+          <div key={drone.node} className={`drone-coverage-row node-${drone.node}`}>
+            <div className="drone-coverage-heading">
+              <b>{drone.node.toUpperCase()}</b>
+              <span>{drone.completed}/{drone.cellIds.length} COMPLETE</span>
+            </div>
+            <div className="drone-cell-chips">
+              {view.cells.filter((cell) => cell.owner === drone.node).map((cell) => (
+                <span
+                  key={cell.id}
+                  className={`state-${cell.state.toLowerCase()}`}
+                  title={`${cell.id} · ${cell.state}`}
+                >
+                  {cell.id.replace("route_cell_", "")}
+                </span>
+              ))}
+            </div>
+            <small>{drone.inProgress} ACTIVE · {drone.blocked} BLOCKED · {drone.conflicts} CONFLICT</small>
+          </div>
+        ))}
+      </div>
+
+      <div className="cell-content-grid">
+        <div className="cell-heatmap-wrap">
+          <div className="cell-heatmap" role="img" aria-label="Route cells colored only from exact retained cell ID evidence">
+            {view.cells.map((cell) => (
+              <div
+                key={cell.id}
+                className={`route-cell state-${cell.state.toLowerCase()}`}
+                style={{ flexGrow: cell.widthPercent, flexBasis: 0 }}
+                title={`${cell.id} · ${cell.state} · owner ${cell.owner ?? "unknown"}`}
+              >
+                <b>{cell.id.replace("route_cell_", "")}</b>
+                <span>{cell.owner ?? "—"}</span>
+              </div>
+            ))}
+          </div>
+          <div className="cell-legend">
+            <span className="legend-assigned">ASSIGNED</span>
+            <span className="legend-progress">IN PROGRESS</span>
+            <span className="legend-completed">COMPLETED</span>
+            <span className="legend-blocked">BLOCKED</span>
+            <span className="legend-conflict">CONFLICT / UNKNOWN</span>
+          </div>
+          {view.issues.length > 0 && (
+            <div className="cell-issues" aria-live="polite">
+              {view.issues.slice(0, 3).map((issue) => (
+                <span key={`${issue.code}:${issue.cellId ?? "none"}:${issue.detail ?? ""}`}>
+                  {issue.code}{issue.cellId ? ` · ${issue.cellId}` : ""}
+                </span>
+              ))}
+              {view.issues.length > 3 && <span>+{view.issues.length - 3} MORE RETAINED VALIDATION ISSUES</span>}
+            </div>
+          )}
+        </div>
+
+        <div className="movement-ledger">
+          <div className="movement-ledger-title">
+            <span>MOVEMENT-SAFETY EVIDENCE</span>
+            <b>{view.movement.length} TRANSITIONS</b>
+          </div>
+          {recentMovement.length ? recentMovement.map((event) => (
+            <div key={event.event_id} className={`movement-row result-${String(event.result).toLowerCase()}`}>
+              <div>
+                <span>{String(event.node).toUpperCase()} · {event.cell_id}</span>
+                <b>{String(event.event_type).replaceAll("_", " ")}</b>
+              </div>
+              <div>
+                <strong>{event.terminalLabel}</strong>
+                <small>{Number(event.measured_distance_m).toFixed(2)}m · {event.measurement_source}</small>
+              </div>
+            </div>
+          )) : (
+            <div className="movement-empty">
+              Retained obstacle, hold, deflection, rejoin, blockage and collision transitions will appear here.
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -962,8 +1187,7 @@ function AttackSystems({ qualification }) {
   const attackEvidence = proof?.attack?.evidence;
   const dashboardProof = attackEvidence?.dashboard_proof;
   const visibleProof = dashboardProof ?? cleanEvidence?.dashboard_proof;
-  const cleanPassed = cleanEvidence?.actual?.outcome === "ACCEPTED"
-    && Number(cleanEvidence?.actual?.semantic_acks ?? 0) >= 2;
+  const cleanPassed = isApprovedCleanEvidence(cleanEvidence);
   const pending = Boolean(runningStage);
   const status = pending
     ? { message: runningStage === "clean" ? "VERIFYING CLEAN BASELINE" : "RUNNING MODEL-HASH ATTACK", tone: "pending" }
@@ -1080,18 +1304,25 @@ function EvidenceStrip({ scenario, qualification }) {
   const attackEvidence = qualification?.proof?.attack?.evidence;
   const dashboardProof = attackEvidence?.dashboard_proof;
   const cleanProof = cleanEvidence?.dashboard_proof;
+  const cleanPassed = isApprovedCleanEvidence(cleanEvidence);
   const items = dashboardProof ? [
     ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
     ["Attack ACKs", `${attackEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, Binary],
     ["Peer verdict", `${attackEvidence?.actual?.disputes ?? 0}/2 DISPUTE`, ShieldX],
     ["Safety response", attackEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD + QUARANTINE", ShieldCheck],
     ["Retained proof", dashboardProof.proof_valid ? "VERIFIED · UNAPPROVED HASH" : "VERIFICATION FAILED", Fingerprint],
-  ] : cleanProof ? [
+  ] : cleanPassed ? [
     ["Approved provenance", cleanProof.proof_valid ? "VERIFIED" : "FAILED", Fingerprint],
     ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
     ["Model-hash attack", "NOT RUN", Binary],
     ["Safety state", cleanEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD · NO MOTION", ShieldCheck],
     ["Next step", "RUN MODEL-HASH ATTACK", Activity],
+  ] : cleanProof ? [
+    ["Approved provenance", "VERIFICATION FAILED", ShieldX],
+    ["Clean baseline", "FAILED CLOSED", ShieldX],
+    ["Model-hash attack", "LOCKED", Binary],
+    ["Safety state", "HOLD · NO MOTION", ShieldCheck],
+    ["Next step", "RERUN APPROVED BASELINE", Activity],
   ] : [
     ["Provenance", scenario.provenance, Fingerprint],
     ["Semantic ACK", String(scenario.semanticAcks), Binary],
@@ -1135,6 +1366,7 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
   const analyticsOpacity = useTransform(progress, [0, 0.34, 0.58, 1], [0, 0, 1, 1]);
   const analyticsY = useTransform(progress, [0.28, 0.6, 1], ["22vh", "0vh", "0vh"]);
   const analyticsScale = useTransform(progress, [0.28, 0.62, 1], [0.94, 1, 1]);
+  const analyticsPointerEvents = useTransform(progress, (value) => (value >= 0.72 ? "auto" : "none"));
   const transitionTitleOpacity = useTransform(progress, [0, 0.16, 0.48, 0.64], [0, 1, 1, 0]);
   const transitionTitleY = useTransform(progress, [0, 0.46, 0.66], [28, 0, -28]);
 
@@ -1166,7 +1398,7 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
 
         <motion.div
           className="analytics-screen"
-          style={{ opacity: analyticsOpacity, y: analyticsY, scale: analyticsScale }}
+          style={{ opacity: analyticsOpacity, y: analyticsY, scale: analyticsScale, pointerEvents: analyticsPointerEvents }}
         >
           <div className="analytics-intro">
             <div>
@@ -1179,6 +1411,8 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue }) {
           <EvidenceStrip scenario={scenario} qualification={qualification} />
 
           <RescueMission rescue={rescue} />
+
+          <CellMovementPanel rescue={rescue} />
 
           <div className="lower-zone">
             <div className="lower-aurora" aria-hidden="true" />
@@ -1225,8 +1459,8 @@ export default function App() {
         </header>
 
         <section className="upper-tier">
-          <DroneDeck proof={qualification.proof} backend={qualification.backend} />
-          <RealTimeView scenario={scenario} />
+          <DroneDeck rescue={rescue} />
+          <RealTimeView rescue={rescue} />
         </section>
 
         <div className="scroll-cue" aria-hidden="true">

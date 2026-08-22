@@ -1,0 +1,26 @@
+{
+  "schema": "veriswarm.factorycity.camera_profile.v1",
+  "view_mode": "SpringArmChase",
+  "cameras": {
+    "front_rgb": {
+      "position_ned_m": [1.0, 0.0, -0.25],
+      "rotation_rpy_deg": [0.0, 0.0, 0.0],
+      "capture": {
+        "image_type": 0,
+        "width": 640,
+        "height": 360,
+        "fov_degrees": 90.0
+      }
+    },
+    "front_depth": {
+      "position_ned_m": [1.0, 0.0, -0.25],
+      "rotation_rpy_deg": [0.0, 0.0, 0.0],
+      "capture": {
+        "image_type": 1,
+        "width": 640,
+        "height": 360,
+        "fov_degrees": 90.0
+      }
+    }
+  }
+}

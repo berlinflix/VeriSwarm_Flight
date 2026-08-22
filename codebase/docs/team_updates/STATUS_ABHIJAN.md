@@ -4,11 +4,11 @@ Updated: 2026-08-22 IST
 
 Branch: `codex/abhijan-rescue-security`
 
-Integration base in this branch: `origin/suyash/sih26177-rescue-integration` at `e939121`
+Integration base in this branch: `origin/suyash/sih26177-rescue-integration` at `0f7cb7f`
 
-Latest upstream reviewed: `ef56941` (movement freeze); branch tip `437c329` was also
-checked and contains a Samik-only video-evaluation handoff with no replacement Abhijan
-instruction.
+Latest upstream reviewed: `0f7cb7f` (Pratik contract accepted; movement tests and
+dashboard proof-valid gate requested). The accepted Pratik commits are `d96cf1c`,
+`bc5cbd7` and `f2bbd65`.
 
 Functional rescue data-plane parent: `30736f3`
 
@@ -67,6 +67,47 @@ Functional rescue data-plane parent: `30736f3`
     enter perception, planning, localization, collision avoidance or authorization;
   - a survivor observation must remain visible after its observing drone is held or
     quarantined.
+- Reviewed Pratik's movement handoff at `f2bbd65` (`bc5cbd7` contract and `d96cf1c`
+  nominal controller). The published JSON freezes policy text, but the live controller
+  does not yet consume authorization, perform cell reassignment or emit the durable rescue
+  event stream. The first live A-to-B run is also still open.
+- Reviewed Ayush's heatmap, priority, scoreboard and read-only command-centre proposals.
+  Accepted the deterministic heatmap/scoreboard as P1 after P0 movement events are stable;
+  retained the natural-language query layer as optional and strictly read-only.
+- Published `MESSAGE_ABHIJAN_TO_PRATIK_AUTONOMOUS_MOVEMENT_AND_COMMAND_CENTRE_2026-08-22.md`
+  to request autonomous sensor-driven obstacle deflection, authorization gating and the
+  cell-level event inputs needed for a truthful heatmap.
+- Merged Suyash's accepted rescue-integration tip `0f7cb7f` into this branch without
+  changing `veriswarm.rescue.event.v1`.
+- Corrected the staged dashboard's clean-baseline gate. One shared predicate now requires
+  all three conditions before the UI can claim an approved baseline or expose the
+  model-hash attack stage:
+  - `dashboard_proof.proof_valid === true`;
+  - clean outcome `ACCEPTED`;
+  - at least two semantic acknowledgements.
+- Added a regression for `ACCEPTED + 2 ACK + proof_valid=false`. It fails closed, keeps
+  the attack stage locked, shows `VERIFICATION FAILED` / `FAILED CLOSED`, and directs the
+  operator to rerun the approved baseline.
+- Added `rescue.movement_security`, a configuration-driven policy layer over Pratik's
+  frozen `veriswarm.factorycity.joint_movement_contract.v1`. It does not issue CoSys
+  commands; it returns deterministic instructions for the live controller to enforce:
+  - fresh `ALLOW` plus all movement limits -> `RELEASE`;
+  - missing, stale, future-dated, malformed or wrong-node authorization -> `HOLD`;
+  - in-flight `HOLD` -> cancel new route motion and `HOVER`;
+  - `QUARANTINE` -> refuse resumed nominal motion and `ABORT_HOVER_LAND`;
+  - unfinished cells of an unavailable vehicle -> lexical, rotating reassignment across
+    the healthy roster.
+- Added configuration-driven movement tests against the accepted Pratik JSON contract.
+  They cover valid release, movement-limit rejection, fail-closed authorization, in-flight
+  hover, quarantine abort, completed-cell exclusion, deterministic Alpha reassignment,
+  preservation of Alpha's positive observation, frozen-schema event projection and the
+  prohibition on importing hidden simulator truth into control.
+- Final validation after the Suyash gate work:
+  - focused movement/rescue integration: `70 passed`;
+  - complete Python suite with temporary loopback HTTP/gRPC listeners: `521 passed in
+    58.95s`;
+  - dashboard gate regressions: `4 passed`;
+  - Vite production build: passed (`1980` modules transformed).
 
 ## Network observed from Abhijan's Mac
 
@@ -88,11 +129,18 @@ No IP address, route, peer configuration or firewall setting was changed.
 ```text
 codebase/tools/rescue_authorization_adapter.py
 codebase/tests/test_rescue_authorization_adapter.py
+codebase/rescue/movement_security.py
+codebase/tests/test_movement_security.py
 codebase/docs/ABHIJAN_AUTHORIZATION_ADAPTER.md
 codebase/docs/team_updates/STATUS_ABHIJAN.md
+codebase/docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_AUTONOMOUS_MOVEMENT_AND_COMMAND_CENTRE_2026-08-22.md
+codebase/docs/team_updates/MESSAGE_ABHIJAN_TO_PRATIK_MOVEMENT_GATE_READY_2026-08-22.md
 codebase/examples/qualification_clean_dashboard_sample.json
 codebase/examples/qualification_model_swap_dashboard_sample.json
 codebase/c2_dashboard/src/App.jsx
+codebase/c2_dashboard/src/modelHashQualification.js
+codebase/c2_dashboard/src/modelHashQualification.test.js
+codebase/c2_dashboard/package.json
 ops/start_abhijan_rescue_mac.sh
 ops/publish_rescue_authorization.sh
 ops/ABHIJAN_DASHBOARD_HANDOFF.md
@@ -102,28 +150,35 @@ ops/DEMO_RUNBOOK.md
 
 ## Current blockers
 
-- The joint configuration-driven movement contract requested by Suyash at `ef56941` is
-  not yet available on this branch. Value-specific security movement tests cannot be
-  finalized until Pratik publishes the exact Point A/Point B, five-drone roster and poses,
-  sectors/cells, route, limits, obstacles, command lifecycle and repeatable reset details.
-- Pratik's CoSys rescue-event producer/handoff has not yet been reviewed in this branch.
-  Until that handoff is supplied, Abhijan will not invent coordinates, simulator truth,
-  movement state or reassignment events.
+- The accepted contract still freezes one straight route with no deviation and makes
+  depth evaluation-only. Autonomous obstacle deflection requires a coordinated contract
+  revision; it cannot be claimed from this checkpoint.
+- The policy gate and configuration-driven tests are complete, but Pratik's live CoSys
+  controller must still call the gate at every command boundary, execute the returned
+  hover/abort instruction, perform the returned cell reassignments and durably publish the
+  corresponding rescue events. No live authorization-aware flight is claimed yet.
+- The first retained live A-to-B RPC run, transient-HOLD flight and quarantined-Alpha
+  flight remain open simulator qualifications.
+- A cell-level heatmap cannot be reconstructed from the current count-only assignment,
+  coverage and reassignment payloads. Suyash must freeze additive cell-ID/state fields
+  before Pratik and Abhijan depend on them.
 - A physical model-hash rerun still operationally requires Alpha, Bravo and Charlie to be
   reachable, Charlie's peer service to be running, and `vs dash` to be started on Alpha.
   This is not a code blocker for the already retained evidence or dashboard.
 
 ## Next checkpoint
 
-- Review Pratik's exact branch/commit handoff when supplied; do not redesign or merge it
-  blindly.
-- Add compatible movement-security tests on this branch covering `ALLOW`, transient
-  `HOLD`, `QUARANTINE`, abort/hover/land behavior, and unfinished-cell reassignment using
-  the published configuration rather than hard-coded or invented simulator facts.
-- Verify the quarantined-drone case end to end: no unauthorized motion, Alpha unavailable,
+- Hand `rescue.movement_security` to Pratik for the live CoSys integration. The controller
+  must supply only normalized authorization plus measured/configured command inputs and
+  must not read `evaluation_truth`.
+- Verify the quarantined-drone case live: no unauthorized motion, Alpha unavailable,
   unfinished cells reassigned, survivor observations preserved, and authorization,
   vehicle-state and reassignment events projected through the frozen rescue data plane.
+- Retain proof for the normal A-to-B, transient-HOLD and quarantined-Alpha simulator runs;
+  report measured outcomes without claiming autonomous obstacle avoidance.
 - Keep attack evidence separate from genuine mission observations and use hidden simulator
   truth only for post-run scoring.
+- Add the deterministic heatmap and compact scoreboard after cell-level producers pass;
+  keep the read-only command-centre query layer optional until the P0 thin slice is stable.
 - Publish code, tests and any new blockers here; keep raw videos and runtime evidence out
   of Git.
