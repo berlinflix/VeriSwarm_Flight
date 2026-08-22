@@ -14,6 +14,7 @@ RISING_FLOOD = WORLD / "factorycity_rising_flood.development.json"
 POINT_B_AUDIT = WORLD / "factorycity_point_b_audit.development.json"
 POINT_B_COLLISION = WORLD / "factorycity_point_b_landing_collision.development.json"
 AB_MISSION = WORLD / "factorycity_ab_mission.development.json"
+JOINT_MOVEMENT = WORLD / "factorycity_joint_movement_contract.development.json"
 TOOLS = WORLD / "tools"
 
 
@@ -222,3 +223,90 @@ def test_ab_controller_monitors_only_new_enroute_collisions_and_cleans_up() -> N
     assert "client.armDisarm(False" in source
     assert "client.enableApiControl(False" in source
     assert "finally:" in source
+
+
+def test_joint_movement_contract_freezes_exact_endpoints_roster_and_cells() -> None:
+    contract = _json(JOINT_MOVEMENT)
+    assert contract["schema"] == "veriswarm.factorycity.joint_movement_contract.v1"
+    assert contract["development_only"] is True
+    assert contract["coordinate_frame"]["name"] == "NED"
+    assert len(contract["map_binding"]["sha256"]) == 64
+    assert contract["endpoints_ned_m"]["point_a_actor"] == [0.0, 0.0, 0.0]
+    assert len(contract["endpoints_ned_m"]["point_b_actor"]) == 3
+    roster = contract["vehicles"]["roster"]
+    poses = contract["vehicles"]["initial_poses_ned_m"]
+    assert len(roster) == 5
+    assert len(set(roster)) == 5
+    assert set(roster) == set(poses)
+    assert all(len(pose) == 3 for pose in poses.values())
+    cells = contract["search_cells"]["cells"]
+    assert len(cells) == 10
+    assert {cell["owner"] for cell in cells} == set(roster)
+    assert math.isclose(cells[0]["start_fraction"], 0.0)
+    assert math.isclose(cells[-1]["end_fraction"], 1.0)
+    assert all(
+        math.isclose(left["end_fraction"], right["start_fraction"])
+        for left, right in zip(cells, cells[1:])
+    )
+
+
+def test_joint_movement_contract_is_fail_closed_and_preserves_observations() -> None:
+    contract = _json(JOINT_MOVEMENT)
+    policy = contract["authorization_policy"]
+    assert policy["missing_stale_or_malformed_authorization"] == "HOLD"
+    assert policy["ALLOW"]["pending_commands"].startswith("release")
+    assert policy["HOLD"]["pending_commands"] == "do not dispatch"
+    assert "hover" in policy["HOLD"]["in_flight"]
+    assert "reassign" in policy["QUARANTINE"]["unfinished_cells"]
+    assert policy["QUARANTINE"]["terminal_vehicle_state"] == "QUARANTINED"
+    assert contract["search_cells"]["reassignment"][
+        "preserve_positive_observations"
+    ] is True
+
+
+def test_joint_movement_contract_never_uses_truth_or_depth_for_avoidance() -> None:
+    contract = _json(JOINT_MOVEMENT)
+    truth = contract["evaluation_truth"]
+    collision = contract["obstacle_and_collision_policy"]
+    assert truth["controller_access"] == "FORBIDDEN"
+    assert truth["survivor_locations"] == []
+    assert collision["route_policy"] == (
+        "do not deviate from the configured straight line"
+    )
+    assert collision["depth_use"] == (
+        "telemetry_and_post_run_evaluation_only_no_avoidance"
+    )
+    assert collision["predeclared_route_obstacles_consumed_by_controller"] == []
+    assert collision["collision_monitoring_starts"] == "EN_ROUTE"
+    assert collision["takeoff_and_landing_penetration_terminal"] is False
+
+
+def test_joint_movement_events_match_frozen_rescue_data_plane_surface() -> None:
+    events = _json(JOINT_MOVEMENT)["events"]
+    assert events["schema"] == "veriswarm.rescue.event.v1"
+    assert events["authorization_source"] == "abhijan-security"
+    assert events["vehicle_source_pattern"] == "<node>.telemetry"
+    assert set(events["required_top_level_fields"]) == {
+        "schema",
+        "mission_id",
+        "event_id",
+        "source",
+        "source_seq",
+        "observed_at_ms",
+        "kind",
+        "payload",
+    }
+    assert {
+        "mission_started",
+        "assignment",
+        "coverage",
+        "vehicle_state",
+        "authorization",
+        "task_reassigned",
+        "link_state",
+        "mission_completed",
+    } == set(events["required_kinds"])
+    assert "position_ned" in events["required_payload_fields"]["vehicle_state"]
+    assert "decision" in events["required_payload_fields"]["authorization"]
+    assert events["vehicle_state_mapping"]["DESTROYED_BY_COLLISION"] == "FAILED"
+    assert events["vehicle_state_mapping"]["QUARANTINE"] == "QUARANTINED"

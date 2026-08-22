@@ -1,0 +1,175 @@
+{
+  "schema": "veriswarm.factorycity.joint_movement_contract.v1",
+  "scenario_id": "factorycity_disaster_point_a_to_point_b_development",
+  "mission_id": "OP-VARUNA-001",
+  "development_only": true,
+  "coordinate_frame": {
+    "name": "NED",
+    "origin_actor": "AirSimOrigin_Point_A",
+    "origin_unreal_cm": [13070.0, 2950.0, 130.0],
+    "unreal_cm_per_metre": 100.0,
+    "ned_to_unreal_axis_sign": [1.0, 1.0, -1.0]
+  },
+  "map_binding": {
+    "world": "/Game/VeriSwarm/FactoryCity_Disaster",
+    "sha256": "703b892b0587b9a93bb3688fa36407a999a66b416ef1ddcc6c84dab6489c4cf0",
+    "runtime_config_file": "factorycity_ab_mission.development.json"
+  },
+  "endpoints_ned_m": {
+    "point_a_actor": [0.0, 0.0, 0.0],
+    "point_a_landing_surface": [0.0, 0.0, 0.2990000641324696],
+    "point_b_actor": [-92.82463950706873, 20.434910575448075, -7.916932947503205],
+    "point_b_landing_surface": [-92.82463950706873, 20.434910575448075, -7.701502685546875]
+  },
+  "vehicles": {
+    "roster": ["alpha", "bravo", "charlie", "delta", "echo"],
+    "initial_poses_ned_m": {
+      "alpha": [-2.0, -2.0, 0.0747000641324696],
+      "bravo": [2.0, 2.0, 0.0747000641324696],
+      "charlie": [-2.0, 2.0, 0.0747000641324696],
+      "delta": [2.0, -2.0, 0.0747000641324696],
+      "echo": [0.0, 0.0, 0.0747000641324696]
+    }
+  },
+  "route": {
+    "geometry": "ONE_STRAIGHT_CENTROID_SEGMENT_NO_DEVIATION",
+    "centroid_start_ned_m": [0.0, 0.0, -10.0],
+    "centroid_end_ned_m": [-92.82463950706873, 20.434910575448075, -10.0],
+    "horizontal_distance_m": 95.04735277662299,
+    "states": ["STARTUP", "FLOOD_RISE_CLIMB", "EN_ROUTE", "LANDING", "CLEANUP", "COMPLETE"],
+    "completion_condition": "all available vehicles landed, disarmed and API-released; every cell completed or reassigned; every event durably enqueued"
+  },
+  "search_cells": {
+    "geometry": "route segment partitioned by inclusive start_fraction and exclusive end_fraction except final cell",
+    "cells": [
+      {"id": "route_cell_00", "start_fraction": 0.0, "end_fraction": 0.1, "owner": "alpha"},
+      {"id": "route_cell_01", "start_fraction": 0.1, "end_fraction": 0.2, "owner": "bravo"},
+      {"id": "route_cell_02", "start_fraction": 0.2, "end_fraction": 0.3, "owner": "charlie"},
+      {"id": "route_cell_03", "start_fraction": 0.3, "end_fraction": 0.4, "owner": "delta"},
+      {"id": "route_cell_04", "start_fraction": 0.4, "end_fraction": 0.5, "owner": "echo"},
+      {"id": "route_cell_05", "start_fraction": 0.5, "end_fraction": 0.6, "owner": "alpha"},
+      {"id": "route_cell_06", "start_fraction": 0.6, "end_fraction": 0.7, "owner": "bravo"},
+      {"id": "route_cell_07", "start_fraction": 0.7, "end_fraction": 0.8, "owner": "charlie"},
+      {"id": "route_cell_08", "start_fraction": 0.8, "end_fraction": 0.9, "owner": "delta"},
+      {"id": "route_cell_09", "start_fraction": 0.9, "end_fraction": 1.0, "owner": "echo"}
+    ],
+    "reassignment": {
+      "trigger_states": ["QUARANTINED", "DESTROYED_BY_COLLISION", "FAILED", "OFFLINE"],
+      "policy": "unfinished cell IDs in lexical order rotate across healthy roster beginning after unavailable owner",
+      "preserve_positive_observations": true
+    }
+  },
+  "command_limits": {
+    "horizontal_velocity_mps": 4.0,
+    "vertical_velocity_mps": 2.0,
+    "horizontal_acceleration_mps2": 2.0,
+    "vertical_acceleration_mps2": 1.5,
+    "minimum_pairwise_separation_m": 1.5,
+    "command_timeout_seconds": 10.0,
+    "maximum_route_runtime_seconds": 45.0,
+    "enroute_geofence_ned_m": {
+      "x_min": -100.82463950706873,
+      "x_max": 8.0,
+      "y_min": -8.0,
+      "y_max": 28.434910575448075,
+      "z_min": -15.0,
+      "z_max": -3.7
+    }
+  },
+  "obstacle_and_collision_policy": {
+    "route_policy": "do not deviate from the configured straight line",
+    "depth_camera": "front_depth",
+    "depth_use": "telemetry_and_post_run_evaluation_only_no_avoidance",
+    "collision_authority": "CoSys simGetCollisionInfo per vehicle",
+    "collision_monitoring_starts": "EN_ROUTE",
+    "takeoff_and_landing_penetration_terminal": false,
+    "new_enroute_collision_terminal_state": "DESTROYED_BY_COLLISION",
+    "predeclared_route_obstacles_consumed_by_controller": [],
+    "evaluation_only_disaster_obstacles_unreal_cm": [
+      {"id": "roadblock_south_01", "position": [7110.0, -3180.0, 120.0999984741211]},
+      {"id": "roadblock_south_02", "position": [7560.0, -3180.0, 120.0999984741211]},
+      {"id": "roadblock_south_03", "position": [8010.0, -3180.0, 120.0999984741211]},
+      {"id": "debris_east_barrel", "position": [19635.220703125, 4965.38134765625, 120.0999984741211]},
+      {"id": "debris_east_trash", "position": [19985.220703125, 5225.38134765625, 125.0999984741211]},
+      {"id": "broken_pipe_east", "position": [18085.0, -5283.04931640625, 135.10009002685547]},
+      {"id": "debris_north_barrel", "position": [11449.3193359375, 23453.671875, 124.0996322631836]},
+      {"id": "debris_north_trash", "position": [11859.3193359375, 23143.671875, 128.0996322631836]},
+      {"id": "roadblock_far_south_01", "position": [13355.248046875, -19412.943359375, 120.0999984741211]},
+      {"id": "roadblock_far_south_02", "position": [13895.248046875, -19372.943359375, 120.0999984741211]},
+      {"id": "collapsed_pipe_west", "position": [5180.08935546875, -7139.7333984375, 145.0999984741211]},
+      {"id": "debris_west_barrel", "position": [5700.08935546875, -7439.7333984375, 120.0999984741211]},
+      {"id": "debris_mid_trash", "position": [3270.0, -4070.0, 125.0999984741211]}
+    ]
+  },
+  "evaluation_truth": {
+    "controller_access": "FORBIDDEN",
+    "survivor_locations": [],
+    "survivor_status": "AWAITING_ABHIJAN_FINAL_SCENARIO_MANIFEST",
+    "hazard_locations_source": "obstacle_and_collision_policy.evaluation_only_disaster_obstacles_unreal_cm",
+    "allowed_consumer": "Abhijan post-run evaluator only"
+  },
+  "authorization_policy": {
+    "freshness_timeout_seconds": 2.0,
+    "ALLOW": {
+      "pending_commands": "release after all command and state limits pass",
+      "in_flight": "continue current authorized mission state"
+    },
+    "HOLD": {
+      "pending_commands": "do not dispatch",
+      "in_flight": "cancel route command and hover at current safe flood-relative altitude",
+      "unfinished_cells": "remain assigned until recovery timeout or escalation"
+    },
+    "QUARANTINE": {
+      "pending_commands": "discard and refuse new nominal commands",
+      "in_flight": "abort route, hover, then controlled safety landing without resuming mission",
+      "unfinished_cells": "reassign immediately to healthy vehicles",
+      "terminal_vehicle_state": "QUARANTINED"
+    },
+    "missing_stale_or_malformed_authorization": "HOLD"
+  },
+  "events": {
+    "schema": "veriswarm.rescue.event.v1",
+    "mission_source": "mission.controller",
+    "authorization_source": "abhijan-security",
+    "vehicle_source_pattern": "<node>.telemetry",
+    "durability": "one SQLite outbox per producer stream before network delivery",
+    "required_top_level_fields": ["schema", "mission_id", "event_id", "source", "source_seq", "observed_at_ms", "kind", "payload"],
+    "required_kinds": ["mission_started", "assignment", "coverage", "vehicle_state", "authorization", "task_reassigned", "link_state", "mission_completed"],
+    "required_payload_fields": {
+      "mission_started": ["scenario_id", "coordinate_frame"],
+      "assignment": ["node", "sector_id", "cells_total"],
+      "coverage": ["node", "sector_id", "visited_cells", "total_cells"],
+      "vehicle_state": ["node", "state", "position_ned"],
+      "authorization": ["node", "decision", "reason"],
+      "task_reassigned": ["from_node", "to_node", "cells_count", "reason"],
+      "link_state": ["node", "state"],
+      "mission_completed": ["status", "completed_cells", "total_cells"]
+    },
+    "vehicle_state_mapping": {
+      "STARTUP": "READY",
+      "FLOOD_RISE_CLIMB": "SEARCHING",
+      "EN_ROUTE": "SEARCHING",
+      "HOLD": "HOLD",
+      "QUARANTINE": "QUARANTINED",
+      "DESTROYED_BY_COLLISION": "FAILED",
+      "LANDING": "LANDING",
+      "LANDED": "LANDED"
+    }
+  },
+  "reset": {
+    "startup": ["confirm RPC", "bind loaded settings and five-drone roster", "acquire API control", "arm", "capture collision baselines", "take off and climb with flood"],
+    "landing": ["land available vehicles at Point_B", "verify Landed enum", "disarm", "release API control"],
+    "cleanup": ["best-effort disarm all roster vehicles", "release all API control", "retain outbox entries", "leave flood at configured peak"],
+    "repeatable_reset": ["stop Play mode", "close Unreal", "reopen verified FactoryCity_Disaster launcher", "click Play once", "start controller with this contract"]
+  },
+  "acceptance_tests": [
+    "normal five-drone A-to-B landing and cleanup",
+    "one new en-route collision destroys only the collided drone",
+    "transient HOLD prevents new route motion and preserves observations",
+    "QUARANTINE aborts one drone and reassigns every unfinished cell",
+    "stale or malformed authorization fails closed to HOLD",
+    "offline event delivery remains durably queued and replays in source order",
+    "all available drones maintain configured separation and geofence",
+    "one original 10-second no-person CoSys RGB recording is retained outside Git"
+  ]
+}

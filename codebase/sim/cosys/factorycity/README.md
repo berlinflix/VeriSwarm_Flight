@@ -35,6 +35,10 @@ the Unreal project, generated settings, raw frames, logs, or development evidenc
     advances every active drone along the same straight horizontal vector, dynamically
     increases water clearance if required, terminates newly collided drones, and lands
     surviving drones at the audited Point_B before disarm/API cleanup.
+12. `factorycity_joint_movement_contract.development.json` freezes the exact NED
+    endpoints, initial poses, route cells, limits, authorization effects, event surface,
+    reset procedure and Abhijan security-test inputs without exposing hidden truth to the
+    controller. See `JOINT_MOVEMENT_SECURITY_CONTRACT.md`.
 
 The development weather profile prioritizes demo visibility: light rain and wet roads
 remain enabled, while fog, dust, snow, and airborne-leaf effects are explicitly zeroed.
