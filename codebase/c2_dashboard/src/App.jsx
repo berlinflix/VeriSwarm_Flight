@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import flightDrone from "./assets/flight-drone.png";
+import { isApprovedCleanEvidence } from "./modelHashQualification.js";
 
 const liveFeedUrl = import.meta.env.VITE_DRONE_STREAM_URL;
 const QUALIFICATION_VIEW_KEY = "veriswarm.qualification.proof.v1";
@@ -431,17 +432,13 @@ function useModelHashQualification() {
     setRunError(null);
     try {
       const cleanEvidence = proof?.clean?.evidence;
-      const cleanPassed = cleanEvidence?.actual?.outcome === "ACCEPTED"
-        && Number(cleanEvidence?.actual?.semantic_acks ?? 0) >= 2;
+      const cleanPassed = isApprovedCleanEvidence(cleanEvidence);
       if (!cleanPassed) {
         setProof(null);
         setRunningStage("clean");
         const clean = await runCase("clean");
         setProof({ clean, attack: null });
-        if (
-          clean.evidence.actual?.outcome !== "ACCEPTED"
-          || Number(clean.evidence.actual?.semantic_acks ?? 0) < 2
-        ) {
+        if (!isApprovedCleanEvidence(clean.evidence)) {
           throw new Error("clean_baseline_gate_failed");
         }
       } else {
@@ -962,8 +959,7 @@ function AttackSystems({ qualification }) {
   const attackEvidence = proof?.attack?.evidence;
   const dashboardProof = attackEvidence?.dashboard_proof;
   const visibleProof = dashboardProof ?? cleanEvidence?.dashboard_proof;
-  const cleanPassed = cleanEvidence?.actual?.outcome === "ACCEPTED"
-    && Number(cleanEvidence?.actual?.semantic_acks ?? 0) >= 2;
+  const cleanPassed = isApprovedCleanEvidence(cleanEvidence);
   const pending = Boolean(runningStage);
   const status = pending
     ? { message: runningStage === "clean" ? "VERIFYING CLEAN BASELINE" : "RUNNING MODEL-HASH ATTACK", tone: "pending" }
@@ -1080,18 +1076,25 @@ function EvidenceStrip({ scenario, qualification }) {
   const attackEvidence = qualification?.proof?.attack?.evidence;
   const dashboardProof = attackEvidence?.dashboard_proof;
   const cleanProof = cleanEvidence?.dashboard_proof;
+  const cleanPassed = isApprovedCleanEvidence(cleanEvidence);
   const items = dashboardProof ? [
     ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
     ["Attack ACKs", `${attackEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, Binary],
     ["Peer verdict", `${attackEvidence?.actual?.disputes ?? 0}/2 DISPUTE`, ShieldX],
     ["Safety response", attackEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD + QUARANTINE", ShieldCheck],
     ["Retained proof", dashboardProof.proof_valid ? "VERIFIED · UNAPPROVED HASH" : "VERIFICATION FAILED", Fingerprint],
-  ] : cleanProof ? [
+  ] : cleanPassed ? [
     ["Approved provenance", cleanProof.proof_valid ? "VERIFIED" : "FAILED", Fingerprint],
     ["Clean baseline", `${cleanEvidence?.actual?.semantic_acks ?? 0}/2 ACK`, ShieldCheck],
     ["Model-hash attack", "NOT RUN", Binary],
     ["Safety state", cleanEvidence?.authorization?.allowed ? "EXECUTE" : "HOLD · NO MOTION", ShieldCheck],
     ["Next step", "RUN MODEL-HASH ATTACK", Activity],
+  ] : cleanProof ? [
+    ["Approved provenance", "VERIFICATION FAILED", ShieldX],
+    ["Clean baseline", "FAILED CLOSED", ShieldX],
+    ["Model-hash attack", "LOCKED", Binary],
+    ["Safety state", "HOLD · NO MOTION", ShieldCheck],
+    ["Next step", "RERUN APPROVED BASELINE", Activity],
   ] : [
     ["Provenance", scenario.provenance, Fingerprint],
     ["Semantic ACK", String(scenario.semanticAcks), Binary],
