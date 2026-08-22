@@ -4,7 +4,8 @@
     {
       "name": "cam1",
       "source": "0",
-      "backend": "dshow"
+      "backend": "dshow",
+      "expected_device_name": "REPLACE_WITH_EXACT_DIRECTSHOW_FRIENDLY_NAME"
     },
     {
       "name": "cam2",
