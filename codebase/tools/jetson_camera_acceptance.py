@@ -88,6 +88,74 @@ def percentile(values: Sequence[float], fraction: float) -> float:
     return float(ordered[index])
 
 
+def _box_area(box: Sequence[float]) -> float:
+    if len(box) != 4:
+        raise ValueError("box must contain exactly four coordinates")
+    return max(0.0, float(box[2]) - float(box[0])) * max(
+        0.0, float(box[3]) - float(box[1])
+    )
+
+
+def box_overlap(box_a: Sequence[float], box_b: Sequence[float]) -> tuple[float, float]:
+    """Return IoU and smaller-box containment without claiming object identity."""
+
+    area_a = _box_area(box_a)
+    area_b = _box_area(box_b)
+    left = max(float(box_a[0]), float(box_b[0]))
+    top = max(float(box_a[1]), float(box_b[1]))
+    right = min(float(box_a[2]), float(box_b[2]))
+    bottom = min(float(box_a[3]), float(box_b[3]))
+    intersection = max(0.0, right - left) * max(0.0, bottom - top)
+    union = area_a + area_b - intersection
+    smaller = min(area_a, area_b)
+    iou = intersection / union if union > 0.0 else 0.0
+    containment = intersection / smaller if smaller > 0.0 else 0.0
+    return iou, containment
+
+
+def overlap_clusters(
+    boxes: Sequence[Sequence[float]],
+    *,
+    iou_threshold: float = 0.60,
+    containment_threshold: float = 0.85,
+) -> list[tuple[int, ...]]:
+    """Group strongly overlapping boxes while retaining every raw observation.
+
+    A cluster is an ambiguity diagnostic, not a unique-person assertion. Two real people
+    can overlap, so downstream tracking and multiview geometry must resolve identity.
+    """
+
+    if not 0.0 <= iou_threshold <= 1.0:
+        raise ValueError("iou_threshold must be within [0, 1]")
+    if not 0.0 <= containment_threshold <= 1.0:
+        raise ValueError("containment_threshold must be within [0, 1]")
+
+    parents = list(range(len(boxes)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for left in range(len(boxes)):
+        for right in range(left + 1, len(boxes)):
+            iou, containment = box_overlap(boxes[left], boxes[right])
+            if iou >= iou_threshold or containment >= containment_threshold:
+                union(left, right)
+
+    grouped: dict[int, list[int]] = {}
+    for index in range(len(boxes)):
+        grouped.setdefault(find(index), []).append(index)
+    return [tuple(indices) for indices in grouped.values()]
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", required=True, choices=ALL_CASES)
@@ -146,6 +214,9 @@ def main() -> int:
 
     target_frame_count = 0
     target_detection_count = 0
+    target_overlap_cluster_count = 0
+    ambiguous_target_frame_count = 0
+    maximum_raw_targets_per_frame = 0
     inference_ms: list[float] = []
     last_annotated = None
     first_target_annotated = None
@@ -196,8 +267,30 @@ def main() -> int:
                             }
                         )
 
+                target_indices = [
+                    index
+                    for index, detection in enumerate(detections)
+                    if detection["is_target"]
+                ]
+                target_boxes = [
+                    detections[index]["xyxy"] for index in target_indices
+                ]
+                clusters = overlap_clusters(target_boxes)  # type: ignore[arg-type]
+                for cluster_index, members in enumerate(clusters):
+                    for target_member in members:
+                        detections[target_indices[target_member]][
+                            "overlap_cluster"
+                        ] = cluster_index
+
                 target_frame_count += int(target_count > 0)
                 target_detection_count += target_count
+                target_overlap_cluster_count += len(clusters)
+                ambiguous_target_frame_count += int(
+                    any(len(cluster) > 1 for cluster in clusters)
+                )
+                maximum_raw_targets_per_frame = max(
+                    maximum_raw_targets_per_frame, target_count
+                )
                 inference_ms.append(elapsed_ms)
                 if target_count > 0 and first_target_annotated is None:
                     first_target_annotated = last_annotated.copy()
@@ -248,6 +341,14 @@ def main() -> int:
         "target_frame_count": target_frame_count,
         "target_frame_rate": target_frame_count / args.frames,
         "target_detection_count": target_detection_count,
+        "target_overlap_cluster_count": target_overlap_cluster_count,
+        "ambiguous_target_frame_count": ambiguous_target_frame_count,
+        "maximum_raw_targets_per_frame": maximum_raw_targets_per_frame,
+        "overlap_cluster_policy": {
+            "iou_threshold": 0.60,
+            "smaller_box_containment_threshold": 0.85,
+            "meaning": "ambiguity diagnostic; not a unique-person count",
+        },
         "minimum_positive_rate": args.minimum_positive_rate,
         "mean_inference_ms": statistics.fmean(inference_ms),
         "p95_inference_ms": percentile(inference_ms, 0.95),

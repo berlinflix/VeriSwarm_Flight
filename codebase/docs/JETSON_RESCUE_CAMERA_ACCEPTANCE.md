@@ -68,6 +68,11 @@ For a detector whose target class is named differently, repeat `--target-class`,
 example `--target-class person_candidate`. Each run writes a summary, per-frame JSONL
 trace and annotated frame and exits nonzero when the stated case fails.
 
+The summary reports raw target boxes separately from strongly overlapping box clusters.
+An overlap cluster is an ambiguity diagnostic, never a proven unique-person count. Keep
+all raw boxes for audit, use a temporal tracker and multiview geometry to resolve identity,
+and present uncertain counts as a lower bound rather than counting every box as a victim.
+
 ## Deployment sequence
 
 First execute the selected PyTorch checkpoint in these cases. Only after functional

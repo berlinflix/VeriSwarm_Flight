@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 
 from tools.jetson_camera_acceptance import (
+    box_overlap,
     class_name,
     decide_case,
     normalize_targets,
+    overlap_clusters,
     percentile,
 )
 
@@ -56,6 +58,21 @@ class JetsonCameraAcceptanceTests(unittest.TestCase):
         self.assertEqual(percentile([1.0, 2.0, 3.0, 100.0], 0.95), 100.0)
         with self.assertRaises(ValueError):
             percentile([], 0.95)
+
+    def test_overlap_geometry_matches_nested_occlusion_boxes(self) -> None:
+        small = [387.82, 0.61, 452.85, 143.66]
+        large = [388.17, 0.29, 485.62, 145.15]
+        iou, containment = box_overlap(small, large)
+        self.assertGreater(iou, 0.60)
+        self.assertGreater(containment, 0.98)
+
+    def test_overlap_clusters_retain_indices_and_separate_distant_boxes(self) -> None:
+        boxes = [
+            [0.0, 0.0, 10.0, 10.0],
+            [1.0, 1.0, 9.0, 9.0],
+            [100.0, 100.0, 120.0, 120.0],
+        ]
+        self.assertEqual(overlap_clusters(boxes), [(0, 1), (2,)])
 
 
 if __name__ == "__main__":
