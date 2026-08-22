@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import math
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
@@ -231,6 +232,114 @@ class WebcamSource(FrameSource):
     def read(self):
         ok, frame = self._ensure_open().read()
         return frame if ok else None
+
+    def pose(self) -> Optional[Pose]:
+        return self._fixed_pose
+
+    def close(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
+
+
+class VideoFileSource(FrameSource):
+    """Read a prerecorded video through the same interface as a live camera.
+
+    This adapter is for synthetic drone-POV clips and recorded field footage.
+    It preserves the source frame order and exposes the decoder timestamp; it
+    deliberately does not invent a pose, depth image, or geolocation.  A caller
+    that has independently measured pose may supply one fixed pose, but a
+    generated video alone is never metric navigation evidence.
+
+    Playback timing belongs to the mission/demo runner.  Keeping this source
+    unpaced lets a runner display at the video's native frame rate while
+    sampling inference at a lower sustainable rate without building a backlog.
+    """
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        loop: bool = False,
+        fixed_pose: Optional[Pose] = None,
+    ):
+        self.path = Path(path)
+        if not self.path.is_file():
+            raise FileNotFoundError(f"video file not found: {self.path}")
+        self.loop = loop
+        self._fixed_pose = fixed_pose
+        self._capture = None
+        self._fps: Optional[float] = None
+        self._frame_count: Optional[int] = None
+        self._last_frame_index = -1
+        self._last_timestamp_ms: Optional[float] = None
+
+    def _ensure_open(self):
+        import cv2  # lazy
+
+        if self._capture is None:
+            capture = cv2.VideoCapture(str(self.path))
+            if not capture.isOpened():
+                capture.release()
+                raise RuntimeError(f"could not decode video file: {self.path}")
+            fps = float(capture.get(cv2.CAP_PROP_FPS))
+            frame_count = float(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+            self._fps = fps if math.isfinite(fps) and fps > 0.0 else None
+            self._frame_count = (
+                int(frame_count)
+                if math.isfinite(frame_count) and frame_count >= 0.0
+                else None
+            )
+            self._capture = capture
+        return self._capture
+
+    def read(self):
+        import cv2  # lazy
+
+        capture = self._ensure_open()
+        ok, frame = capture.read()
+        if not ok and self.loop:
+            if not capture.set(cv2.CAP_PROP_POS_FRAMES, 0):
+                return None
+            ok, frame = capture.read()
+        if not ok:
+            return None
+
+        position = float(capture.get(cv2.CAP_PROP_POS_FRAMES))
+        if math.isfinite(position) and position >= 1.0:
+            self._last_frame_index = int(position) - 1
+        else:
+            self._last_frame_index += 1
+
+        timestamp_ms = float(capture.get(cv2.CAP_PROP_POS_MSEC))
+        self._last_timestamp_ms = (
+            timestamp_ms
+            if math.isfinite(timestamp_ms) and timestamp_ms >= 0.0
+            else None
+        )
+        return frame
+
+    @property
+    def source_fps(self) -> Optional[float]:
+        """Native FPS reported by the decoder, or ``None`` when unavailable."""
+        self._ensure_open()
+        return self._fps
+
+    @property
+    def frame_count(self) -> Optional[int]:
+        """Frame count reported by the decoder, if the container provides it."""
+        self._ensure_open()
+        return self._frame_count
+
+    @property
+    def frame_index(self) -> int:
+        """Zero-based index of the most recently returned frame."""
+        return self._last_frame_index
+
+    @property
+    def timestamp_ms(self) -> Optional[float]:
+        """Source-media timestamp of the most recently returned frame."""
+        return self._last_timestamp_ms
 
     def pose(self) -> Optional[Pose]:
         return self._fixed_pose

@@ -49,8 +49,7 @@ record the actual count whenever the baseline changes.
 | `codebase/models/registry.json` | Model source/hash/license/status/reviewer registry |
 | `codebase/docs/MODEL_SELECTION_REPORT.md` | Independent model approval decision |
 | `codebase/tools/optee_preflight.py` | Jetson handover and pinned-key evidence |
-| `codebase/tools/covis_live.py` | Live two-webcam use of the existing co-visibility protocol |
-| `codebase/docs/COVIS_LIVE.md` | Physical rig setup/calibration/run instructions |
+| Ayush/Samik `covis_live` acceptance | Independently review the live camera evidence, implementation boundary and Jetson handover |
 | `codebase/tools/event_collector.py` | Bounded authenticated/best-effort event collection |
 | `codebase/console/app.py` | Operator visualization; never an authority source |
 | `RUNBOOK.md` | Final cold-start, handover, operation, abort and recovery procedure |
@@ -198,23 +197,24 @@ exists. Bravo–Echo remain separate software identities. This is not the real-f
 Alpha receipts verify under the pinned key; no fallback occurs; signer loss safely removes
 Alpha from usable evidence and does not leave motion active.
 
-### Y6 — implement the physical co-visibility demonstration
+### Y6 — independently accept the physical co-visibility demonstration
 
-Build `tools/covis_live.py` by calling the existing `protocol/covis_features.py`; do not
-copy/fork its algorithm. Requirements:
+Ayush operates the USB-webcam/Android-DroidCam rig; Samik builds/maintains
+`tools/covis_live.py` by calling the existing `protocol/covis_features.py` and oversees the
+run. Suyash reviews rather than operates or forks it. Acceptance requirements:
 
 - explicit camera indices, resolution, calibration and thresholds;
 - bounded camera-open/read/retry behavior and clean release on exit/error;
-- synchronized capture/skew measurement;
+- host receive-time skew measurement, explicitly not a hardware exposure-sync claim;
 - side-by-side raw views, matches/inliers, overlap/parallax and verdict;
 - optional validated detector output and semantic comparison;
 - hash-chained, timestamped evidence and video;
 - no command/flight imports or network path to the command sink;
 - clear states for co-visible, not co-visible, insufficient evidence and camera failure.
 
-Write `docs/COVIS_LIVE.md` covering physical dimensions, calibration, start/stop, patch,
-lighting, evidence and Jetson handover. Abhijan owns rig/attack choreography; Suyash owns
-protocol correctness and software.
+Samik maintains `docs/COVIS_LIVE.md`; Ayush owns camera setup and operation; Abhijan owns
+the attack artifact/application; Suyash owns independent evidence acceptance and final
+GO/NO-GO.
 
 **Gate Y6:** clean view, moved camera, printed patch, partial/full cover, dropped camera and
 Ctrl-C cases produce correct evidence and always release both camera devices.
@@ -314,7 +314,7 @@ Suyash must own/add tests for:
 - authority signature, wrong pinned key and model/runtime mismatch;
 - signer seed/live-key versus manifest identity mismatch;
 - OP-TEE preflight wrong key/mission/epoch, timeout, overwrite and signer loss;
-- webcam open/read/synchronization/release failure;
+- webcam open/read/receive-skew/release failure;
 - collector malformed/oversized/duplicate/reordered/gap/restart behavior;
 - console UNKNOWN/INVALID presentation and absence of authority endpoints;
 - event-chain corruption and artifact-index mismatch;
@@ -347,7 +347,7 @@ Never store the authority private key or an OP-TEE private key in evidence.
    do not reimplement the already-fixed action-alias logic.
 3. Complete model registry and independent candidate approval workflow.
 4. Deploy and execute OP-TEE preflight on the real Jetson using protocol-v4 receipts.
-5. Implement/test `covis_live.py` and its guide.
+5. Review Ayush/Samik's `covis_live.py`, guide, focused tests and real Jetson evidence.
 6. Implement/test the event collector and console with the four v4 refusal reasons.
 7. Review Samik's final-command-before-receipt ordering/Alpha placement and Abhijan's v4
    oracle isolation.

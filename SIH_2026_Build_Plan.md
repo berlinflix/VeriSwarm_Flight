@@ -614,10 +614,11 @@ These paths make ownership reviewable; new files should be created under `codeba
 
 | Owner | Planned paths |
 |---|---|
-| Suyash | `docs/AUTONOMY_CONTRACT.md`, `docs/COVIS_LIVE.md`, `tools/covis_live.py`, `tools/optee_preflight.py`, `tools/event_collector.py`, `console/app.py`, `autonomy/contracts.py`, `autonomy/decision_record.py`, `models/registry.json`, `node/mission.py`, `perception/safety_supervisor.py`, `docs/MODEL_SELECTION_REPORT.md` approval and final `RUNBOOK.md` |
+| Suyash | `docs/AUTONOMY_CONTRACT.md`, `tools/optee_preflight.py`, `tools/event_collector.py`, `console/app.py`, `autonomy/contracts.py`, `autonomy/decision_record.py`, `models/registry.json`, `node/mission.py`, `perception/safety_supervisor.py`, independent `covis_live` evidence acceptance, `docs/MODEL_SELECTION_REPORT.md` approval and final `RUNBOOK.md` |
+| Ayush | Physical USB-webcam/Android-DroidCam rig, frozen camera mapping, `covis_live` operation and evidence handoff under Samik's oversight |
 | Abhijan | `attacks/scenarios/*.json`, `attacks/runner.py`, `attacks/oracle.py`, adversarial tests, the printed/webcam attack rig and attack artifacts outside `models/approved/` |
 | Pratik | `sim/cosys/contested_border/` scenario bundle, explicit `settings.json`, calibration/sensor/world manifests, truth exporter and local ignored `data/model_selection/` captures |
-| Samik | `tools/fetch_models.py`, `eval/model_selection.py`, `autonomy/mission_manager.py`, `autonomy/state_estimator.py`, `autonomy/mapper.py`, `autonomy/planner.py`, `autonomy/waypoint_follower.py`, `autonomy/task_allocator.py`, `autonomy/tracker.py`, `autonomy/local_safety.py`, `sim/cosys_adapter.py` and `tools/run_campaign.py` |
+| Samik | `tools/covis_live.py`, `docs/COVIS_LIVE.md`, Ayush webcam oversight/recovery, `tools/fetch_models.py`, `eval/model_selection.py`, `autonomy/mission_manager.py`, `autonomy/state_estimator.py`, `autonomy/mapper.py`, `autonomy/planner.py`, `autonomy/waypoint_follower.py`, `autonomy/task_allocator.py`, `autonomy/tracker.py`, `autonomy/local_safety.py`, `sim/cosys_adapter.py` and `tools/run_campaign.py` |
 
 ## M1 — Suyash deliverables
 
@@ -978,11 +979,12 @@ adapter. Every protected collision remains a gate failure.
 
 This is non-flying hardware evidence, not a substitute for either Cosys scenario:
 
-- two calibrated USB webcams view the same supported object from different angles;
+- one calibrated USB webcam and one Android DroidCam feed view the same supported object from different angles;
 - the Jetson runs the existing `protocol/covis_features.py` through
   `tools/covis_live.py`; the algorithm is called, not copied or forked;
-- Abhijan owns the actual printed patch/object, lighting/distance/viewpoint attack matrix
-  and choreography; Suyash owns protocol integration and result validation;
+- Ayush owns camera rig/operation; Samik owns implementation, oversight and recovery;
+  Abhijan owns the actual printed patch/object and attack choreography; Suyash owns
+  independent result acceptance;
 - raw frames, calibration, timestamps, input hashes, overlap/match/inlier results and video
   are retained;
 - the rig has no path to flight control and can be demonstrated independently of Cosys.

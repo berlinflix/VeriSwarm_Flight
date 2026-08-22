@@ -54,6 +54,23 @@
       "z": null
     }
   },
+  "touchdown": {
+    "expected_ground_object": "Ground",
+    "stationary_velocity_tolerance_mps": 0.05,
+    "stationary_angular_velocity_tolerance_rps": null,
+    "max_landing_linear_speed_mps": null,
+    "max_landing_angular_speed_rps": null,
+    "max_landing_roll_pitch_deg": null,
+    "max_penetration_depth_m": null,
+    "landing_zone_radius_m": null,
+    "landing_dwell_seconds": null,
+    "landed_state_deviation": {
+      "id": "QB-LANDED-STATE-001",
+      "approved": false,
+      "approved_by": null,
+      "approval_reference": null
+    }
+  },
   "timeouts_seconds": {
     "connect": null,
     "vehicle_check": null,
@@ -64,7 +81,8 @@
     "move": null,
     "arrival": null,
     "land": null,
-    "cleanup": null
+    "cleanup": null,
+    "reset": null
   },
   "evidence": {
     "output_path": null

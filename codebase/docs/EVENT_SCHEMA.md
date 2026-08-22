@@ -269,6 +269,16 @@ Which attack the judge has armed.
 Free text. `{"type":"log","message":"…","level":"info"}`. Levels: `info`,
 `warn`, `error`.
 
+## `rescue_event`
+
+Carries one validated SIH 26177 rescue producer event inside the same append-only stream.
+Fields are `schema`, `mission_id`, `event_id`, `source`, `source_seq`, `observed_at_ms`,
+`kind` and `payload`. The complete producer contract, event kinds and payload validation
+are in `docs/RESCUE_DATA_PLANE.md` and `rescue/schema.py`.
+
+Development events may leave model/artifact checksums null. The selected final model hash
+remains mandatory for VeriSwarm model-identity enforcement.
+
 ---
 
 ## Building against this

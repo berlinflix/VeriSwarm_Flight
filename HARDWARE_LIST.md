@@ -14,6 +14,7 @@ Companion to `SIH_2026_Build_Plan.md`.
 | USB flash drive | For moving the backup video to a venue machine |
 | Teammates' USB-C docks (with ethernet) | **Must be load-tested — see below** |
 | Laptop webcams | Cover any peer node that doesn't need a positioned camera |
+| Android phone + tripod | Camera B for the internal qualifier through DroidCam |
 
 ---
 
@@ -22,8 +23,8 @@ Companion to `SIH_2026_Build_Plan.md`.
 | # | Item | ₹ | Why |
 |---|---|---|---|
 | 1 | **TP-Link TL-SG1008D** 8-port gigabit unmanaged switch | 1,899 | Your own LAN. Confirmed purchase |
-| 2 | **USB webcam ×2** — same model, 1080p | 5,000 | Alpha + one physical peer. **Matched models** so a detection difference can't be blamed on camera quality instead of viewpoint |
-| 3 | **Camera mounts ×2** (mini tripod or gooseneck clamp) | 2,000 | Fixed, repeatable angular offset between the two cameras. Needs a 1/4"-20 thread — check your webcam has one |
+| 2 | **USB webcam ×1** — 1080p | 2,500 | Camera A for the internal qualifier; Camera B is the owned Android/DroidCam phone. A second matched USB camera is a later SIH calibration upgrade, not a blocker now |
+| 3 | **Camera mount ×1** (mini tripod or gooseneck clamp) | 1,000 | Fixed USB-camera placement; the Android already has a tripod |
 | 4 | **Cat6 cables** — 3× 1 m, 3× 3 m | 900 | Four machines plus spares |
 | 5 | **TP-Link UE300C ×1** (spare) | 1,100 | See "the one spare that's justified" below |
 | 6 | **USB-C → USB-A dongle ×2** | 500 | Webcam into a USB-C-only Mac |
@@ -34,7 +35,7 @@ Companion to `SIH_2026_Build_Plan.md`.
 | 11 | **Jumper wires (F–F) + jumper caps** | 250 | Orin Nano recovery mode jumpers pins 9–10 on the button header. Without this you cannot reflash |
 | 12 | **Patch printing** — A3 matte ×3, mounted on foam board | 1,000 | See printing rules below |
 
-**Essential total ≈ ₹15,000–17,000**
+**Essential total ≈ ₹11,500–13,500** with the owned Android/tripod.
 
 ## Buy — recommended
 

@@ -1,9 +1,9 @@
 # MESSAGE — Pratik and Abhijan jointly own drone movement
 
-**From:** Pratik  
-**To:** Suyash, Samik, Abhijan, Ayush  
-**Date:** 2026-08-22  
-**Priority:** P0 ownership/interface update  
+**From:** Pratik
+**To:** Suyash, Samik, Abhijan, Ayush
+**Date:** 2026-08-22
+**Priority:** P0 ownership/interface update
 
 The execution plan has changed: **Pratik and Abhijan jointly own the five-drone movement
 lane.** Do not continue assuming that Samik owns the mission movement controller.

@@ -85,11 +85,29 @@ def run_case(
     peer_ids = sorted(set(manifest["nodes"]) - {originator_id})
     claim = claim_from_dict(case["claim"])
 
-    origin = Originator(manifest, originator_id, peer_ids, rpc_timeout_s=rpc_timeout_s)
+    # Every invocation is a separate process, so the originator's counter would
+    # restart at 1 and collide with the previous run — the peers reject that as
+    # `duplicate_sequence`, and a repeated clean case would fail even though
+    # nothing is wrong. Seeding from the wall clock (ms since epoch, well inside
+    # the uint64 wire field) gives each run a strictly increasing sequence that
+    # is never reused, so the panel may re-run a case as often as it likes.
+    origin = Originator(
+        manifest, originator_id, peer_ids,
+        rpc_timeout_s=rpc_timeout_s,
+        start_sequence=time.time_ns() // 1_000_000,
+    )
     try:
-        if not origin.wait_ready(timeout=ready_timeout_s):
+        # A degraded-quorum case declares how many peers it expects to be absent,
+        # so require only the rest. Waiting for every peer would abort the round
+        # before it starts and report a setup error instead of demonstrating the
+        # condition. Peers that never answer are still counted as `missing` by
+        # the tally, so nothing is hidden by relaxing the gate.
+        expected_missing = int(case.get("expected", {}).get("missing", 0))
+        min_ready = max(0, len(peer_ids) - expected_missing)
+        if not origin.wait_ready(timeout=ready_timeout_s, minimum=min_ready):
             raise SystemExit(
-                f"peers not ready within {ready_timeout_s}s: need {peer_ids}"
+                f"needed {min_ready} of {len(peer_ids)} peers ready within "
+                f"{ready_timeout_s}s: {peer_ids}"
             )
         pose_vals = manifest["nodes"][originator_id].get("pose")
         pose = Pose(*pose_vals[:5]) if pose_vals else None

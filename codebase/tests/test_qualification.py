@@ -133,3 +133,80 @@ def test_q_model_swap_rejected_on_provenance(swarm):
     reasons = {**sinks["bravo"].vote_reasons(), **sinks["charlie"].vote_reasons()}
     assert reasons.get("bravo", "").startswith("model_hash_not_approved")
     assert reasons.get("charlie", "").startswith("model_hash_not_approved")
+
+
+# --- degraded-quorum scenarios -------------------------------------------
+# One witness is enough to REFUSE a command; authorising one still needs the
+# full quorum. These lock that asymmetry in: a change that let a single ACK
+# authorise motion, or that stopped a lone peer from rejecting an unapproved
+# model, would break here rather than on stage.
+
+def _serve_subset(manifest, live, sinks):
+    return {
+        nid: serve(nid, manifest, on_event=sinks[nid],
+                   snapshot_provider=snapshot_provider_from_fixture(
+                       _empty_scene_fixture(nid)))
+        for nid in live
+    }
+
+
+def _degraded_swarm(live):
+    manifest = generate_manifest(
+        ["alpha", "bravo", "charlie"], base_port=0, host="127.0.0.1", poses=POSES,
+        approved_models=[APPROVED], approved_runtimes=[APPROVED_RUNTIME],
+        o_min=0.1, phi_min=0.0, mode="simulation",
+        mission_id="internal-qualifier-2026-08-19", mission_epoch=1)
+    for nid in manifest["nodes"]:
+        manifest["nodes"][nid]["port"] = 0
+    sinks = {nid: _Sink() for nid in ("bravo", "charlie")}
+    servers = _serve_subset(manifest, live, sinks)
+    for nid in ("bravo", "charlie"):
+        if nid not in live and manifest["nodes"][nid]["port"] == 0:
+            manifest["nodes"][nid]["port"] = 59700 + len(nid)  # nothing listening
+    return manifest, servers
+
+
+@pytest.mark.parametrize(
+    "live,model_hash,outcome,acks,disputes,missing",
+    [
+        # one peer down: a lone ACK cannot authorise, a lone DISPUTE can reject
+        (("charlie",), APPROVED, ConsensusOutcome.NO_QUORUM, 1, 0, 1),
+        (("charlie",), TAMPERED, ConsensusOutcome.REJECTED, 0, 1, 1),
+        # no peers: nothing verified, so nothing authorised AND nothing claimed caught
+        ((), APPROVED, ConsensusOutcome.NO_QUORUM, 0, 0, 2),
+        ((), TAMPERED, ConsensusOutcome.NO_QUORUM, 0, 0, 2),
+    ],
+)
+def test_degraded_quorum_outcomes(live, model_hash, outcome, acks, disputes, missing):
+    manifest, servers = _degraded_swarm(live)
+    origin = Originator(manifest, "alpha", ["bravo", "charlie"], rpc_timeout_s=1.0)
+    try:
+        assert origin.wait_ready(timeout=5.0, minimum=len(live))
+        out = origin.originate(
+            output=[0.0, 0.0, 0.0], model_hash=model_hash,
+            input_bytes=b"degraded", pose=Pose(0.0, 0.0, 14.0),
+            perception=PerceptionClaim(measured=True, detections_present=False))
+        assert out.outcome is outcome
+        assert out.ack_count == acks
+        assert out.dispute_count == disputes
+        assert out.missing_count == missing
+    finally:
+        origin.close()
+        for srv in servers.values():
+            srv.servicer.close()
+            srv.stop(grace=1.0)
+
+
+def test_wait_ready_minimum_tolerates_absent_peers():
+    """A degraded run must not abort in the readiness gate before it starts."""
+    manifest, servers = _degraded_swarm(("charlie",))
+    origin = Originator(manifest, "alpha", ["bravo", "charlie"], rpc_timeout_s=1.0)
+    try:
+        assert origin.wait_ready(timeout=4.0, minimum=1) is True
+        assert origin.wait_ready(timeout=0.0, minimum=0) is True
+        assert origin.wait_ready(timeout=2.0) is False  # default still requires all
+    finally:
+        origin.close()
+        for srv in servers.values():
+            srv.servicer.close()
+            srv.stop(grace=1.0)
