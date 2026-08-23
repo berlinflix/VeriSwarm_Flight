@@ -52,7 +52,7 @@ python ~/jetson_handoff_758a177/code/university1652_console.py \
 
 Use one process and one port:
 
-- `http://192.168.50.10:8080/rescue` — disaster-video survivor detection.
+- `http://192.168.50.10:8080/rescue` — still-image and video person-candidate detection.
 - `http://192.168.50.10:8080/` — University-1652 visual geolocation.
 - `http://192.168.50.10:8080/hazards` — India hazard atlas.
 
@@ -115,7 +115,9 @@ a known-example demonstration from a field-accuracy estimate.
 - `GET /health` or `GET /api/status`: runtime state and identities.
 - `GET /hazards`: judge-facing India hazard/reference-bank planning atlas.
 - `GET /assets/hazards/<allow-listed-name>`: bundled reference images.
-- `GET /rescue`: disaster-video survivor-detection console.
+- `GET /rescue`: disaster-image and video person-candidate console.
+- `POST /api/rescue/image`: analyze one JPEG, PNG or WebP and return red
+  `DISASTER / UNVERIFIED` boxes, model identity and a signed receipt.
 - `POST /api/rescue/analyze`: start a create-once video-analysis job.
 - `GET /api/rescue/jobs/<UUID>`: retrieve job progress and signed sightings.
 - `POST /api/rescue/unload`: release the detector and CUDA cache.

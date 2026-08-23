@@ -39,12 +39,14 @@ except ModuleNotFoundError:  # Standalone Jetson handoff beside this module.
 try:
     from tools.rescue_video import (
         RescueVideoRuntime,
+        extract_image_upload,
         extract_video_upload,
         rescue_video_html,
     )
 except ModuleNotFoundError:  # Standalone Jetson handoff beside this module.
     from rescue_video import (  # type: ignore[no-redef]
         RescueVideoRuntime,
+        extract_image_upload,
         extract_video_upload,
         rescue_video_html,
     )
@@ -471,6 +473,31 @@ def handler_factory(
                 except ValueError as error:
                     return self.send_json(409, {"error": str(error)})
                 return self.send_json(202, {"job_id": job_id})
+            if route == "/api/rescue/image":
+                if rescue_runtime is None:
+                    return self.send_json(503, {"error": "rescue model is not configured"})
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    return self.send_json(400, {"error": "invalid Content-Length"})
+                if length <= 0 or length > max_upload_bytes:
+                    return self.send_json(
+                        413,
+                        {"error": f"image upload must be 1 byte to {max_upload_bytes // 1048576} MiB"},
+                    )
+                try:
+                    payload, filename = extract_image_upload(
+                        self.rfile.read(length), self.headers.get("Content-Type", "")
+                    )
+                    result = rescue_runtime.analyze_image(payload, filename)
+                except ValueError as error:
+                    return self.send_json(409, {"error": str(error)})
+                except Exception as error:
+                    print(f"rescue image analysis failed: {type(error).__name__}: {error}")
+                    return self.send_json(
+                        500, {"error": f"analysis failed: {type(error).__name__}"}
+                    )
+                return self.send_json(200, result)
             if route == "/api/unload":
                 return self.send_json(200, runtime.unload())
             if route != "/api/analyze":
