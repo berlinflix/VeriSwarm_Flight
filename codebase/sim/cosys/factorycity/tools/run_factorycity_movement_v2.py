@@ -614,6 +614,16 @@ def main() -> None:
     parser.add_argument("--authorization-file", type=Path, required=True)
     parser.add_argument("--outbox-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--route-mode",
+        choices=("sensor", "authorized-nominal"),
+        default="sensor",
+        help=(
+            "sensor keeps measured depth/deflection enabled; authorized-nominal "
+            "uses the accepted A-to-B route while retaining five-lease gating, "
+            "collision checks, durable coverage and live dashboard telemetry"
+        ),
+    )
     args = parser.parse_args()
 
     mission = _load_config(args.mission_config, args.map_file)
@@ -865,7 +875,11 @@ def main() -> None:
             futures = []
             terminal_nodes: list[tuple[str, str]] = []
             for node in tuple(sorted(active)):
-                depth = _capture_depth(client, node, extension)
+                depth = (
+                    _capture_depth(client, node, extension)
+                    if args.route_mode == "sensor"
+                    else None
+                )
                 local = _local_position(client, node)
                 transition_at_ms = _now_ms()
                 progress, cross_track = _route_metrics(local, dx, dy, distance)
@@ -883,14 +897,29 @@ def main() -> None:
                     collision["has_collided"]
                     and int(collision["timestamp"]) > collision_baseline[node]
                 )
-                action, transitions = supervisor.decide(
-                    node=node,
-                    depth=depth,
-                    collision_detected=collision_detected,
-                    cross_track_m=cross_track,
-                    vertical_offset_m=local[2] - float(route["cruise_z_ned_m"]),
-                    loop_period_ms=loop_period_ms,
-                )
+                if args.route_mode == "sensor":
+                    assert depth is not None
+                    action, transitions = supervisor.decide(
+                        node=node,
+                        depth=depth,
+                        collision_detected=collision_detected,
+                        cross_track_m=cross_track,
+                        vertical_offset_m=local[2] - float(route["cruise_z_ned_m"]),
+                        loop_period_ms=loop_period_ms,
+                    )
+                elif collision_detected:
+                    action, transitions = (
+                        "TERMINATE_VEHICLE",
+                        ("COLLISION_DETECTED",),
+                    )
+                else:
+                    # The accepted nominal A-to-B controller already qualifies this
+                    # straight route.  This explicit mode keeps authorization at every
+                    # command boundary and preserves genuine telemetry/coverage while
+                    # removing five synchronous DepthPlanar captures from the critical
+                    # motion loop.  It must not be presented as obstacle-deflection
+                    # evidence; sensor mode remains the separate qualification path.
+                    action, transitions = "CONTINUE_ROUTE", ()
                 for transition in transitions:
                     movement_events.movement_safety(
                         node=node,
@@ -904,7 +933,7 @@ def main() -> None:
                         measured_distance_m=(
                             float(collision["penetration_depth_m"])
                             if transition == "COLLISION_DETECTED"
-                            else float(depth.center_m)
+                            else float(depth.center_m if depth is not None else 0.0)
                         ),
                         observed_at_ms=transition_at_ms,
                         position_ned=positions[node],
@@ -1067,6 +1096,7 @@ def main() -> None:
             ),
             "states": states,
             "collided": sorted(collided),
+            "route_mode": args.route_mode,
             "outbox_directory": str(args.outbox_directory),
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)

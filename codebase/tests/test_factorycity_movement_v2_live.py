@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -318,6 +320,24 @@ def test_live_adapter_releases_actual_velocity_and_directional_commands(tmp_path
         minimum_separation_m=2.0,
     )
     assert client.calls[-1][4] < -10.0
+
+
+def test_live_runner_exposes_explicit_authorized_nominal_route_mode() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "sim.cosys.factorycity.tools.run_factorycity_movement_v2",
+            "--help",
+        ],
+        check=True,
+        capture_output=True,
+        cwd=ROOT,
+        text=True,
+    )
+
+    assert "--route-mode {sensor,authorized-nominal}" in completed.stdout
+    assert "accepted A-to-B route" in completed.stdout
 
 
 def test_single_active_vehicle_uses_configured_gate_separation() -> None:

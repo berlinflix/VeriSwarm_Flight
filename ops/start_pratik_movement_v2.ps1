@@ -5,7 +5,9 @@ param(
     [string]$ProjectRoot = "",
     [string]$AuthorizationFile = "",
     [string]$OutboxDirectory = "",
-    [string]$RunResult = ""
+    [string]$RunResult = "",
+    [ValidateSet("sensor", "authorized-nominal")]
+    [string]$RouteMode = "sensor"
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,6 +82,10 @@ Write-Host "  INFO  FactoryCity_Disaster must already be running in Play mode"
 Write-Host "  INFO  $AuthorizationFile must be atomically refreshed with all five leases"
 Write-Host "  INFO  every lease must remain newer than the frozen two-second timeout"
 Write-Host "  INFO  durable events will be written to $OutboxDirectory"
+Write-Host "  INFO  route mode: $RouteMode"
+if ($RouteMode -eq "authorized-nominal") {
+    Write-Host "  INFO  movement-first A-to-B path; do not claim obstacle deflection from this run" -ForegroundColor Yellow
+}
 
 Push-Location (Join-Path $Repo "codebase")
 & $Python -m sim.cosys.factorycity.tools.run_factorycity_movement_v2 `
@@ -91,6 +97,7 @@ Push-Location (Join-Path $Repo "codebase")
     --layer-result $Inputs["layer result"] `
     --authorization-file $Inputs["authorization snapshot"] `
     --outbox-directory $OutboxDirectory `
+    --route-mode $RouteMode `
     --output $RunResult
 $RunExit = $LASTEXITCODE
 Pop-Location
