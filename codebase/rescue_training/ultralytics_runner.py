@@ -850,6 +850,7 @@ def run_training(
     workspace_root: str | os.PathLike[str],
     repository_root: str | os.PathLike[str],
     batch_decision: str | os.PathLike[str] | None = None,
+    skip_post_training_audit: bool = False,
     yolo_factory: Callable[[str], Any] | None = None,
     runtime_evidence: Mapping[str, Any] | None = None,
     cloud_environment_evidence: Mapping[str, Any] | None = None,
@@ -1169,56 +1170,71 @@ def run_training(
             "all_epoch_losses_finite": metrics["losses_all_epochs_finite"],
         }
 
-    post_training_audit = verify_visdrone_audit(
-        audit_path,
-        dataset_yaml=data_path,
-    )
     pre_integrity_hash = audit_evidence["authoritative_integrity_sha256"]
-    post_integrity_hash = post_training_audit["authoritative_integrity_sha256"]
-    if pre_integrity_hash != post_integrity_hash:
-        raise TrainingExecutionError(
-            "dataset integrity changed between preflight and post-training verification"
+    if skip_post_training_audit:
+        # Operator-selected speed mode.  The post-training re-verification is
+        # the only evidence that the dataset did not change *during* training,
+        # so when it is skipped the report must say so plainly instead of
+        # asserting an unverified ``integrity_unchanged`` result.  Downstream
+        # release qualification requires the post-training fields and will
+        # therefore fail closed on a run produced in this mode.
+        audit_report_evidence = {
+            **audit_evidence,
+            "pre_training_verified_at_utc": audit_evidence["verified_at_utc"],
+            "pre_training_authoritative_integrity_sha256": pre_integrity_hash,
+            "post_training_verification": "skipped_by_operator",
+            "integrity_unchanged": None,
+        }
+    else:
+        post_training_audit = verify_visdrone_audit(
+            audit_path,
+            dataset_yaml=data_path,
         )
-    for field in (
-        "report_sha256",
-        "montage_sha256",
-        "dataset_yaml_sha256",
-        "sample_set_sha256",
-    ):
-        if audit_evidence[field] != post_training_audit[field]:
+        post_integrity_hash = post_training_audit["authoritative_integrity_sha256"]
+        if pre_integrity_hash != post_integrity_hash:
             raise TrainingExecutionError(
-                f"dataset {field} changed between preflight and post-training verification"
+                "dataset integrity changed between preflight and post-training verification"
             )
-    try:
-        post_training_qualification = validate_automated_dataset_qualification(
-            qualification_path,
-            expected_audit_path=post_training_audit["report_path"],
-            expected_audit_sha256=post_training_audit["report_sha256"],
-            expected_dataset_yaml_path=data_path,
-            expected_dataset_yaml_sha256=post_training_audit[
-                "dataset_yaml_sha256"
-            ],
-            expected_montage_path=post_training_audit["montage_path"],
-            expected_montage_sha256=post_training_audit["montage_sha256"],
-            expected_splits=split_evidence,
-            workspace_root=workspace,
-            repository_root=repository_root,
-        )
-    except DatasetQualificationError as error:
-        raise TrainingExecutionError(str(error)) from error
-    if post_training_qualification != qualification_evidence:
-        raise TrainingExecutionError(
-            "dataset qualification changed during training"
-        )
+        for field in (
+            "report_sha256",
+            "montage_sha256",
+            "dataset_yaml_sha256",
+            "sample_set_sha256",
+        ):
+            if audit_evidence[field] != post_training_audit[field]:
+                raise TrainingExecutionError(
+                    f"dataset {field} changed between preflight and post-training verification"
+                )
+        try:
+            post_training_qualification = validate_automated_dataset_qualification(
+                qualification_path,
+                expected_audit_path=post_training_audit["report_path"],
+                expected_audit_sha256=post_training_audit["report_sha256"],
+                expected_dataset_yaml_path=data_path,
+                expected_dataset_yaml_sha256=post_training_audit[
+                    "dataset_yaml_sha256"
+                ],
+                expected_montage_path=post_training_audit["montage_path"],
+                expected_montage_sha256=post_training_audit["montage_sha256"],
+                expected_splits=split_evidence,
+                workspace_root=workspace,
+                repository_root=repository_root,
+            )
+        except DatasetQualificationError as error:
+            raise TrainingExecutionError(str(error)) from error
+        if post_training_qualification != qualification_evidence:
+            raise TrainingExecutionError(
+                "dataset qualification changed during training"
+            )
 
-    audit_report_evidence = {
-        **audit_evidence,
-        "pre_training_verified_at_utc": audit_evidence["verified_at_utc"],
-        "pre_training_authoritative_integrity_sha256": pre_integrity_hash,
-        "post_training_authoritative_integrity_sha256": post_integrity_hash,
-        "post_training_verified_at_utc": post_training_audit["verified_at_utc"],
-        "integrity_unchanged": True,
-    }
+        audit_report_evidence = {
+            **audit_evidence,
+            "pre_training_verified_at_utc": audit_evidence["verified_at_utc"],
+            "pre_training_authoritative_integrity_sha256": pre_integrity_hash,
+            "post_training_authoritative_integrity_sha256": post_integrity_hash,
+            "post_training_verified_at_utc": post_training_audit["verified_at_utc"],
+            "integrity_unchanged": True,
+        }
     finished_at = _utc_now()
 
     report = {

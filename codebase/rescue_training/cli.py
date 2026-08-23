@@ -151,6 +151,15 @@ def _parser() -> argparse.ArgumentParser:
     train.add_argument("--run-directory", type=Path, required=True)
     train.add_argument("--repository-root", type=Path, required=True)
     train.add_argument("--batch-decision", type=Path)
+    train.add_argument(
+        "--skip-post-training-audit",
+        action="store_true",
+        help=(
+            "Skip the post-training dataset re-verification.  The run report "
+            "records the skip and leaves integrity_unchanged unset, so release "
+            "qualification will reject the resulting candidate."
+        ),
+    )
     return parser
 
 
@@ -384,6 +393,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_directory=args.run_directory.resolve(),
                 workspace_root=plan.workspace_root,
                 repository_root=args.repository_root.resolve(),
+                skip_post_training_audit=args.skip_post_training_audit,
                 batch_decision=(
                     args.batch_decision.resolve() if args.batch_decision else None
                 ),
