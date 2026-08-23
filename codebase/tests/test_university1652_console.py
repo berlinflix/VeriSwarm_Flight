@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
+import urllib.request
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 from tools.build_university1652_locations import (
     build_manifest,
@@ -13,9 +17,11 @@ from tools.build_university1652_locations import (
 from tools.university1652_console import (
     enrich_hypotheses,
     extract_upload,
+    handler_factory,
     load_locations,
     safe_upload_suffix,
 )
+from tools.hazard_atlas import hazard_asset, hazard_atlas_html
 
 
 KML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -86,6 +92,55 @@ class University1652ConsoleTests(unittest.TestCase):
         self.assertNotIn("gallery_path", value)
         self.assertIn("41.3670000", value["openstreetmap_url"])
         self.assertEqual(value["name"], "Boesel Musical Arts Center")
+
+    def test_hazard_atlas_is_explicitly_advisory_and_has_all_layers(self) -> None:
+        page = hazard_atlas_html(Path("assets/hazards")).decode("utf-8")
+        self.assertIn("India Rescue Coverage Atlas", page)
+        self.assertIn("not an operational hazard product", page)
+        self.assertIn("Flood corridors", page)
+        self.assertIn("Seismic corridors", page)
+        self.assertIn("Landslide belts", page)
+        self.assertIn("VIO/IMU/temporal consistency", page)
+        self.assertIn("/assets/hazards/flood-affected-reference.png", page)
+
+    def test_hazard_assets_are_allow_listed(self) -> None:
+        path, content_type = hazard_asset(
+            Path("assets/hazards"), "seismic-zones-reference.png"
+        )
+        self.assertTrue(path.is_file())
+        self.assertEqual(content_type, "image/png")
+        with self.assertRaises(ValueError):
+            hazard_asset(Path("assets/hazards"), "../secrets.txt")
+
+    def test_server_exposes_hazard_atlas_and_reference_assets(self) -> None:
+        runtime = SimpleNamespace(
+            model_sha256="a" * 64,
+            locations={"0000": {}},
+            device="cpu",
+        )
+        handler = handler_factory(
+            runtime,  # type: ignore[arg-type]
+            max_upload_bytes=1024,
+            google_key="",
+            hazard_asset_root=Path("assets/hazards"),
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address
+            with urllib.request.urlopen(f"http://{host}:{port}/hazards") as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn(b"not an operational hazard product", response.read())
+            with urllib.request.urlopen(
+                f"http://{host}:{port}/assets/hazards/seismic-zones-reference.png"
+            ) as response:
+                self.assertEqual(response.headers.get_content_type(), "image/png")
+                self.assertGreater(len(response.read()), 1000)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
 
 if __name__ == "__main__":

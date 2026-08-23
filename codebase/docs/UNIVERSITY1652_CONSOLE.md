@@ -39,12 +39,38 @@ python ~/jetson_handoff_758a177/code/university1652_console.py \
   --gallery-dir ~/jetson_handoff_758a177/data/gallery_satellite \
   --gallery-cache ~/jetson_handoff_758a177/gallery-951.fp16.npz \
   --locations ~/jetson_handoff_758a177/code/university1652_locations.json \
+  --rescue-model ~/VeriSwarm_Jetson_Offline/wheelhouse/yolov8n.pt \
+  --expected-rescue-model-sha256 f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36 \
+  --rescue-stride 10 \
+  --rescue-max-frames 400 \
   --evidence-dir ~/VeriSwarm_Jetson_Evidence/geolocation-console \
+  --rescue-evidence-dir ~/VeriSwarm_Jetson_Evidence/rescue-video \
   --bind 0.0.0.0 \
   --port 8080
 ```
 
-Open `http://192.168.50.10:8080` on the operator laptop.
+Use one process and one port:
+
+- `http://192.168.50.10:8080/rescue` — disaster-video survivor detection.
+- `http://192.168.50.10:8080/` — University-1652 visual geolocation.
+- `http://192.168.50.10:8080/hazards` — India hazard atlas.
+
+The detector and geolocation encoder load lazily. A single GPU lock serializes
+them; starting one workflow unloads the other model first. The hazard atlas
+loads neither model. Do not run the old standalone `rescue_console.py` at the
+same time because only one process can bind TCP port `8080`.
+
+Open `http://192.168.50.10:8080/hazards` for the India Rescue Coverage Atlas.
+It provides interactive flood, seismic, landslide and multi-hazard planning
+overlays, a satellite basemap, downloadable regional acquisition briefs and
+the supplied reference-map gallery. The atlas does not load the University-1652
+model and therefore does not consume model GPU memory.
+
+The colored atlas geometry is **illustrative, not operational GIS**. Before
+deployment, replace it with authoritative machine-readable layers from
+NRSC/Bhuvan and GSI Bhusanket/Bhukosh (plus the applicable NDMA/BIS/CWC
+sources). Static reference screenshots are displayed as reference material;
+the console does not claim they are live or machine-readable government data.
 
 The model and gallery cache are loaded lazily on the first upload. Press
 **Unload model** in the console to release model references and cached CUDA
@@ -86,6 +112,12 @@ a known-example demonstration from a field-accuracy estimate.
 ## API
 
 - `GET /health` or `GET /api/status`: runtime state and identities.
+- `GET /hazards`: judge-facing India hazard/reference-bank planning atlas.
+- `GET /assets/hazards/<allow-listed-name>`: bundled reference images.
+- `GET /rescue`: disaster-video survivor-detection console.
+- `POST /api/rescue/analyze`: start a create-once video-analysis job.
+- `GET /api/rescue/jobs/<UUID>`: retrieve job progress and signed sightings.
+- `POST /api/rescue/unload`: release the detector and CUDA cache.
 - `POST /api/analyze`: multipart form upload field `image`.
 - `POST /api/unload`: release the encoder, gallery matrix and CUDA cache.
 - `GET /api/gallery/<four-digit-id>`: safe satellite thumbnail for a candidate.
