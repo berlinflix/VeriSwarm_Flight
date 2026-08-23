@@ -149,6 +149,32 @@ def _route_metrics(
     return progress, signed_cross_track
 
 
+def _slew_limited_z_target(
+    *,
+    current_z: float,
+    requested_z: float,
+    vertical_velocity_limit_mps: float,
+    duration_seconds: float,
+) -> float:
+    """Move a Z target no farther than the frozen per-command velocity permits."""
+
+    values = _finite_vector(
+        (
+            current_z,
+            requested_z,
+            vertical_velocity_limit_mps,
+            duration_seconds,
+        ),
+        "z_slew",
+    )
+    current, requested, velocity_limit, duration = values
+    if velocity_limit <= 0.0 or duration <= 0.0:
+        raise MovementV2Error("z_slew_limit_invalid")
+    delta = requested - current
+    maximum_step = velocity_limit * duration
+    return current + math.copysign(min(abs(delta), maximum_step), delta)
+
+
 def _command_payload(
     contract: Mapping[str, Any],
     *,
@@ -292,10 +318,17 @@ class LiveCoSimCommandAdapter:
         if action in {"CONTINUE_ROUTE", "RESUME_ROUTE"}:
             speed = float(safety["maximum_nominal_speed_mps"])
             vx, vy = speed * self.route_unit[0], speed * self.route_unit[1]
-            target_local_z = self.cruise_z
+            target_local_z = _slew_limited_z_target(
+                current_z=local[2],
+                requested_z=self.cruise_z,
+                vertical_velocity_limit_mps=float(
+                    self.contract["command_limits"]["vertical_velocity_mps"]
+                ),
+                duration_seconds=duration_seconds,
+            )
             target_world[0] += vx * duration_seconds
             target_world[1] += vy * duration_seconds
-            target_world[2] += self.cruise_z - local[2]
+            target_world[2] += target_local_z - local[2]
         elif action in {"DEFLECT_LEFT", "DEFLECT_RIGHT"}:
             direction = 1.0 if action == "DEFLECT_LEFT" else -1.0
             speed = float(safety["deflection_velocity_mps"])
@@ -313,10 +346,17 @@ class LiveCoSimCommandAdapter:
             speed = float(safety["route_rejoin_lateral_velocity_mps"])
             vx = direction * speed * self.left_unit[0]
             vy = direction * speed * self.left_unit[1]
-            target_local_z = self.cruise_z
+            target_local_z = _slew_limited_z_target(
+                current_z=local[2],
+                requested_z=self.cruise_z,
+                vertical_velocity_limit_mps=float(
+                    self.contract["command_limits"]["vertical_velocity_mps"]
+                ),
+                duration_seconds=duration_seconds,
+            )
             target_world[0] += vx * duration_seconds
             target_world[1] += vy * duration_seconds
-            target_world[2] += self.cruise_z - local[2]
+            target_world[2] += target_local_z - local[2]
         elif action in {"HOVER", "BLOCK_CELL", "TERMINATE_VEHICLE"}:
             command = _command_payload(
                 self.contract,
@@ -699,6 +739,8 @@ def main() -> None:
     started_at_ms = _now_ms()
     loop_count = 0
     minimum_observed_separation = math.inf
+    last_gate_decisions: dict[str, dict[str, Any]] = {}
+    released_route_commands = {node: 0 for node in roster}
     water_name = _resolve_water_object(
         args.layer_result, str(flood["water_actor_id"])
     )
@@ -842,6 +884,35 @@ def main() -> None:
                 _require_release(decision, "flood_climb", node)
                 futures.append(future)
             _join_all(futures)
+
+        # Flood clearance may leave the vehicles above the configured route
+        # altitude (for example local z=-8.2 while cruise z=-10). Moving directly
+        # to cruise altitude inside one 250 ms horizontal command would declare a
+        # vertical speed above the frozen 2 m/s limit, so the gate would correctly
+        # replace every A-to-B command with HOVER. Complete the authorized altitude
+        # transition first; the route adapter also slew-limits any residual error.
+        cruise_z = float(route["cruise_z_ned_m"])
+        cruise_futures = []
+        cruise_positions = _world_positions(client, roster)
+        cruise_separation = _gate_separation(contract, cruise_positions)
+        for node in roster:
+            command = _preflight_command(
+                contract, client, node, cruise_z, cruise_separation
+            )
+            decision, future = adapter.dispatch_mutation(
+                node=node,
+                command=command,
+                in_flight=True,
+                mutate=lambda node=node: client.moveToZAsync(
+                    cruise_z,
+                    float(limits["vertical_velocity_mps"]),
+                    timeout_sec=float(limits["command_timeout_seconds"]),
+                    vehicle_name=node,
+                ),
+            )
+            _require_release(decision, "cruise_altitude", node)
+            cruise_futures.append(future)
+        _join_all(cruise_futures)
         time.sleep(float(limits["post_takeoff_settle_seconds"]))
 
         collision_baseline = {
@@ -858,7 +929,14 @@ def main() -> None:
             if time.monotonic() - route_started > float(
                 contract["command_limits"]["maximum_route_runtime_seconds"]
             ):
-                raise MovementV2Error("movement_v2_route_runtime_exceeded")
+                gate_summary = ",".join(
+                    f"{node}:{details['decision']}:{details['reason']}"
+                    for node, details in sorted(last_gate_decisions.items())
+                )
+                suffix = f":{gate_summary}" if gate_summary else ""
+                raise MovementV2Error(
+                    f"movement_v2_route_runtime_exceeded{suffix}"
+                )
             loop_started_ms = _now_ms()
             loop_period_ms = max(0, loop_started_ms - previous_loop_ms)
             previous_loop_ms = loop_started_ms
@@ -944,6 +1022,14 @@ def main() -> None:
                     duration_seconds=control_period,
                     minimum_separation_m=minimum_separation,
                 )
+                last_gate_decisions[node] = {
+                    "decision": decision.decision,
+                    "action": decision.action,
+                    "reason": decision.reason,
+                    "release_command": decision.release_command,
+                }
+                if decision.release_command:
+                    released_route_commands[node] += 1
                 if decision.action == "ABORT_HOVER_LAND":
                     states[node] = "QUARANTINED"
                     terminal_nodes.append((node, "authorization_quarantine"))
@@ -1097,6 +1183,8 @@ def main() -> None:
             "states": states,
             "collided": sorted(collided),
             "route_mode": args.route_mode,
+            "last_gate_decisions": last_gate_decisions,
+            "released_route_commands": released_route_commands,
             "outbox_directory": str(args.outbox_directory),
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)

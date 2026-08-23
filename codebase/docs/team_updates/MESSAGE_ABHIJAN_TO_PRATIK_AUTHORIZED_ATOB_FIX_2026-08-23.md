@@ -11,6 +11,12 @@ movement step. On the live Windows/Unreal system that work exceeded the frozen c
 period, so the supervisor correctly held each vehicle and horizontal progress never
 started.
 
+The first `authorized-nominal` hardware run then reached 213 fast control loops but still
+timed out with every vehicle in `HOLD`. That isolated a second fault. After the water rose,
+the vehicles were near local `z=-8.2`; the route requested `z=-10.0` in one 0.25-second
+command. The resulting declared vertical speed was about 7.2 m/s, above the frozen 2.0
+m/s limit, so the movement gate correctly replaced every horizontal command with hover.
+
 ## Added movement-first route
 
 `authorized-nominal` explicitly uses the already accepted straight Point A-to-Point B
@@ -27,6 +33,15 @@ It removes DepthPlanar capture/deflection from the critical route loop. Therefor
 run demonstrates authorized A-to-B movement and live dashboard integration, not obstacle
 deflection. The existing `sensor` mode remains unchanged for separate optimization and
 qualification.
+
+The controller now also:
+
+- performs a separately authorized transition from flood-clearance altitude to cruise
+  altitude before starting the A-to-B route;
+- slew-limits any residual Z correction to the frozen 2.0 m/s vertical-speed limit;
+- retains the latest decision/reason and released-command count for every vehicle in
+  `movement_v2_run.json`;
+- includes the exact per-vehicle gate reason in any future route-timeout failure.
 
 ## Run
 
@@ -48,11 +63,17 @@ INFO  route mode: authorized-nominal
 Expected result JSON includes:
 
 ```json
-"route_mode": "authorized-nominal"
+"route_mode": "authorized-nominal",
+"released_route_commands": {
+  "alpha": 1
+}
 ```
+
+Every vehicle's released-command count must be greater than zero. If the run fails, send
+the complete `failure`, `last_gate_decisions`, `released_route_commands`, `loop_count` and
+`states` fields; do not diagnose from the final `HOLD` state alone.
 
 ## Validation
 
-- focused movement and dashboard integration suite: `87 passed`
-- full repository suite: `569 passed`
-
+- focused movement/security suite: `43 passed`
+- full repository suite: `571 passed`

@@ -32,6 +32,7 @@ from sim.cosys.factorycity.tools.run_factorycity_movement_v2 import (
     _gate_separation,
     _outbox_factory,
     _preflight_command,
+    _slew_limited_z_target,
 )
 
 
@@ -338,6 +339,38 @@ def test_live_runner_exposes_explicit_authorized_nominal_route_mode() -> None:
 
     assert "--route-mode {sensor,authorized-nominal}" in completed.stdout
     assert "accepted A-to-B route" in completed.stdout
+
+
+def test_route_z_target_respects_frozen_vertical_velocity_limit() -> None:
+    target = _slew_limited_z_target(
+        current_z=-8.2,
+        requested_z=-10.0,
+        vertical_velocity_limit_mps=2.0,
+        duration_seconds=0.25,
+    )
+
+    assert target == pytest.approx(-8.7)
+    assert abs(target - (-8.2)) / 0.25 == pytest.approx(2.0)
+
+
+def test_nominal_route_releases_horizontal_motion_during_residual_z_correction(
+    tmp_path: Path,
+) -> None:
+    adapter, client, _ = _adapter(tmp_path, "ALLOW")
+    client.local[2] = -8.2
+    client.world[2] = -8.2
+
+    decision, value = adapter.execute(
+        node="alpha",
+        action="CONTINUE_ROUTE",
+        duration_seconds=0.25,
+        minimum_separation_m=2.0,
+    )
+
+    assert decision.release_command is True
+    assert value.join() == "velocity-finished"
+    assert client.calls[-1][0] == "velocity_z"
+    assert client.calls[-1][4] == pytest.approx(-8.7)
 
 
 def test_single_active_vehicle_uses_configured_gate_separation() -> None:
