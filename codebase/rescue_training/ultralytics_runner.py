@@ -750,6 +750,16 @@ def _verify_effective_arguments(
         if key in {"data", "project"}:
             if Path(str(actual)).resolve(strict=False) != Path(str(expected)).resolve(strict=False):
                 raise TrainingExecutionError(f"effective argument {key!r} changed")
+        elif key == "device":
+            # Ultralytics normalises the device selector to a string in
+            # args.yaml (``'0'``) even when the frozen plan requests the
+            # integer ``0``.  Compare canonical string forms so an equivalent
+            # selector is accepted while a genuinely different device, or any
+            # multi-GPU selector, still fails closed.
+            if str(actual) != str(expected):
+                raise TrainingExecutionError(
+                    f"effective argument {key!r} changed: expected {expected!r}, got {actual!r}"
+                )
         elif actual != expected:
             raise TrainingExecutionError(
                 f"effective argument {key!r} changed: expected {expected!r}, got {actual!r}"
