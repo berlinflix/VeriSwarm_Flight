@@ -1917,7 +1917,7 @@ button {
 .analytics-intro {
   display: flex;
   align-items: flex-end;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 32px;
   width: min(1480px, 100%);
   margin: 0 auto 14px;
@@ -2203,7 +2203,7 @@ button {
 
 .attack-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 

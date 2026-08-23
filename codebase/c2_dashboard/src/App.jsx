@@ -226,13 +226,6 @@ const scenarios = {
 
 const attackControls = [
   { key: "model", label: "Model Hash", target: "LIVE · ALPHA", Icon: Cpu, enabled: true },
-  { key: "patch", label: "Physical Patch", target: "WAITING FOR PRATIK", Icon: AlertTriangle, enabled: false },
-  { key: "replay", label: "Replay Receipt", target: "NOT QUALIFIED", Icon: RotateCcw, enabled: false },
-  { key: "provisioning", label: "Provisioning", target: "NOT QUALIFIED", Icon: Fingerprint, enabled: false },
-  { key: "ota", label: "OTA / Runtime", target: "NOT QUALIFIED", Icon: Zap, enabled: false },
-  { key: "rogue", label: "Rogue Node", target: "NOT QUALIFIED", Icon: ShieldX, enabled: false },
-  { key: "collude", label: "Collusion", target: "NOT QUALIFIED", Icon: Binary, enabled: false },
-  { key: "spoof", label: "Pose Spoof", target: "NOT QUALIFIED", Icon: RadioTower, enabled: false },
 ];
 
 const baseDrones = [
@@ -1673,14 +1666,13 @@ function ScrollAnalyticsScene({ scenario, qualification, rescue, movementAuthori
               <span>LIVE MISSION INTELLIGENCE</span>
               <h2>Every decision. Accounted for.</h2>
             </div>
-            <p>One presentation-ready view for retained evidence, live telemetry, attack controls, and cryptographic status.</p>
           </div>
 
           <EvidenceStrip scenario={scenario} qualification={qualification} />
 
           <RescueMission rescue={rescue} />
 
-          <CellMovementPanel rescue={rescue} movementAuthorization={movementAuthorization} />
+          <MovementAuthorityPanel authority={movementAuthorization} />
 
           <div className="lower-zone">
             <div className="lower-aurora" aria-hidden="true" />
