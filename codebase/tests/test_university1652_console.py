@@ -110,6 +110,7 @@ class University1652ConsoleTests(unittest.TestCase):
         self.assertIn("Guwahati Multi-hazard Pilot", page)
         self.assertIn("not a computed risk surface", page)
         self.assertNotIn("tile.openstreetmap.org", page)
+        self.assertIn('href="/live"', page)
 
     def test_hazard_assets_are_allow_listed(self) -> None:
         path, content_type = hazard_asset(
@@ -145,6 +146,63 @@ class University1652ConsoleTests(unittest.TestCase):
             ) as response:
                 self.assertEqual(response.headers.get_content_type(), "image/png")
                 self.assertGreater(len(response.read()), 1000)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_server_exposes_same_port_live_camera_controls_and_frame(self) -> None:
+        class FakeRescueRuntime:
+            weights_sha256 = "b" * 64
+            signer = SimpleNamespace(backend="optee")
+            stride = 10
+            live_camera = "/dev/video-test"
+            active_job = None
+            gpu_lock = threading.Lock()
+
+            def status(self):
+                return {"ok": True}
+
+            def live_status(self):
+                return {"ok": True, "state": "running", "frame_index": 3}
+
+            def latest_live_frame(self):
+                return b"jpeg-frame"
+
+            def start_live(self):
+                return {"ok": True, "state": "starting"}
+
+            def stop_live(self):
+                return {"ok": True, "state": "stopped", "release_verified": True}
+
+        runtime = SimpleNamespace(
+            model_sha256="a" * 64,
+            locations={"0000": {}},
+            device="cpu",
+        )
+        handler = handler_factory(
+            runtime,  # type: ignore[arg-type]
+            max_upload_bytes=1024,
+            google_key="",
+            hazard_asset_root=Path("assets/hazards"),
+            rescue_runtime=FakeRescueRuntime(),  # type: ignore[arg-type]
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address
+            base = f"http://{host}:{port}"
+            with urllib.request.urlopen(f"{base}/live") as response:
+                self.assertIn(b"LIVE EDGE CAMERA", response.read())
+            with urllib.request.urlopen(f"{base}/api/live/status") as response:
+                self.assertEqual(json.load(response)["frame_index"], 3)
+            with urllib.request.urlopen(f"{base}/api/live/frame") as response:
+                self.assertEqual(response.headers.get_content_type(), "image/jpeg")
+                self.assertEqual(response.read(), b"jpeg-frame")
+            request = urllib.request.Request(f"{base}/api/live/stop", method="POST")
+            with urllib.request.urlopen(request) as response:
+                self.assertTrue(json.load(response)["release_verified"])
         finally:
             server.shutdown()
             server.server_close()

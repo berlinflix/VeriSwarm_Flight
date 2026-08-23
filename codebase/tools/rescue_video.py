@@ -231,6 +231,13 @@ class RescueVideoRuntime:
         optee_ca: Path | None,
         gpu_lock: threading.Lock,
         before_run: Callable[[], object],
+        live_camera: str = (
+            "/dev/v4l/by-id/"
+            "usb-Owl_Lite_Owl_Lite_Camera_SN0001-video-index0"
+        ),
+        live_width: int = 640,
+        live_height: int = 480,
+        live_fps_limit: float = 8.0,
     ) -> None:
         self.weights = weights.resolve(strict=True)
         self.weights_sha256 = sha256_file(self.weights)
@@ -259,6 +266,27 @@ class RescueVideoRuntime:
         self.jobs_lock = threading.Lock()
         self.detector_lock = threading.Lock()
         self.active_job: str | None = None
+        self.live_camera = live_camera
+        self.live_width = live_width
+        self.live_height = live_height
+        self.live_fps_limit = live_fps_limit
+        self.live_lock = threading.Lock()
+        self.live_stop_event = threading.Event()
+        self.live_thread: threading.Thread | None = None
+        self.live_state = "stopped"
+        self.live_error: str | None = None
+        self.live_camera_opened = False
+        self.live_release_verified: bool | None = None
+        self.live_latest_jpeg: bytes | None = None
+        self.live_frame_index = 0
+        self.live_person_candidates = 0
+        self.live_maximum_confidence = 0.0
+        self.live_inference_ms = 0.0
+        self.live_processing_fps = 0.0
+        self.live_started_utc: str | None = None
+        self.live_stopped_utc: str | None = None
+        self.live_last_receipt: dict[str, object] | None = None
+        self.live_session_id: str | None = None
 
     def status(self) -> dict[str, object]:
         return {
@@ -269,12 +297,120 @@ class RescueVideoRuntime:
             "backend": self.detector.backend if self.detector else "cold",
             "signer": self.signer.backend,
             "active_job": self.active_job,
+            "live_camera_state": self.live_status()["state"],
             "policy": "survivor_reporting_is_not_consensus_gated",
         }
+
+    def live_active(self) -> bool:
+        with self.live_lock:
+            return self.live_state in {"starting", "running", "stopping"}
+
+    def live_status(self) -> dict[str, object]:
+        with self.live_lock:
+            return {
+                "ok": self.live_state != "error",
+                "state": self.live_state,
+                "camera": self.live_camera,
+                "camera_opened": self.live_camera_opened,
+                "release_verified": self.live_release_verified,
+                "model_loaded": self.detector is not None,
+                "model_sha256": self.weights_sha256,
+                "detector": self.detector.backend if self.detector else "cold",
+                "signer": self.signer.backend,
+                "frame_index": self.live_frame_index,
+                "person_candidate_count": self.live_person_candidates,
+                "maximum_confidence": self.live_maximum_confidence,
+                "inference_ms": self.live_inference_ms,
+                "processing_fps": self.live_processing_fps,
+                "started_utc": self.live_started_utc,
+                "stopped_utc": self.live_stopped_utc,
+                "last_receipt": self.live_last_receipt,
+                "session_id": self.live_session_id,
+                "error": self.live_error,
+                "policy": "live_detections_are_unverified_person_candidates",
+            }
+
+    def start_live(self) -> dict[str, object]:
+        if cv2 is None:
+            raise RuntimeError("OpenCV is required for live-camera capture")
+        if self.active_job is not None:
+            raise ValueError("a rescue-video job is active; wait for it to finish")
+        with self.live_lock:
+            if self.live_state in {"starting", "running", "stopping"}:
+                raise ValueError(f"live camera is already {self.live_state}")
+            self.live_state = "starting"
+            self.live_error = None
+            self.live_camera_opened = False
+            self.live_release_verified = None
+            self.live_latest_jpeg = None
+            self.live_frame_index = 0
+            self.live_person_candidates = 0
+            self.live_maximum_confidence = 0.0
+            self.live_inference_ms = 0.0
+            self.live_processing_fps = 0.0
+            self.live_started_utc = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            )
+            self.live_stopped_utc = None
+            self.live_last_receipt = None
+            self.live_session_id = str(uuid.uuid4())
+            self.live_stop_event.clear()
+            self.live_thread = threading.Thread(
+                target=self._live_loop,
+                name="veriswarm-live-camera",
+                daemon=True,
+            )
+            self.live_thread.start()
+        return self.live_status()
+
+    def stop_live(self, timeout: float = 12.0) -> dict[str, object]:
+        with self.live_lock:
+            thread = self.live_thread
+            if not thread or not thread.is_alive():
+                if self.live_state != "error":
+                    self.live_state = "stopped"
+                return self.live_status_unlocked()
+            self.live_state = "stopping"
+            self.live_stop_event.set()
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            raise ValueError("live camera did not stop within the release deadline")
+        return self.live_status()
+
+    def live_status_unlocked(self) -> dict[str, object]:
+        """Return status while the caller already owns live_lock."""
+        return {
+            "ok": self.live_state != "error",
+            "state": self.live_state,
+            "camera": self.live_camera,
+            "camera_opened": self.live_camera_opened,
+            "release_verified": self.live_release_verified,
+            "model_loaded": self.detector is not None,
+            "model_sha256": self.weights_sha256,
+            "detector": self.detector.backend if self.detector else "cold",
+            "signer": self.signer.backend,
+            "frame_index": self.live_frame_index,
+            "person_candidate_count": self.live_person_candidates,
+            "maximum_confidence": self.live_maximum_confidence,
+            "inference_ms": self.live_inference_ms,
+            "processing_fps": self.live_processing_fps,
+            "started_utc": self.live_started_utc,
+            "stopped_utc": self.live_stopped_utc,
+            "last_receipt": self.live_last_receipt,
+            "session_id": self.live_session_id,
+            "error": self.live_error,
+            "policy": "live_detections_are_unverified_person_candidates",
+        }
+
+    def latest_live_frame(self) -> bytes | None:
+        with self.live_lock:
+            return self.live_latest_jpeg
 
     def unload(self) -> dict[str, object]:
         if self.active_job is not None:
             raise ValueError("cannot unload while a rescue-video job is active")
+        if self.live_active():
+            raise ValueError("cannot unload while live-camera detection is active")
         with self.detector_lock:
             self.detector = None
             try:
@@ -287,6 +423,8 @@ class RescueVideoRuntime:
         return self.status()
 
     def start(self, payload: bytes, filename: str) -> str:
+        if self.live_active():
+            raise ValueError("live-camera detection is active; stop it first")
         with self.jobs_lock:
             if self.active_job is not None:
                 raise ValueError("a rescue-video job is already active")
@@ -327,6 +465,8 @@ class RescueVideoRuntime:
             raise RuntimeError("OpenCV is required for rescue-image decoding")
         if self.active_job is not None:
             raise ValueError("a rescue-video job is active; wait for it to finish")
+        if self.live_active():
+            raise ValueError("live-camera detection is active; stop it first")
         encoded = np.frombuffer(payload, dtype=np.uint8)
         frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if frame is None or frame.size == 0:
@@ -488,8 +628,167 @@ class RescueVideoRuntime:
             processing_fps=round(analyzed / max(elapsed, 1e-6), 2),
         )
 
+    def _live_loop(self) -> None:
+        capture = None
+        evidence_stream = None
+        try:
+            capture = self._open_live_capture()
+            if not capture.isOpened():
+                raise RuntimeError(f"could not open camera {self.live_camera}")
 
-def annotate_frame(frame: np.ndarray, detections: list[dict[str, object]]) -> str:
+            with self.live_lock:
+                self.live_camera_opened = True
+                self.live_state = "running"
+
+            session_id = self.live_session_id or str(uuid.uuid4())
+            evidence_path = self.evidence_dir / f"live-{session_id}.jsonl"
+            evidence_stream = evidence_path.open("x", encoding="utf-8")
+            processed = 0
+            failed_reads = 0
+            loop_started = time.perf_counter()
+            last_signed_at = 0.0
+
+            with self.gpu_lock:
+                if self.active_job is not None:
+                    raise RuntimeError("rescue-video job became active during camera start")
+                self.before_run()
+                with self.detector_lock:
+                    if self.detector is None:
+                        self.detector = Detector(
+                            self.weights,
+                            self.confidence,
+                            self.person_class,
+                            self.image_size,
+                        )
+                    detector = self.detector
+
+                while not self.live_stop_event.is_set():
+                    cycle_started = time.perf_counter()
+                    ok, frame = capture.read()
+                    if not ok or frame is None or frame.size == 0:
+                        failed_reads += 1
+                        if failed_reads >= 5:
+                            raise RuntimeError("camera returned five consecutive empty frames")
+                        time.sleep(0.05)
+                        continue
+                    failed_reads = 0
+                    inference_started = time.perf_counter()
+                    detections = detector.detect(frame)
+                    inference_ms = (time.perf_counter() - inference_started) * 1000.0
+                    encoded = annotate_frame_jpeg(frame, detections)
+                    if not encoded:
+                        raise RuntimeError("could not encode annotated camera frame")
+                    processed += 1
+                    maximum_confidence = max(
+                        (float(item["confidence"]) for item in detections),
+                        default=0.0,
+                    )
+                    receipt = None
+                    now = time.monotonic()
+                    if detections and now - last_signed_at >= 1.0:
+                        claim: dict[str, object] = {
+                            "schema": "veriswarm.rescue.live_sighting.v1",
+                            "session_id": session_id,
+                            "frame_index": processed,
+                            "person_candidate_count": len(detections),
+                            "maximum_confidence": round(maximum_confidence, 3),
+                            "model_sha256": detector.sha256,
+                            "detector": detector.backend,
+                            "camera": self.live_camera,
+                            "created_utc": datetime.now(timezone.utc).isoformat(
+                                timespec="seconds"
+                            ),
+                        }
+                        receipt = self.signer.receipt(claim)
+                        evidence_stream.write(
+                            json.dumps(
+                                {**claim, "boxes": detections, "receipt": receipt},
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        )
+                        evidence_stream.flush()
+                        last_signed_at = now
+                    elapsed = time.perf_counter() - loop_started
+                    with self.live_lock:
+                        self.live_latest_jpeg = encoded
+                        self.live_frame_index = processed
+                        self.live_person_candidates = len(detections)
+                        self.live_maximum_confidence = round(maximum_confidence, 3)
+                        self.live_inference_ms = round(inference_ms, 1)
+                        self.live_processing_fps = round(
+                            processed / max(elapsed, 1e-6), 2
+                        )
+                        if receipt is not None:
+                            self.live_last_receipt = receipt
+
+                    if self.live_fps_limit > 0:
+                        remaining = (1.0 / self.live_fps_limit) - (
+                            time.perf_counter() - cycle_started
+                        )
+                        if remaining > 0:
+                            self.live_stop_event.wait(remaining)
+        except Exception as error:
+            with self.live_lock:
+                self.live_state = "error"
+                self.live_error = f"{type(error).__name__}: {error}"
+        finally:
+            if evidence_stream is not None:
+                evidence_stream.close()
+            if capture is not None:
+                capture.release()
+                release_verified = self._verify_live_camera_reopen(
+                    initial_release=not capture.isOpened()
+                )
+            else:
+                release_verified = True
+            with self.live_lock:
+                self.live_camera_opened = False
+                self.live_release_verified = release_verified
+                self.live_stopped_utc = datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                )
+                if self.live_state != "error":
+                    self.live_state = "stopped"
+                self.live_thread = None
+
+    def _open_live_capture(self):
+        backend = getattr(cv2, "CAP_V4L2", None)
+        if backend is not None and self.live_camera.startswith("/dev/"):
+            capture = cv2.VideoCapture(self.live_camera, backend)
+        else:
+            source: str | int = (
+                int(self.live_camera)
+                if self.live_camera.isdecimal()
+                else self.live_camera
+            )
+            capture = cv2.VideoCapture(source)
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.live_width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.live_height)
+        return capture
+
+    def _verify_live_camera_reopen(self, *, initial_release: bool) -> bool:
+        """Prove another owner can reopen/read/release the camera after stop."""
+        if not initial_release:
+            return False
+        for attempt in range(3):
+            probe = self._open_live_capture()
+            try:
+                opened = probe.isOpened()
+                read_ok, frame = probe.read() if opened else (False, None)
+            finally:
+                probe.release()
+            if opened and read_ok and frame is not None and not probe.isOpened():
+                return True
+            if attempt < 2:
+                time.sleep(0.1)
+        return False
+
+
+def annotate_frame_jpeg(
+    frame: np.ndarray, detections: list[dict[str, object]]
+) -> bytes:
+    """Return a compact annotated JPEG for still-image and live-camera views."""
     image = frame.copy()
     for detection in detections:
         x1, y1, x2, y2 = (int(value) for value in detection["xyxy"])  # type: ignore[index]
@@ -505,13 +804,18 @@ def annotate_frame(frame: np.ndarray, detections: list[dict[str, object]]) -> st
             2,
         )
     height, width = image.shape[:2]
-    output_width = min(720, width)
+    output_width = min(960, width)
     output_height = max(1, round(height * output_width / width))
     image = cv2.resize(image, (output_width, output_height), interpolation=cv2.INTER_AREA)
-    ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 74])
+    ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 78])
+    return encoded.tobytes() if ok else b""
+
+
+def annotate_frame(frame: np.ndarray, detections: list[dict[str, object]]) -> str:
+    encoded = annotate_frame_jpeg(frame, detections)
     return (
         "data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii")
-        if ok
+        if encoded
         else ""
     )
 
@@ -528,6 +832,44 @@ def rescue_video_html(runtime: RescueVideoRuntime) -> bytes:
     return value.encode("utf-8")
 
 
+def live_camera_html(runtime: RescueVideoRuntime) -> bytes:
+    replacements = {
+        "__MODEL_HASH__": html.escape(runtime.weights_sha256[:16]),
+        "__SIGNER__": html.escape(runtime.signer.backend),
+        "__CAMERA__": html.escape(runtime.live_camera),
+    }
+    value = LIVE_CAMERA_TEMPLATE
+    for marker, replacement in replacements.items():
+        value = value.replace(marker, replacement)
+    return value.encode("utf-8")
+
+
+LIVE_CAMERA_TEMPLATE = r'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VeriSwarm Live Edge Camera</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#06100f;--panel:#0c1817;--line:#243b38;--text:#eef8f5;--muted:#8da9a3;--mint:#4de8ad;--cyan:#66d9ef;--amber:#ffba57;--red:#ff5757}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 12% -10%,#173d34 0,transparent 35%),var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,sans-serif}.shell{max-width:1260px;margin:auto;padding:22px 28px 64px}header{display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);padding:8px 0 22px}.brand{font-size:20px;font-weight:800}.brand b{color:var(--mint)}nav{display:flex;gap:6px;margin-left:auto}nav a{padding:7px 10px;border:1px solid var(--line);border-radius:6px;color:var(--muted);text-decoration:none;font:11px JetBrains Mono,monospace}nav a.active{color:var(--mint);border-color:#297d60}.hero{padding:34px 0 20px}.eyebrow{font:600 11px JetBrains Mono,monospace;color:var(--mint);letter-spacing:.12em}.hero h1{font-size:clamp(34px,5vw,58px);letter-spacing:-.055em;line-height:1.02;margin:10px 0}.hero p{font-size:16px;color:var(--muted);max-width:830px}.chips{display:flex;gap:7px;flex-wrap:wrap}.chip{border:1px solid var(--line);padding:6px 9px;border-radius:5px;color:var(--muted);font:10px JetBrains Mono,monospace}.panel{border:1px solid var(--line);background:linear-gradient(155deg,#10221f,#081211);border-radius:11px;overflow:hidden}.panel-title{display:flex;align-items:center;gap:9px;padding:12px 15px;border-bottom:1px solid var(--line);color:var(--muted);font:600 11px JetBrains Mono,monospace;letter-spacing:.09em}.dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}.dot.live{background:var(--mint);box-shadow:0 0 13px var(--mint)}.viewer{position:relative;min-height:520px;background:#020605;display:grid;place-items:center}.viewer img{display:none;width:100%;max-height:720px;object-fit:contain}.placeholder{text-align:center;color:var(--muted);font:12px JetBrains Mono,monospace}.placeholder b{display:block;color:var(--text);font:600 18px Inter,sans-serif;margin-bottom:8px}.controls{display:flex;gap:9px;padding:14px 15px;border-top:1px solid var(--line);flex-wrap:wrap}.btn{border:1px solid var(--line);background:#10231f;color:var(--text);border-radius:6px;padding:10px 14px;font-weight:600;cursor:pointer}.btn.primary{background:var(--mint);border-color:var(--mint);color:#04110d}.btn.danger{border-color:#7e3538;color:#ffb4b4}.btn:disabled{opacity:.42;cursor:not-allowed}.stats{display:grid;grid-template-columns:repeat(6,1fr);border-top:1px solid var(--line)}.stat{padding:13px 14px;border-right:1px solid var(--line);min-width:0}.stat:last-child{border-right:0}.stat label{display:block;color:var(--muted);font:10px JetBrains Mono,monospace}.stat strong{display:block;font:700 16px JetBrains Mono,monospace;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.receipt{margin:16px 0 0;padding:13px 15px;border-left:3px solid var(--mint);background:#0b1f19;color:#bfead9;font:11px JetBrains Mono,monospace}.warning{margin:16px 0;border-left:3px solid var(--amber);background:#21180d;color:#e8cca5;padding:12px 14px}.error{display:none;margin:16px 0;border-left:3px solid var(--red);background:#251012;color:#ffb9b9;padding:12px 14px}@media(max-width:900px){.shell{padding:15px}.stats{grid-template-columns:1fr 1fr 1fr}.viewer{min-height:360px}header{align-items:flex-start;flex-wrap:wrap}nav{margin-left:0}}@media(max-width:560px){.stats{grid-template-columns:1fr 1fr}}
+</style></head><body><div class="shell">
+<header><div class="brand"><b>VERI</b>SWARM / LIVE EDGE CAMERA</div><nav><a href="/rescue">Rescue analysis</a><a class="active" href="/live">Live camera</a><a href="/">Geolocation</a><a href="/hazards">Hazard atlas</a></nav></header>
+<section class="hero"><div class="eyebrow">USB CAMERA · JETSON · ON-DEVICE AI</div><h1>Live camera in.<br>Person candidates out.</h1><p>The Owl USB camera is opened by the Jetson. The frozen rescue model draws live PERSON_CANDIDATE boxes locally and signs bounded sighting evidence through the configured signer.</p><div class="chips"><span class="chip">CAMERA __CAMERA__</span><span class="chip">MODEL __MODEL_HASH__</span><span class="chip">SIGNER __SIGNER__</span></div></section>
+<section class="panel"><div class="panel-title"><span class="dot" id="dot"></span><span id="panelState">CAMERA STOPPED</span></div><div class="viewer"><div class="placeholder" id="placeholder"><b>USB camera is configured</b>Press Start live detection to open it on the Jetson.</div><img id="feed" alt="Jetson USB camera with unverified person-candidate boxes"></div><div class="controls"><button class="btn primary" id="start">Start live detection</button><button class="btn danger" id="stop" disabled>Stop and release camera</button><button class="btn" id="unload">Unload detector</button></div><div class="stats"><div class="stat"><label>Camera</label><strong id="camera">CLOSED</strong></div><div class="stat"><label>Detector</label><strong id="detector">COLD</strong></div><div class="stat"><label>Processing</label><strong id="fps">0 FPS</strong></div><div class="stat"><label>Inference</label><strong id="inference">0 MS</strong></div><div class="stat"><label>Person candidates</label><strong id="people">0</strong></div><div class="stat"><label>Confidence</label><strong id="confidence">0.000</strong></div></div></section>
+<div class="receipt" id="receipt">SIGNED RECEIPT: waiting for a person-candidate sighting</div><div class="warning"><b>UNVERIFIED:</b> A live box is a model-generated person candidate, not confirmation of survivor condition. Reporting is not consensus-gated; movement remains separately authorized.</div><div class="error" id="error"></div>
+</div><script>
+const $=id=>document.getElementById(id);let frameTimer=null,busy=false;
+function fail(message){$('error').textContent=message;$('error').style.display='block'}
+async function post(path){const response=await fetch(path,{method:'POST'}),value=await response.json();if(!response.ok)throw new Error(value.error||`server ${response.status}`);return value}
+function render(s){const active=['starting','running','stopping'].includes(s.state);$('panelState').textContent=`CAMERA ${s.state.toUpperCase()}`;$('dot').classList.toggle('live',s.state==='running');$('camera').textContent=s.camera_opened?'CONNECTED':(s.release_verified?'RELEASED':'CLOSED');$('detector').textContent=(s.detector||'cold').toUpperCase();$('fps').textContent=`${Number(s.processing_fps||0).toFixed(1)} FPS`;$('inference').textContent=`${Number(s.inference_ms||0).toFixed(0)} MS`;$('people').textContent=s.person_candidate_count||0;$('confidence').textContent=Number(s.maximum_confidence||0).toFixed(3);$('start').disabled=active||busy;$('stop').disabled=!active||busy;$('unload').disabled=active||busy;if(s.last_receipt){$('receipt').textContent=`SIGNED RECEIPT: ${String(s.last_receipt.backend).toUpperCase()} · ${String(s.last_receipt.digest).slice(0,24)}…`}if(s.error)fail(s.error);if(s.frame_index>0){$('feed').style.display='block';$('placeholder').style.display='none'}else if(!active){$('feed').style.display='none';$('placeholder').style.display='block'}}
+async function refresh(){try{const response=await fetch('/api/live/status',{cache:'no-store'}),s=await response.json();render(s);if(s.state==='running'&&s.frame_index>0)$('feed').src=`/api/live/frame?frame=${s.frame_index}&t=${Date.now()}`}catch(error){fail(error.message)}}
+$('start').onclick=async()=>{busy=true;$('error').style.display='none';try{render(await post('/api/live/start'))}catch(error){fail(error.message)}finally{busy=false;refresh()}};
+$('stop').onclick=async()=>{busy=true;try{render(await post('/api/live/stop'))}catch(error){fail(error.message)}finally{busy=false;refresh()}};
+$('unload').onclick=async()=>{busy=true;try{await post('/api/rescue/unload');await refresh()}catch(error){fail(error.message)}finally{busy=false}};
+refresh();frameTimer=setInterval(refresh,400);window.addEventListener('beforeunload',()=>clearInterval(frameTimer));
+</script></body></html>'''
+
+
 RESCUE_IMAGE_TEMPLATE = r'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VeriSwarm Rescue Perception</title>
@@ -537,7 +879,7 @@ RESCUE_IMAGE_TEMPLATE = r'''<!doctype html>
 :root{--bg:#06100f;--panel:#0c1817;--line:#243b38;--text:#eef8f5;--muted:#8da9a3;--mint:#4de8ad;--amber:#ffba57;--red:#ff5757}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 12% -10%,#173d34 0,transparent 35%),var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,sans-serif}.shell{max-width:1240px;margin:auto;padding:22px 28px 64px}header{display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);padding:8px 0 22px}.brand{font-size:20px;font-weight:800}.brand b{color:var(--mint)}nav{display:flex;gap:6px;margin-left:auto}nav a{padding:7px 10px;border:1px solid var(--line);border-radius:6px;color:var(--muted);text-decoration:none;font:11px JetBrains Mono,monospace}nav a.active{color:var(--mint);border-color:#297d60}.hero{padding:38px 0 22px}.eyebrow{font:600 11px JetBrains Mono,monospace;color:var(--mint);letter-spacing:.12em}.hero h1{font-size:clamp(34px,5vw,60px);letter-spacing:-.055em;line-height:1.02;margin:12px 0}.hero p{font-size:16px;color:var(--muted);max-width:820px}.chips{display:flex;gap:7px;flex-wrap:wrap}.chip{border:1px solid var(--line);padding:6px 9px;border-radius:5px;color:var(--muted);font:10px JetBrains Mono,monospace}.mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel{border:1px solid var(--line);background:linear-gradient(155deg,#10221f,#081211);border-radius:11px;overflow:hidden}.panel-title{padding:12px 15px;border-bottom:1px solid var(--line);color:var(--muted);font:600 11px JetBrains Mono,monospace;letter-spacing:.09em}.drop{margin:16px;border:1px dashed #365b55;border-radius:9px;min-height:210px;display:grid;place-items:center;text-align:center;padding:24px;cursor:pointer}.drop.hot{border-color:var(--mint);background:#0d251f}.drop h2{margin:0 0 8px}.drop p{margin:0;color:var(--muted)}.tag{display:inline-block;margin-bottom:10px;padding:4px 7px;border:1px solid #40534f;border-radius:4px;color:var(--mint);font:10px JetBrains Mono,monospace}.bar{height:3px;background:#162724;display:none}.bar i{display:block;height:100%;background:var(--mint);width:0;transition:.2s}.stats{display:none;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);margin-top:16px}.stat{padding:13px 15px;border-right:1px solid var(--line)}.stat label{display:block;color:var(--muted);font:10px JetBrains Mono,monospace}.stat strong{display:block;font:700 19px JetBrains Mono,monospace;margin-top:4px}.policy{border-left:3px solid var(--amber);background:#21180d;color:#e8cca5;padding:13px 15px;margin:18px 0}.warning{border-left:3px solid var(--red);background:#231011;color:#ffbcbc;padding:12px 14px;margin:16px 0}.sighting{border:1px solid var(--line);background:#0b1716;border-radius:9px;overflow:hidden;margin-top:14px}.sighting img{width:100%;max-height:600px;object-fit:contain;background:#030706;display:block}.meta{display:flex;gap:18px;align-items:center;padding:12px 14px;flex-wrap:wrap}.meta span{font:11px JetBrains Mono,monospace}.receipt{margin-left:auto;color:var(--mint)}.photo-result{display:none;margin-top:16px}.photo-result.show{display:block}.error{display:none;border-left:3px solid var(--red);background:#251012;color:#ffb9b9;padding:12px 14px;margin:16px}@media(max-width:820px){.mode-grid{grid-template-columns:1fr}.shell{padding:15px}.stats{grid-template-columns:1fr 1fr}.stat{border-bottom:1px solid var(--line)}header{align-items:flex-start;flex-wrap:wrap}nav{margin-left:0}}
 </style></head><body><div class="shell">
-<header><div class="brand"><b>VERI</b>SWARM / RESCUE PERCEPTION</div><nav><a class="active" href="/rescue">Rescue perception</a><a href="/">Geolocation</a><a href="/hazards">Hazard atlas</a></nav></header>
+<header><div class="brand"><b>VERI</b>SWARM / RESCUE PERCEPTION</div><nav><a class="active" href="/rescue">Rescue analysis</a><a href="/live">Live camera</a><a href="/">Geolocation</a><a href="/hazards">Hazard atlas</a></nav></header>
 <section class="hero"><div class="eyebrow">ON-DEVICE · JETSON · SIGNED ATTRIBUTION</div><h1>Disaster imagery in.<br>Person candidates out.</h1><p>Analyze a still disaster image or video with the frozen rescue detector. Processing remains local on the Jetson. Red boxes are unverified <b>PERSON_CANDIDATE</b> outputs—not confirmed survivors and not disaster-type classifications.</p><div class="chips"><span class="chip">MODEL __MODEL_HASH__</span><span class="chip">SIGNER __SIGNER__</span><span class="chip">VIDEO SAMPLE EVERY __STRIDE__TH FRAME</span></div></section>
 <div class="mode-grid">
 <section class="panel"><div class="panel-title">01 · DISASTER PHOTO ANALYSIS</div><div id="photoDrop" class="drop"><div><span class="tag">RESCUE PERCEPTION</span><h2>Drop a disaster-scene image</h2><p>JPEG · PNG · WebP</p></div><input id="photoFile" type="file" accept="image/jpeg,image/png,image/webp" hidden></div><div id="photoError" class="error"></div></section>
@@ -560,6 +902,6 @@ wireDrop('photoDrop','photoFile',analyzePhoto);wireDrop('videoDrop','videoFile',
 
 RESCUE_TEMPLATE = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VeriSwarm Survivor Console</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"><style>
 :root{--bg:#06100f;--panel:#0c1817;--line:#243b38;--text:#eef8f5;--muted:#8da9a3;--mint:#4de8ad;--amber:#ffba57;--red:#ff6b6b}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 12% -10%,#173d34 0,transparent 35%),var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,sans-serif}.shell{max-width:1200px;margin:auto;padding:22px 28px 64px}header{display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);padding:8px 0 22px}.brand{font-size:20px;font-weight:800}.brand b{color:var(--mint)}nav{display:flex;gap:6px;margin-left:auto}nav a{padding:7px 10px;border:1px solid var(--line);border-radius:6px;color:var(--muted);text-decoration:none;font:11px JetBrains Mono,monospace}nav a.active{color:var(--mint);border-color:#297d60}.hero{padding:42px 0 24px}.eyebrow{font:600 11px JetBrains Mono,monospace;color:var(--mint);letter-spacing:.12em}.hero h1{font-size:clamp(36px,5vw,64px);letter-spacing:-.055em;line-height:1.02;margin:12px 0}.hero p{font-size:17px;color:var(--muted);max-width:760px}.chips{display:flex;gap:7px;flex-wrap:wrap}.chip{border:1px solid var(--line);padding:6px 9px;border-radius:5px;color:var(--muted);font:10px JetBrains Mono,monospace}.panel{border:1px solid var(--line);background:linear-gradient(155deg,#10221f,#081211);border-radius:11px;overflow:hidden}.drop{margin:16px;border:1px dashed #365b55;border-radius:9px;min-height:260px;display:grid;place-items:center;text-align:center;padding:24px;cursor:pointer}.drop.hot{border-color:var(--mint);background:#0d251f}.drop h2{margin:0 0 8px}.drop p{margin:0;color:var(--muted)}.bar{height:3px;background:#162724;display:none}.bar i{display:block;height:100%;background:var(--mint);width:0;transition:.2s}.stats{display:none;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line)}.stat{padding:13px 15px;border-right:1px solid var(--line)}.stat label{display:block;color:var(--muted);font:10px JetBrains Mono,monospace}.stat strong{display:block;font:700 20px JetBrains Mono,monospace;margin-top:4px}.policy{border-left:3px solid var(--amber);background:#21180d;color:#e8cca5;padding:13px 15px;margin:18px 0}.sighting{border:1px solid var(--line);background:#0b1716;border-radius:9px;overflow:hidden;margin-top:14px}.sighting img{width:100%;max-height:540px;object-fit:contain;background:#030706;display:block}.meta{display:flex;gap:18px;align-items:center;padding:12px 14px;flex-wrap:wrap}.meta span{font:11px JetBrains Mono,monospace}.receipt{margin-left:auto;color:var(--mint)}.error{display:none;border-left:3px solid var(--red);background:#251012;color:#ffb9b9;padding:12px 14px;margin:16px}@media(max-width:720px){.shell{padding:15px}.stats{grid-template-columns:1fr 1fr}.stat{border-bottom:1px solid var(--line)}header{align-items:flex-start;flex-wrap:wrap}nav{margin-left:0}}
-</style></head><body><div class="shell"><header><div class="brand"><b>VERI</b>SWARM / SURVIVOR CONSOLE</div><nav><a class="active" href="/rescue">Survivor video</a><a href="/">Geolocation</a><a href="/hazards">Hazard atlas</a></nav></header><section class="hero"><div class="eyebrow">ON-DEVICE RESCUE PERCEPTION</div><h1>Footage in.<br>Actionable sightings out.</h1><p>Upload disaster footage from any operator laptop. Frames are decoded and analyzed locally on the Jetson; survivor candidates appear with model identity and signed attribution receipts.</p><div class="chips"><span class="chip">MODEL __MODEL_HASH__</span><span class="chip">SIGNER __SIGNER__</span><span class="chip">EVERY __STRIDE__TH FRAME</span></div></section><section class="panel"><div id="drop" class="drop"><div><h2>Drop flood, earthquake or landslide footage</h2><p>MP4 · MOV · AVI · MKV · WebM</p></div><input id="file" type="file" accept="video/*" hidden></div><div id="bar" class="bar"><i></i></div><div id="error" class="error"></div><div id="stats" class="stats"><div class="stat"><label>SURVIVOR BOXES</label><strong id="people">0</strong></div><div class="stat"><label>FRAMES ANALYZED</label><strong id="frames">0</strong></div><div class="stat"><label>SIGHTINGS</label><strong id="count">0</strong></div><div class="stat"><label>PROCESSING FPS</label><strong id="fps">—</strong></div><div class="stat"><label>STATE</label><strong id="state">IDLE</strong></div></div></section><div class="policy"><b>Reporting policy:</b> detections are never gated by consensus. Peer quorum may authorize movement; one blinded or occluded drone must never suppress a survivor sighting.</div><div id="sightings"></div></div><script>
+</style></head><body><div class="shell"><header><div class="brand"><b>VERI</b>SWARM / SURVIVOR CONSOLE</div><nav><a class="active" href="/rescue">Rescue analysis</a><a href="/live">Live camera</a><a href="/">Geolocation</a><a href="/hazards">Hazard atlas</a></nav></header><section class="hero"><div class="eyebrow">ON-DEVICE RESCUE PERCEPTION</div><h1>Footage in.<br>Actionable sightings out.</h1><p>Upload disaster footage from any operator laptop. Frames are decoded and analyzed locally on the Jetson; survivor candidates appear with model identity and signed attribution receipts.</p><div class="chips"><span class="chip">MODEL __MODEL_HASH__</span><span class="chip">SIGNER __SIGNER__</span><span class="chip">EVERY __STRIDE__TH FRAME</span></div></section><section class="panel"><div id="drop" class="drop"><div><h2>Drop flood, earthquake or landslide footage</h2><p>MP4 · MOV · AVI · MKV · WebM</p></div><input id="file" type="file" accept="video/*" hidden></div><div id="bar" class="bar"><i></i></div><div id="error" class="error"></div><div id="stats" class="stats"><div class="stat"><label>SURVIVOR BOXES</label><strong id="people">0</strong></div><div class="stat"><label>FRAMES ANALYZED</label><strong id="frames">0</strong></div><div class="stat"><label>SIGHTINGS</label><strong id="count">0</strong></div><div class="stat"><label>PROCESSING FPS</label><strong id="fps">—</strong></div><div class="stat"><label>STATE</label><strong id="state">IDLE</strong></div></div></section><div class="policy"><b>Reporting policy:</b> detections are never gated by consensus. Peer quorum may authorize movement; one blinded or occluded drone must never suppress a survivor sighting.</div><div id="sightings"></div></div><script>
 const $=id=>document.getElementById(id),drop=$('drop'),file=$('file'),bar=$('bar'),barFill=bar.querySelector('i'),error=$('error'),sightings=$('sightings');let timer=null,seen=0;drop.onclick=()=>file.click();drop.ondragover=e=>{e.preventDefault();drop.classList.add('hot')};drop.ondragleave=()=>drop.classList.remove('hot');drop.ondrop=e=>{e.preventDefault();drop.classList.remove('hot');if(e.dataTransfer.files[0])upload(e.dataTransfer.files[0])};file.onchange=()=>file.files[0]&&upload(file.files[0]);function fail(message){error.textContent=message;error.style.display='block';bar.style.display='none';$('state').textContent='ERROR'}async function upload(video){error.style.display='none';sightings.innerHTML='';seen=0;$('stats').style.display='grid';bar.style.display='block';barFill.style.width='3%';$('state').textContent='UPLOADING';const form=new FormData();form.append('video',video);try{const response=await fetch('/api/rescue/analyze',{method:'POST',body:form});const value=await response.json();if(!response.ok)throw new Error(value.error||`server ${response.status}`);clearInterval(timer);timer=setInterval(()=>poll(value.job_id),650)}catch(e){fail(e.message)}}async function poll(id){try{const response=await fetch(`/api/rescue/jobs/${id}`),job=await response.json();if(!response.ok)throw new Error(job.error);$('people').textContent=job.people_detected||0;$('frames').textContent=job.frames_analyzed||0;$('count').textContent=(job.sightings||[]).length;$('fps').textContent=job.processing_fps||'—';$('state').textContent=(job.state||'').toUpperCase();barFill.style.width=`${Math.max(3,job.progress||0)}%`;for(const hit of (job.sightings||[]).slice(seen)){const card=document.createElement('article');card.className='sighting';card.innerHTML=`<img src="${hit.annotated_frame}" alt="survivor sighting"><div class="meta"><span>FRAME <b>${hit.frame_index}</b></span><span>T+ <b>${hit.timestamp_seconds}s</b></span><span>PEOPLE <b>${hit.person_count}</b></span><span>CONF <b>${hit.maximum_confidence.toFixed(3)}</b></span><span class="receipt">${hit.receipt.backend.toUpperCase()} · ${hit.receipt.digest.slice(0,16)}…</span></div>`;sightings.appendChild(card)}seen=(job.sightings||[]).length;if(job.state==='done'||job.state==='error'){clearInterval(timer);bar.style.display='none';if(job.state==='error')fail(job.error||'processing failed')}}catch(e){fail(e.message)}}
 </script></body></html>'''

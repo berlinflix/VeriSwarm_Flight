@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from tools.rescue_video import (
     RescueVideoRuntime,
     extract_image_upload,
     extract_video_upload,
+    live_camera_html,
     rescue_video_html,
 )
 
@@ -66,12 +68,28 @@ class RescueVideoTests(unittest.TestCase):
         )
         page = rescue_video_html(runtime).decode("utf-8")  # type: ignore[arg-type]
         self.assertIn("/rescue", page)
+        self.assertIn("/live", page)
         self.assertIn("/hazards", page)
         self.assertIn("detections are never gated by consensus", page)
         self.assertIn("ffffffffffffffff", page)
         self.assertIn("/api/rescue/image", page)
         self.assertIn("PERSON_CANDIDATE", page)
         self.assertIn("DISASTER / UNVERIFIED", page)
+
+    def test_live_page_has_camera_controls_and_unverified_policy(self) -> None:
+        runtime = SimpleNamespace(
+            weights_sha256="a" * 64,
+            signer=SimpleNamespace(backend="optee"),
+            live_camera="/dev/video-test",
+        )
+        page = live_camera_html(runtime).decode("utf-8")  # type: ignore[arg-type]
+        self.assertIn("/api/live/start", page)
+        self.assertIn("/api/live/stop", page)
+        self.assertIn("/api/live/frame", page)
+        self.assertIn("PERSON_CANDIDATE", page)
+        self.assertIn("UNVERIFIED", page)
+        self.assertIn("SIGNER optee", page)
+        self.assertIn("Stop and release camera", page)
 
     def test_runtime_verifies_identity_without_loading_detector(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -162,6 +180,94 @@ class RescueVideoTests(unittest.TestCase):
             evidence = root / "evidence" / result["evidence_file"]
             self.assertTrue(evidence.is_file())
             self.assertNotIn("annotated_image", evidence.read_text(encoding="utf-8"))
+
+    def test_live_camera_runs_detection_and_releases_capture(self) -> None:
+        class FakeCapture:
+            def __init__(self, *_args) -> None:
+                self.opened = True
+
+            def set(self, *_args) -> bool:
+                return True
+
+            def isOpened(self) -> bool:
+                return self.opened
+
+            def read(self):
+                return True, np.zeros((48, 64, 3), dtype=np.uint8)
+
+            def release(self) -> None:
+                self.opened = False
+
+        class FakeDetector:
+            backend = "fake-tensorrt"
+            sha256 = "d" * 64
+
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            def detect(self, _frame):
+                return [
+                    {
+                        "class_id": 0,
+                        "confidence": 0.91,
+                        "xyxy": [4, 5, 40, 44],
+                    }
+                ]
+
+        fake_cv2 = SimpleNamespace(
+            CAP_V4L2=200,
+            CAP_PROP_FRAME_WIDTH=3,
+            CAP_PROP_FRAME_HEIGHT=4,
+            VideoCapture=FakeCapture,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            weights = root / "model.pt"
+            weights.write_bytes(b"frozen-model-bytes")
+            runtime = RescueVideoRuntime(
+                weights=weights,
+                expected_weights_sha256=hashlib.sha256(weights.read_bytes()).hexdigest(),
+                confidence=0.35,
+                person_class=0,
+                image_size=960,
+                stride=10,
+                max_frames=20,
+                work_dir=root / "work",
+                evidence_dir=root / "evidence",
+                optee_ca=None,
+                gpu_lock=threading.Lock(),
+                before_run=lambda: None,
+                live_camera="/dev/video-test",
+                live_fps_limit=30,
+            )
+            runtime.signer = SimpleNamespace(
+                backend="optee",
+                receipt=lambda claim: {
+                    "backend": "optee",
+                    "digest": hashlib.sha256(str(claim).encode()).hexdigest(),
+                    "signature": "signed",
+                },
+            )
+            with (
+                patch("tools.rescue_video.cv2", fake_cv2),
+                patch("tools.rescue_video.Detector", FakeDetector),
+                patch("tools.rescue_video.annotate_frame_jpeg", return_value=b"jpeg-bytes"),
+            ):
+                runtime.start_live()
+                deadline = time.monotonic() + 2
+                while runtime.live_status()["frame_index"] == 0 and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                running = runtime.live_status()
+                stopped = runtime.stop_live()
+
+            self.assertGreater(running["frame_index"], 0)
+            self.assertEqual(running["person_candidate_count"], 1)
+            self.assertEqual(running["last_receipt"]["backend"], "optee")
+            self.assertEqual(runtime.latest_live_frame(), b"jpeg-bytes")
+            self.assertEqual(stopped["state"], "stopped")
+            self.assertFalse(stopped["camera_opened"])
+            self.assertTrue(stopped["release_verified"])
+            self.assertTrue(list((root / "evidence").glob("live-*.jsonl")))
 
 
 if __name__ == "__main__":

@@ -41,6 +41,7 @@ try:
         RescueVideoRuntime,
         extract_image_upload,
         extract_video_upload,
+        live_camera_html,
         rescue_video_html,
     )
 except ModuleNotFoundError:  # Standalone Jetson handoff beside this module.
@@ -48,6 +49,7 @@ except ModuleNotFoundError:  # Standalone Jetson handoff beside this module.
         RescueVideoRuntime,
         extract_image_upload,
         extract_video_upload,
+        live_camera_html,
         rescue_video_html,
     )
 
@@ -369,6 +371,7 @@ def handler_factory(
     page = ui_html(runtime, google_key)
     hazard_page = hazard_atlas_html(hazard_asset_root, google_key=google_key)
     rescue_page = rescue_video_html(rescue_runtime) if rescue_runtime else None
+    live_page = live_camera_html(rescue_runtime) if rescue_runtime else None
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -403,6 +406,21 @@ def handler_factory(
                 if rescue_page is None:
                     return self.send_json(503, {"error": "rescue-video model is not configured"})
                 return self.send_bytes(200, rescue_page, "text/html; charset=utf-8")
+            if route == "/live":
+                if live_page is None:
+                    return self.send_json(503, {"error": "live rescue model is not configured"})
+                return self.send_bytes(200, live_page, "text/html; charset=utf-8")
+            if route == "/api/live/status":
+                if rescue_runtime is None:
+                    return self.send_json(503, {"error": "live rescue model is not configured"})
+                return self.send_json(200, rescue_runtime.live_status())
+            if route == "/api/live/frame":
+                if rescue_runtime is None:
+                    return self.send_json(503, {"error": "live rescue model is not configured"})
+                frame = rescue_runtime.latest_live_frame()
+                if frame is None:
+                    return self.send_json(503, {"error": "live camera has no frame yet"})
+                return self.send_bytes(200, frame, "image/jpeg")
             if route == "/api/rescue/status":
                 if rescue_runtime is None:
                     return self.send_json(503, {"error": "rescue-video model is not configured"})
@@ -441,6 +459,22 @@ def handler_factory(
 
         def do_POST(self) -> None:
             route = self.path.split("?", 1)[0]
+            if route == "/api/live/start":
+                if rescue_runtime is None:
+                    return self.send_json(503, {"error": "live rescue model is not configured"})
+                try:
+                    return self.send_json(202, rescue_runtime.start_live())
+                except ValueError as error:
+                    return self.send_json(409, {"error": str(error)})
+                except RuntimeError as error:
+                    return self.send_json(503, {"error": str(error)})
+            if route == "/api/live/stop":
+                if rescue_runtime is None:
+                    return self.send_json(503, {"error": "live rescue model is not configured"})
+                try:
+                    return self.send_json(200, rescue_runtime.stop_live())
+                except ValueError as error:
+                    return self.send_json(409, {"error": str(error)})
             if route == "/api/rescue/unload":
                 if rescue_runtime is None:
                     return self.send_json(503, {"error": "rescue-video model is not configured"})
@@ -516,6 +550,16 @@ def handler_factory(
                     self.rfile.read(length), self.headers.get("Content-Type", "")
                 )
                 if rescue_runtime is not None:
+                    if rescue_runtime.live_active():
+                        return self.send_json(
+                            409,
+                            {
+                                "error": (
+                                    "live-camera detection is active; stop and release "
+                                    "the camera before visual geolocation"
+                                )
+                            },
+                        )
                     if rescue_runtime.active_job is not None:
                         return self.send_json(
                             409,
@@ -565,7 +609,7 @@ UI_TEMPLATE = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <style>
 :root{--bg:#07100f;--panel:#0b1716;--panel2:#10201e;--line:#233a37;--text:#ecf7f3;--muted:#8eaaa4;--mint:#4de8ad;--cyan:#66d9ef;--amber:#ffbf69;--red:#ff6b6b}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% -10%,#14372f 0,transparent 35%),var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,sans-serif;min-height:100vh}.shell{max-width:1400px;margin:auto;padding:22px 28px 60px}header{display:flex;align-items:center;gap:10px;padding:10px 0 22px;border-bottom:1px solid var(--line)}.brand{font-size:20px;font-weight:700;letter-spacing:-.02em}.brand b{color:var(--mint)}.grow{flex:1}.nav-link{font:11px JetBrains Mono,monospace;text-decoration:none;color:var(--muted);padding:6px 9px;border:1px solid var(--line);border-radius:5px}.nav-link.active{color:var(--mint);border-color:#267a5c}.chip{font:11px JetBrains Mono,monospace;text-transform:uppercase;letter-spacing:.08em;padding:6px 9px;border:1px solid var(--line);background:#091413;color:var(--muted);border-radius:5px}.chip.live{color:var(--mint);border-color:#267a5c}.grid{display:grid;grid-template-columns:minmax(330px,.8fr) minmax(540px,1.4fr);gap:18px;margin-top:18px}.panel{border:1px solid var(--line);background:linear-gradient(160deg,rgba(16,32,30,.96),rgba(8,18,17,.96));border-radius:12px;overflow:hidden}.panel-title{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}.dot{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 14px var(--mint)}#drop{min-height:330px;margin:16px;border:1px dashed #365b55;border-radius:9px;display:flex;align-items:center;justify-content:center;text-align:center;padding:28px;cursor:pointer;transition:.18s;background:rgba(5,13,12,.5);position:relative;overflow:hidden}#drop.hot{border-color:var(--mint);background:#0d251f}#drop.has-image{padding:0;border-style:solid}#preview{display:none;width:100%;height:100%;min-height:330px;object-fit:contain;background:#030706}.upload-copy h2{font-size:20px;margin:0 0 8px}.upload-copy p{color:var(--muted);margin:0}.button-row{display:flex;gap:10px;padding:0 16px 16px}.btn{border:1px solid var(--line);background:#10231f;color:var(--text);border-radius:6px;padding:10px 14px;font-weight:600;cursor:pointer}.btn.primary{background:var(--mint);border-color:var(--mint);color:#04110d;flex:1}.btn:disabled{opacity:.45;cursor:not-allowed}.notice{margin:0 16px 16px;padding:11px 12px;border-left:3px solid var(--amber);background:#21190d;color:#eed3a9;font-size:12px}.map-wrap{height:430px;background:#08100f;position:relative}#map{height:100%;width:100%}.empty-map{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font:12px JetBrains Mono,monospace;z-index:2}.statusbar{display:grid;grid-template-columns:1.2fr .8fr .8fr .8fr;border-top:1px solid var(--line)}.metric{padding:13px 15px;border-right:1px solid var(--line);min-width:0}.metric:last-child{border-right:0}.label{font:10px JetBrains Mono,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.value{font:600 15px JetBrains Mono,monospace;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.result{margin-top:18px}.hero{display:grid;grid-template-columns:150px 1fr;gap:16px;padding:16px}.hero img{width:150px;height:120px;object-fit:cover;border-radius:7px;background:#06100e}.rank{font:11px JetBrains Mono,monospace;color:var(--mint)}.place{font-size:22px;font-weight:700;margin:5px 0}.coords{font:13px JetBrains Mono,monospace;color:var(--cyan)}.state{display:inline-block;margin-top:10px;padding:5px 8px;border-radius:4px;background:#2b210f;color:var(--amber);font:10px JetBrains Mono,monospace}.candidates{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line)}.candidate{background:var(--panel);padding:12px;min-width:0}.candidate img{width:100%;height:88px;object-fit:cover;border-radius:5px;margin-bottom:8px}.candidate .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.candidate .score{font:11px JetBrains Mono,monospace;color:var(--muted)}.policy{margin-top:18px;border:1px solid #624a25;background:#1b150c;padding:14px 16px;border-radius:8px;color:#e8c995}.policy strong{color:var(--amber)}#error{display:none;margin:16px;border-left:3px solid var(--red);background:#261011;padding:12px;color:#ffb4b4}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #174c3b;border-top-color:var(--mint);border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:7px}@keyframes spin{to{transform:rotate(360deg)}}a{color:var(--cyan)}.leaflet-container{background:#0a1413}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#10201e;color:var(--text)}@media(max-width:900px){.grid{grid-template-columns:1fr}.candidates{grid-template-columns:repeat(2,1fr)}.shell{padding:14px}.statusbar{grid-template-columns:1fr 1fr}.chip{display:none}}
-</style></head><body><div class="shell"><header><div class="brand"><b>VERI</b>SWARM / VISUAL GEOLOCATION</div><div class="grow"></div><a class="nav-link" href="/rescue">Survivor video</a><a class="nav-link active" href="/">Geolocation</a><a class="nav-link" href="/hazards">Hazard atlas</a><span class="chip" id="runtime">RUNTIME COLD</span><span class="chip">MAP __MAP_PROVIDER__</span><span class="chip live">JETSON __DEVICE__</span></header>
+</style></head><body><div class="shell"><header><div class="brand"><b>VERI</b>SWARM / VISUAL GEOLOCATION</div><div class="grow"></div><a class="nav-link" href="/rescue">Rescue analysis</a><a class="nav-link" href="/live">Live camera</a><a class="nav-link active" href="/">Geolocation</a><a class="nav-link" href="/hazards">Hazard atlas</a><span class="chip" id="runtime">RUNTIME COLD</span><span class="chip">MAP __MAP_PROVIDER__</span><span class="chip live">JETSON __DEVICE__</span></header>
 <div class="grid"><section class="panel"><div class="panel-title"><span class="dot"></span> Drone-view query</div><div id="drop"><div class="upload-copy" id="copy"><h2>Drop an aerial image</h2><p>JPEG, PNG or WebP · processed locally on Jetson</p></div><img id="preview" alt="uploaded aerial view"><input id="file" type="file" accept="image/jpeg,image/png,image/webp" hidden></div><div id="error"></div><div class="button-row"><button class="btn primary" id="locate" disabled>Locate visual match</button><button class="btn" id="clear">Clear</button><button class="btn" id="unload" title="Release model and GPU memory">Unload model</button></div><div class="notice">This is cross-view image retrieval. It reports the official coordinate of the closest satellite-gallery match; it is not a GNSS reading.</div></section>
 <section class="panel"><div class="panel-title"><span class="dot"></span> Candidate map · 1,652 official locations</div><div class="map-wrap"><div id="emptyMap" class="empty-map">AWAITING QUERY IMAGE</div><div id="map"></div></div><div class="statusbar"><div class="metric"><div class="label">System status</div><div class="value" id="m-status">Ready</div></div><div class="metric"><div class="label">Top similarity</div><div class="value" id="m-score">—</div></div><div class="metric"><div class="label">Top-2 margin</div><div class="value" id="m-margin">—</div></div><div class="metric"><div class="label">Inference</div><div class="value" id="m-time">—</div></div></div></section></div>
 <section class="panel result" id="result" hidden><div class="panel-title"><span class="dot"></span> Ranked location hypotheses</div><div class="hero"><img id="heroImg"><div><div class="rank">RANK 01 · MATCHED GALLERY COORDINATE</div><div class="place" id="heroName"></div><div class="coords" id="heroCoords"></div><div><a id="osmLink" target="_blank" rel="noopener">Open in OpenStreetMap</a> · <a id="googleLink" target="_blank" rel="noopener">Open in Google Maps</a></div><div class="state" id="heroState"></div></div></div><div class="candidates" id="candidates"></div></section>
@@ -615,6 +659,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rescue-image-size", type=int, default=640)
     parser.add_argument("--rescue-stride", type=int, default=10)
     parser.add_argument("--rescue-max-frames", type=int, default=400)
+    parser.add_argument(
+        "--live-camera",
+        default=(
+            "/dev/v4l/by-id/"
+            "usb-Owl_Lite_Owl_Lite_Camera_SN0001-video-index0"
+        ),
+        help="V4L2 path or numeric camera index used by /live",
+    )
+    parser.add_argument("--live-camera-width", type=int, default=640)
+    parser.add_argument("--live-camera-height", type=int, default=480)
+    parser.add_argument("--live-camera-fps-limit", type=float, default=8.0)
     parser.add_argument("--max-video-upload-mib", type=int, default=512)
     parser.add_argument(
         "--rescue-work-dir", default="/tmp/veriswarm-rescue", type=Path
@@ -655,6 +710,10 @@ def main() -> int:
         raise SystemExit("--max-video-upload-mib must be between 1 and 2048")
     if args.rescue_stride <= 0 or args.rescue_max_frames <= 0:
         raise SystemExit("rescue stride and max frames must be positive")
+    if args.live_camera_width <= 0 or args.live_camera_height <= 0:
+        raise SystemExit("live camera width and height must be positive")
+    if args.live_camera_fps_limit <= 0 or args.live_camera_fps_limit > 60:
+        raise SystemExit("--live-camera-fps-limit must be greater than 0 and at most 60")
     runtime = RetrievalRuntime(
         checkpoint=args.checkpoint.expanduser(),
         expected_checkpoint_sha256=args.expected_checkpoint_sha256,
@@ -683,6 +742,10 @@ def main() -> int:
             optee_ca=args.optee_ca.expanduser(),
             gpu_lock=gpu_lock,
             before_run=runtime.unload,
+            live_camera=args.live_camera,
+            live_width=args.live_camera_width,
+            live_height=args.live_camera_height,
+            live_fps_limit=args.live_camera_fps_limit,
         )
     handler = handler_factory(
         runtime,
@@ -703,6 +766,7 @@ def main() -> int:
                 "VeriSwarm University-1652 console ready",
                 f"  URL:         http://192.168.50.10:{args.port}",
                 f"  Rescue:      http://192.168.50.10:{args.port}/rescue",
+                f"  Live camera: http://192.168.50.10:{args.port}/live",
                 f"  Atlas:       http://192.168.50.10:{args.port}/hazards",
                 f"  Model:       {runtime.model_sha256[:16]}… (lazy; not loaded yet)",
                 f"  Locations:   {len(runtime.locations)} official WGS84 records",
@@ -724,8 +788,14 @@ def main() -> int:
         print("\nstopping...", flush=True)
     finally:
         server.server_close()
-        if rescue_runtime and rescue_runtime.active_job is None:
-            rescue_runtime.unload()
+        if rescue_runtime:
+            if rescue_runtime.live_active():
+                try:
+                    rescue_runtime.stop_live()
+                except ValueError as error:
+                    print(f"live camera stop warning: {error}", flush=True)
+            if rescue_runtime.active_job is None and not rescue_runtime.live_active():
+                rescue_runtime.unload()
         runtime.unload()
     return 0
 
