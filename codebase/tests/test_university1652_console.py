@@ -94,7 +94,9 @@ class University1652ConsoleTests(unittest.TestCase):
         self.assertEqual(value["name"], "Boesel Musical Arts Center")
 
     def test_hazard_atlas_is_explicitly_advisory_and_has_all_layers(self) -> None:
-        page = hazard_atlas_html(Path("assets/hazards")).decode("utf-8")
+        page = hazard_atlas_html(
+            Path("assets/hazards"), google_key="browser-demo-key"
+        ).decode("utf-8")
         self.assertIn("India Rescue Coverage Atlas", page)
         self.assertIn("not an operational hazard product", page)
         self.assertIn("Flood corridors", page)
@@ -102,6 +104,9 @@ class University1652ConsoleTests(unittest.TestCase):
         self.assertIn("Landslide belts", page)
         self.assertIn("VIO/IMU/temporal consistency", page)
         self.assertIn("/assets/hazards/flood-affected-reference.png", page)
+        self.assertIn("maps.googleapis.com/maps/api/js", page)
+        self.assertIn('const googleKey="browser-demo-key"', page)
+        self.assertNotIn("tile.openstreetmap.org", page)
 
     def test_hazard_assets_are_allow_listed(self) -> None:
         path, content_type = hazard_asset(

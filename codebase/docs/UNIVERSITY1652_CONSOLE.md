@@ -14,8 +14,9 @@ consistency checks pass.
 The default uses Leaflet and OpenStreetMap, so no API key is required. The
 browser displaying the console needs Internet access to retrieve map tiles.
 
-Google Maps is optional. Supply a browser-restricted key at launch without
-storing it in Git:
+Google Maps is used for the visual-geolocation result and India hazard atlas
+when a browser-restricted key is supplied at launch. The hazard atlas does not
+use OpenStreetMap tiles. Supply the key without storing it in Git:
 
 ```bash
 export GOOGLE_MAPS_API_KEY='replace-with-browser-restricted-key'

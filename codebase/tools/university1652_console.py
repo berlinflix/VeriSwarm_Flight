@@ -365,7 +365,7 @@ def handler_factory(
     max_video_upload_bytes: int = 512 * 1024 * 1024,
 ):
     page = ui_html(runtime, google_key)
-    hazard_page = hazard_atlas_html(hazard_asset_root)
+    hazard_page = hazard_atlas_html(hazard_asset_root, google_key=google_key)
     rescue_page = rescue_video_html(rescue_runtime) if rescue_runtime else None
 
     class Handler(BaseHTTPRequestHandler):
