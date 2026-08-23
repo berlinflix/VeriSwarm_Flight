@@ -106,6 +106,9 @@ class University1652ConsoleTests(unittest.TestCase):
         self.assertIn("/assets/hazards/flood-affected-reference.png", page)
         self.assertIn("maps.googleapis.com/maps/api/js", page)
         self.assertIn('const googleKey="browser-demo-key"', page)
+        self.assertIn("new google.maps.Polyline", page)
+        self.assertIn("Guwahati Multi-hazard Pilot", page)
+        self.assertIn("not a computed risk surface", page)
         self.assertNotIn("tile.openstreetmap.org", page)
 
     def test_hazard_assets_are_allow_listed(self) -> None:
