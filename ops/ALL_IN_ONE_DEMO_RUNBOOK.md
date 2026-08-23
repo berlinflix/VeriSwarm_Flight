@@ -54,7 +54,8 @@ cd /Volumes/HyperDrive/Development/VERISWARM_SIH_RESCUE_SECURITY
 This single process starts:
 
 - `127.0.0.1:8765` — SSH tunnel to Alpha's qualifier;
-- `127.0.0.1:8770` — canonical rescue collector;
+- `127.0.0.1:8770` — canonical rescue collector, or a printed `8870`–`8872`
+  loopback fallback when macOS `sharingd` owns `8770`;
 - `192.168.50.14:8771` — Pratik-only rescue ingress;
 - `127.0.0.1:8773` — five-lease movement control API and publisher;
 - `127.0.0.1:5175` — the dashboard.
@@ -124,8 +125,8 @@ It must not stop, release or rewrite Pratik's five simulated movement leases.
   vehicle's next gated operation.
 - If Pratik telemetry is absent, do not claim live coverage, detections or
   positions. Keep the simulator running and repair terminal B.
-- Never start a second Mac launcher; it will collide on ports `5175`, `8770`,
-  `8771` or `8773`.
+- Never start a second Mac launcher; it will collide on ports `5175`, `8771`,
+  `8773` or the collector port printed by the launcher.
 
 ## Shutdown
 

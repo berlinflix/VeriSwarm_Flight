@@ -8,7 +8,17 @@ PYTHON="${VERISWARM_PYTHON:-/Volumes/HyperDrive/Development/VERISWARM_SIH/.venv/
 JETSON_USER="${VERISWARM_JETSON_USER:-akaberlinflix}"
 JETSON_IP=192.168.50.10
 REMOTE_EVIDENCE=/home/akaberlinflix/IHQ-20260821-001/evidence/protocol
-COLLECTOR_URL="${VERISWARM_RESCUE_URL:-http://127.0.0.1:8770}"
+COLLECTOR_PORT_FILE="${VERISWARM_RESCUE_PORT_FILE:-$REPO/codebase/results/abhijan_rescue_collector.port}"
+COLLECTOR_PORT="${VERISWARM_RESCUE_PORT:-}"
+if [ -z "${VERISWARM_RESCUE_URL:-}" ] && [ -z "$COLLECTOR_PORT" ] \
+  && [ -f "$COLLECTOR_PORT_FILE" ]; then
+  COLLECTOR_PORT=$(tr -d '\r\n' < "$COLLECTOR_PORT_FILE")
+fi
+case "${COLLECTOR_PORT:-8770}" in
+  ''|*[!0-9]*) printf 'FAIL invalid rescue collector port\n' >&2; exit 1 ;;
+esac
+COLLECTOR_PORT="${COLLECTOR_PORT:-8770}"
+COLLECTOR_URL="${VERISWARM_RESCUE_URL:-http://127.0.0.1:$COLLECTOR_PORT}"
 STATE="${VERISWARM_AUTHORIZATION_STATE:-$REPO/codebase/results/abhijan_authorization_state.json}"
 NODE=alpha
 

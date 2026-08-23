@@ -9,13 +9,14 @@ JETSON_USER="${VERISWARM_JETSON_USER:-akaberlinflix}"
 JETSON_IP=192.168.50.10
 MISSION_ID=OP-VARUNA-001
 QUALIFIER_PORT=8765
-RESCUE_PORT=8770
+RESCUE_PORT="${VERISWARM_RESCUE_PORT:-8770}"
 PRATIK_INGRESS_PORT=8771
 DASHBOARD_PORT=5175
 MOVEMENT_AUTH_PORT=8773
 TOKEN_PATH='~/.veriswarm/dashboard_token'
 CTRL="$HOME/.ssh/vs-rescue-ctl"
 RESCUE_LOG="${VERISWARM_RESCUE_LOG:-$REPO/codebase/results/rescue_events.integration.jsonl}"
+COLLECTOR_PORT_FILE="${VERISWARM_RESCUE_PORT_FILE:-$REPO/codebase/results/abhijan_rescue_collector.port}"
 MOVEMENT_AUTH_TARGET_URL="${VERISWARM_MOVEMENT_AUTH_TARGET_URL:-http://192.168.50.11:8772/authorization-snapshot}"
 MOVEMENT_AUTH_URL="${VERISWARM_MOVEMENT_AUTH_URL:-http://127.0.0.1:$MOVEMENT_AUTH_PORT}"
 MOVEMENT_AUTH_POLICY="${VERISWARM_MOVEMENT_AUTH_POLICY:-$REPO/codebase/results/pratik_movement_authorization_policy.json}"
@@ -31,6 +32,10 @@ ok()  { printf "  ${GRN}PASS${OFF}  %s\n" "$1"; }
 die() { printf "  ${RED}FAIL${OFF}  %s\n" "$1"; exit 1; }
 
 cleanup() {
+  if [ -f "$COLLECTOR_PORT_FILE" ] \
+    && [ "$(tr -d '\r\n' < "$COLLECTOR_PORT_FILE" 2>/dev/null)" = "$RESCUE_PORT" ]; then
+    rm -f "$COLLECTOR_PORT_FILE"
+  fi
   if [ -n "$AUTHORIZATION_PID" ]; then
     kill -TERM "$AUTHORIZATION_PID" 2>/dev/null || true
     wait "$AUTHORIZATION_PID" 2>/dev/null || true
@@ -130,7 +135,23 @@ curl -fsS -H "X-VeriSwarm-Token: $TOKEN" \
 
 echo "=== 5. Rescue collector ==="
 if lsof -nP -iTCP:$RESCUE_PORT -sTCP:LISTEN >/dev/null 2>&1; then
-  die "local port $RESCUE_PORT is already in use; stop the earlier rescue collector"
+  PORT_OWNER=$(lsof -nP -iTCP:$RESCUE_PORT -sTCP:LISTEN -F c 2>/dev/null \
+    | sed -n 's/^c//p' | head -1)
+  if [ -z "${VERISWARM_RESCUE_PORT:-}" ] && [ "$PORT_OWNER" = "sharingd" ]; then
+    ORIGINAL_RESCUE_PORT="$RESCUE_PORT"
+    for candidate in 8870 8871 8872; do
+      if ! lsof -nP -iTCP:$candidate -sTCP:LISTEN >/dev/null 2>&1; then
+        RESCUE_PORT="$candidate"
+        break
+      fi
+    done
+    [ "$RESCUE_PORT" != "$ORIGINAL_RESCUE_PORT" ] \
+      || die "macOS sharingd owns $ORIGINAL_RESCUE_PORT and no safe fallback collector port is free"
+    printf '  %sINFO%s  macOS sharingd owns %s; using loopback collector port %s\n' \
+      "$CYN" "$OFF" "$ORIGINAL_RESCUE_PORT" "$RESCUE_PORT"
+  else
+    die "local port $RESCUE_PORT is already in use by ${PORT_OWNER:-an unknown process}"
+  fi
 fi
 mkdir -p "$(dirname "$RESCUE_LOG")"
 cd "$REPO/codebase" || die "cannot enter codebase"
@@ -145,6 +166,9 @@ done
 curl -fsS "http://127.0.0.1:$RESCUE_PORT/health" >/dev/null \
   && ok "rescue collector on 127.0.0.1:$RESCUE_PORT" \
   || die "rescue collector failed to start"
+umask 077
+printf '%s\n' "$RESCUE_PORT" > "$COLLECTOR_PORT_FILE" \
+  || die "could not record the active rescue collector port"
 
 echo "=== 6. Pratik direct Ethernet ingress ==="
 if lsof -nP -iTCP:$PRATIK_INGRESS_PORT -sTCP:LISTEN >/dev/null 2>&1; then
