@@ -11,11 +11,18 @@ MISSION_ID=OP-VARUNA-001
 QUALIFIER_PORT=8765
 RESCUE_PORT=8770
 PRATIK_INGRESS_PORT=8771
+DASHBOARD_PORT=5175
+MOVEMENT_AUTH_PORT=8773
 TOKEN_PATH='~/.veriswarm/dashboard_token'
 CTRL="$HOME/.ssh/vs-rescue-ctl"
 RESCUE_LOG="${VERISWARM_RESCUE_LOG:-$REPO/codebase/results/rescue_events.integration.jsonl}"
+MOVEMENT_AUTH_TARGET_URL="${VERISWARM_MOVEMENT_AUTH_TARGET_URL:-http://192.168.50.11:8772/authorization-snapshot}"
+MOVEMENT_AUTH_URL="${VERISWARM_MOVEMENT_AUTH_URL:-http://127.0.0.1:$MOVEMENT_AUTH_PORT}"
+MOVEMENT_AUTH_POLICY="${VERISWARM_MOVEMENT_AUTH_POLICY:-$REPO/codebase/results/pratik_movement_authorization_policy.json}"
+MOVEMENT_AUTH_STATE="${VERISWARM_MOVEMENT_AUTH_STATE:-$REPO/codebase/results/pratik_movement_authorization_publisher_state.json}"
 COLLECTOR_PID=""
 INGRESS_PID=""
+AUTHORIZATION_PID=""
 PRATIK_IP="${VERISWARM_PRATIK_IP:-}"
 MAC_ETHERNET_IP="${VERISWARM_MAC_ETHERNET_IP:-}"
 
@@ -24,6 +31,10 @@ ok()  { printf "  ${GRN}PASS${OFF}  %s\n" "$1"; }
 die() { printf "  ${RED}FAIL${OFF}  %s\n" "$1"; exit 1; }
 
 cleanup() {
+  if [ -n "$AUTHORIZATION_PID" ]; then
+    kill -TERM "$AUTHORIZATION_PID" 2>/dev/null || true
+    wait "$AUTHORIZATION_PID" 2>/dev/null || true
+  fi
   if [ -n "$INGRESS_PID" ]; then
     kill -TERM "$INGRESS_PID" 2>/dev/null || true
     wait "$INGRESS_PID" 2>/dev/null || true
@@ -47,6 +58,8 @@ echo "=== 1. Integrated rescue checkout ==="
   || die "Pratik Ethernet ingress missing from $REPO"
 [ -f "$REPO/codebase/tools/rescue_authorization_adapter.py" ] \
   || die "Abhijan authorization adapter missing from $REPO"
+[ -f "$REPO/codebase/tools/movement_authorization_link.py" ] \
+  || die "movement authorization link missing from $REPO"
 [ -x "$PYTHON" ] || die "Python runtime not executable: $PYTHON"
 ok "rescue integration files present"
 
@@ -82,6 +95,17 @@ fi
 [ "$MAC_ETHERNET_IP" = "192.168.50.14" ] \
   || die "Mac wired address must be 192.168.50.14 for the frozen team topology; found $MAC_ETHERNET_IP"
 ok "direct Pratik -> Mac route $PRATIK_IP -> $MAC_ETHERNET_IP"
+
+AUTHORIZATION_RECEIVER_BASE="${MOVEMENT_AUTH_TARGET_URL%/authorization-snapshot}"
+curl -fsS "$AUTHORIZATION_RECEIVER_BASE/health" >/dev/null \
+  && ok "Pratik authorization receiver $AUTHORIZATION_RECEIVER_BASE" \
+  || die "Pratik must first run ops/start_pratik_authorization_receiver.ps1 on $PRATIK_IP"
+
+for port in "$MOVEMENT_AUTH_PORT" "$DASHBOARD_PORT"; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    die "local port $port is already in use; stop the earlier VeriSwarm process"
+  fi
+done
 
 echo "=== 3. Secure qualifier tunnel ==="
 ssh -S "$CTRL" -O exit "$JETSON_USER@$JETSON_IP" 2>/dev/null || true
@@ -139,16 +163,37 @@ curl -fsS "http://$MAC_ETHERNET_IP:$PRATIK_INGRESS_PORT/health" >/dev/null \
   && ok "Pratik ingress on $MAC_ETHERNET_IP:$PRATIK_INGRESS_PORT; source locked to $PRATIK_IP" \
   || die "Pratik Ethernet ingress failed to start"
 
-echo "=== 7. Dashboard ==="
+echo "=== 7. Five-drone movement authorization ==="
+cd "$REPO/codebase" || die "cannot enter codebase"
+"$PYTHON" -m tools.movement_authorization_link set-policy \
+  --file "$MOVEMENT_AUTH_POLICY" --node all \
+  --decision HOLD --reason startup_fail_closed \
+  || die "could not initialize the five movement leases"
+"$PYTHON" -m tools.movement_authorization_link serve \
+  --policy "$MOVEMENT_AUTH_POLICY" --state "$MOVEMENT_AUTH_STATE" \
+  --target-url "$MOVEMENT_AUTH_TARGET_URL" --mission-id "$MISSION_ID" \
+  --bind 127.0.0.1 --port "$MOVEMENT_AUTH_PORT" &
+AUTHORIZATION_PID=$!
+for _ in 1 2 3 4 5; do
+  curl -fsS "$MOVEMENT_AUTH_URL/health" >/dev/null 2>&1 && break
+  sleep 1
+done
+curl -fsS "$MOVEMENT_AUTH_URL/health" >/dev/null \
+  && ok "five fresh HOLD leases -> $MOVEMENT_AUTH_TARGET_URL" \
+  || die "movement authorization publisher failed to start"
+
+echo "=== 8. Dashboard ==="
 export VERISWARM_QUALIFIER_TOKEN="$TOKEN"
 export VERISWARM_QUALIFIER_URL="http://127.0.0.1:$QUALIFIER_PORT"
 export VERISWARM_RESCUE_URL="http://127.0.0.1:$RESCUE_PORT"
+export VERISWARM_MOVEMENT_AUTH_URL="$MOVEMENT_AUTH_URL"
 export VITE_RESCUE_DATA_MODE="${VITE_RESCUE_DATA_MODE:-LIVE_PRATIK}"
 unset VERISWARM_RESCUE_TOKEN
 
 echo
-echo "${GRN}Ready.${OFF} Open ${CYN}http://127.0.0.1:5175${OFF}"
+echo "${GRN}Ready.${OFF} Open ${CYN}http://127.0.0.1:$DASHBOARD_PORT${OFF}"
 echo "Pratik sends rescue events directly to ${CYN}http://$MAC_ETHERNET_IP:$PRATIK_INGRESS_PORT${OFF}"
+echo "Movement authorization: ${CYN}$MOVEMENT_AUTH_URL -> $MOVEMENT_AUTH_TARGET_URL${OFF}"
 echo "No rescue bearer token crosses Ethernet; only source IP $PRATIK_IP is accepted."
 echo "Run APPROVED BASELINE first and pause on 2/2 ACK. Then run MODEL-HASH ATTACK."
 echo "The second stage will show the create-once .dashboard.json filename."
@@ -159,4 +204,4 @@ echo
 
 cd "$REPO/codebase/c2_dashboard" || die "dashboard directory missing"
 [ -d node_modules ] || npm ci || die "npm dependency installation failed"
-npm run dev -- --host 127.0.0.1 --port 5175
+npm run dev -- --host 127.0.0.1 --port "$DASHBOARD_PORT"
