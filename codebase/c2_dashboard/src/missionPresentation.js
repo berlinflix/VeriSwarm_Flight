@@ -8,12 +8,20 @@ function finiteTimestamp(value) {
 export function normalizeDataMode(value) {
   const normalized = String(value ?? "").trim().toUpperCase();
   if (normalized === "LIVE_PRATIK") {
-    return { key: "live", label: "LIVE PRATIK", description: "DIRECT COSYS EVENTS" };
+    return { code: normalized, key: "live", label: "LIVE PRATIK", description: "DIRECT COSYS EVENTS" };
   }
   if (normalized === "REFERENCE_REPLAY") {
-    return { key: "reference", label: "REFERENCE REPLAY", description: "NON-LIVE FORMAT CHECK" };
+    return { code: normalized, key: "reference", label: "REFERENCE REPLAY", description: "NON-LIVE FORMAT CHECK" };
   }
-  return { key: "unverified", label: "SOURCE UNVERIFIED", description: "MODE NOT DECLARED" };
+  if (normalized === "MAC_FALLBACK") {
+    return {
+      code: normalized,
+      key: "fallback",
+      label: "MAC FALLBACK",
+      description: "SYNTHETIC CONTRACT-DRIVEN EVENTS",
+    };
+  }
+  return { code: normalized, key: "unverified", label: "SOURCE UNVERIFIED", description: "MODE NOT DECLARED" };
 }
 
 export function latestVehicleTimestamp(vehicle) {

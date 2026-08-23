@@ -201,6 +201,17 @@ button {
   color: #fbbf24;
 }
 
+.data-mode-badge.mode-fallback {
+  border-color: rgba(245, 190, 78, 0.48);
+  background: rgba(245, 190, 78, 0.08);
+  color: #f5be4e;
+}
+
+.data-mode-badge.mode-fallback > i {
+  background: #f5be4e;
+  box-shadow: 0 0 12px rgba(245, 190, 78, 0.7);
+}
+
 .mission-status {
   display: flex;
   align-items: center;

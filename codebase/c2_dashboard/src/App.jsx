@@ -651,7 +651,9 @@ function DroneDetailsModal({ drone, onClose }) {
       >
         <div className="modal-drone-header">
           <div>
-            <span className="node-kicker">PRATIK COSYS SIMULATION VEHICLE</span>
+            <span className="node-kicker">
+              {rescueDataMode.key === "fallback" ? "MAC CONTRACT FALLBACK VEHICLE" : "PRATIK COSYS SIMULATION VEHICLE"}
+            </span>
             <h2 id={`drone-modal-${drone.id}`}>{drone.id}</h2>
             <p>{drone.role} · retained rescue telemetry</p>
           </div>
@@ -742,7 +744,7 @@ function DroneDeck({ rescue }) {
           />
         ))}
         <div className="deck-caption">
-          PRATIK FIVE-DRONE SIMULATION · DELTA / ALPHA / BRAVO / CHARLIE / ECHO · {rescueDataMode.label} · {rescue?.state ? "RETAINED STATE CONNECTED" : "AWAITING SIMULATION EVENTS"}
+          {rescueDataMode.key === "fallback" ? "MAC CONTRACT FALLBACK" : "PRATIK FIVE-DRONE SIMULATION"} · DELTA / ALPHA / BRAVO / CHARLIE / ECHO · {rescueDataMode.label} · {rescue?.state ? "RETAINED STATE CONNECTED" : "AWAITING SIMULATION EVENTS"}
         </div>
       </section>
       <AnimatePresence>
@@ -780,14 +782,24 @@ function RealTimeView({ rescue }) {
     <section className="capsule">
       <div className="panel-heading">
         <div>
-          <span className="section-kicker">PRATIK SIMULATION · NED TOP VIEW</span>
+          <span className="section-kicker">
+            {rescueDataMode.key === "fallback" ? "SYNTHETIC CONTRACT MISSION" : "PRATIK SIMULATION"} · NED TOP VIEW
+          </span>
           <div className="panel-title">
-            {rescueDataMode.code === "LIVE_PRATIK" ? "Live Coverage Map" : "Coverage Replay"}
+            {rescueDataMode.code === "LIVE_PRATIK"
+              ? "Live Coverage Map"
+              : rescueDataMode.key === "fallback"
+                ? "Fallback Coverage Map"
+                : "Coverage Replay"}
           </div>
         </div>
         <span className={`feed-state ${rescue.state ? "connected" : "standby"}`}>
           <i /> {rescue.state
-            ? rescueDataMode.code === "LIVE_PRATIK" ? "LIVE EVENTS" : "REPLAY EVENTS"
+            ? rescueDataMode.code === "LIVE_PRATIK"
+              ? "LIVE EVENTS"
+              : rescueDataMode.key === "fallback"
+                ? "SYNTHETIC EVENTS"
+                : "REPLAY EVENTS"
             : "AWAITING EVENTS"}
         </span>
       </div>
@@ -807,7 +819,7 @@ function RealTimeView({ rescue }) {
               viewBox={`0 0 ${missionMap.width} ${missionMap.height}`}
               preserveAspectRatio="xMidYMid slice"
               role="img"
-              aria-label={`${rescueDataMode.label} Pratik simulation coverage heatmap`}
+              aria-label={`${rescueDataMode.label} five-drone coverage heatmap`}
             >
               <defs>
                 <pattern id="ned-grid" width="40" height="40" patternUnits="userSpaceOnUse">
@@ -893,7 +905,11 @@ function RealTimeView({ rescue }) {
           </div>
         </div>
         <div className="feed-footer">
-          <span><Server size={14} /> SOURCE: PRATIK COSYS RETAINED RESCUE EVENTS</span>
+          <span>
+            <Server size={14} /> SOURCE: {rescueDataMode.key === "fallback"
+              ? "MAC SYNTHETIC RETAINED RESCUE EVENTS"
+              : "PRATIK COSYS RETAINED RESCUE EVENTS"}
+          </span>
           <b>{rescue.state ? `${eventCount} EVENTS APPLIED` : "AWAITING STATE"}</b>
         </div>
       </div>

@@ -133,6 +133,8 @@ The dashboard labels the rescue source explicitly and fails closed when it is no
 - `REFERENCE_REPLAY` is only for retained sample/rehearsal events; the UI says replay and
   never labels that state live.
 - an unset or unknown `VITE_RESCUE_DATA_MODE` is shown as `SOURCE UNVERIFIED`.
+- `MAC_FALLBACK` is reserved for the Windows-outage recovery path. It is visibly labeled
+  `SYNTHETIC CONTRACT-DRIVEN EVENTS` and must not be presented as CoSys/Unreal evidence.
 - `VITE_RESCUE_STALE_AFTER_MS` optionally changes the telemetry freshness threshold from
   its 8000 ms default.
 

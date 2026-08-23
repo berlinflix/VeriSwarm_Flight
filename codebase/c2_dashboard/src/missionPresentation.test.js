@@ -11,6 +11,12 @@ import {
 test("data mode never defaults to a live claim", () => {
   assert.equal(normalizeDataMode().key, "unverified");
   assert.equal(normalizeDataMode("LIVE_PRATIK").label, "LIVE PRATIK");
+  assert.deepEqual(normalizeDataMode("MAC_FALLBACK"), {
+    code: "MAC_FALLBACK",
+    key: "fallback",
+    label: "MAC FALLBACK",
+    description: "SYNTHETIC CONTRACT-DRIVEN EVENTS",
+  });
   assert.equal(normalizeDataMode("REFERENCE_REPLAY").key, "reference");
 });
 
