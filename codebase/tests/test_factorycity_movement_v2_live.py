@@ -30,6 +30,8 @@ from sim.cosys.factorycity.tools.run_factorycity_movement_v2 import (
     LiveCoSimCommandAdapter,
     _fail_closed_hover_or_disarm_landed,
     _gate_separation,
+    _landing_alignment_tolerance,
+    _landing_sample_complete,
     _outbox_factory,
     _preflight_command,
     _slew_limited_z_target,
@@ -371,6 +373,45 @@ def test_nominal_route_releases_horizontal_motion_during_residual_z_correction(
     assert value.join() == "velocity-finished"
     assert client.calls[-1][0] == "velocity_z"
     assert client.calls[-1][4] == pytest.approx(-8.7)
+
+
+def test_point_b_alignment_keeps_formation_centres_inside_platform() -> None:
+    mission = json.loads(
+        (FACTORYCITY / "factorycity_ab_mission.development.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    # 5.5 m platform => 2.75 m half-width. The outer vehicles are at 2.0 m,
+    # leaving 0.75 m; convergence uses half that margin on both axes.
+    assert _landing_alignment_tolerance(mission) == pytest.approx(0.375)
+
+
+def test_landed_enum_completes_even_when_collision_contact_did_not_latch() -> None:
+    sample = {
+        "landed_state": int(cosysairsim.LandedState.Landed),
+        "within_contact_height": False,
+        "vertical_motion_settled": False,
+    }
+
+    assert _landing_sample_complete(sample, contact_latched=False) is True
+
+
+def test_planar_convergence_can_correct_route_overshoot(tmp_path: Path) -> None:
+    adapter, client, _ = _adapter(tmp_path, "ALLOW")
+
+    decision, value = adapter.execute_planar_velocity(
+        node="alpha",
+        vx=1.0,
+        vy=-0.25,
+        requested_z=-10.0,
+        duration_seconds=0.25,
+        minimum_separation_m=2.0,
+    )
+
+    assert decision.release_command is True
+    assert value.join() == "velocity-finished"
+    assert client.calls[-1][2:4] == (1.0, -0.25)
 
 
 def test_single_active_vehicle_uses_configured_gate_separation() -> None:

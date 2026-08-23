@@ -17,6 +17,14 @@ the vehicles were near local `z=-8.2`; the route requested `z=-10.0` in one 0.25
 command. The resulting declared vertical speed was about 7.2 m/s, above the frozen 2.0
 m/s limit, so the movement gate correctly replaced every horizontal command with hover.
 
+The next hardware run successfully released 109 route commands for every vehicle and all
+five drones moved from Point A to Point B. It then failed only during landing confirmation:
+Alpha and Charlie timed out. Those two vehicles share the negative-X formation edge. A
+duration-integrated route can overshoot Point B by nearly one metre, which moves those two
+centres beyond the finite 5.5 m landing surface while Bravo, Delta and Echo remain inside.
+The same run also exposed visible stop-start camera vibration from short velocity commands
+expiring between telemetry-heavy control iterations.
+
 ## Added movement-first route
 
 `authorized-nominal` explicitly uses the already accepted straight Point A-to-Point B
@@ -42,6 +50,14 @@ The controller now also:
 - retains the latest decision/reason and released-command count for every vehicle in
   `movement_v2_run.json`;
 - includes the exact per-vehicle gate reason in any future route-timeout failure.
+- overlaps authorization-approved route commands while preserving the frozen 250 ms gate
+  cadence, eliminating the repeated move-pause pulse;
+- stops the high-speed route inside the configured arrival region, then uses measured
+  local NED error to converge each vehicle to Point B within 0.375 m;
+- supports reverse correction after route overshoot without collapsing the formation;
+- accepts CoSim's authoritative `Landed` enum as completion even when the Point-B
+  collision timestamp does not latch;
+- retains `point_b_arrival_errors_m` and detailed landing telemetry on failure.
 
 ## Run
 
@@ -75,5 +91,5 @@ the complete `failure`, `last_gate_decisions`, `released_route_commands`, `loop_
 
 ## Validation
 
-- focused movement/security suite: `43 passed`
-- full repository suite: `571 passed`
+- focused movement/security suite after smooth-motion and landing fix: `46 passed`
+- full repository suite: `574 passed`

@@ -175,6 +175,32 @@ def _slew_limited_z_target(
     return current + math.copysign(min(abs(delta), maximum_step), delta)
 
 
+def _landing_alignment_tolerance(mission: Mapping[str, Any]) -> float:
+    """Keep every formation centre safely inside the Point-B landing surface."""
+
+    landing = mission["landing"]
+    offsets = mission["formation_offsets_ned_m"]
+    platform_x, platform_y = _finite_vector(
+        landing["platform_size_m"], "landing_platform_size"
+    )
+    maximum_x = max(abs(float(offset[0])) for offset in offsets.values())
+    maximum_y = max(abs(float(offset[1])) for offset in offsets.values())
+    edge_margin = min(platform_x / 2.0 - maximum_x, platform_y / 2.0 - maximum_y)
+    if edge_margin <= 0.0:
+        raise MovementV2Error("landing_formation_exceeds_platform")
+    return min(float(mission["route"]["arrival_tolerance_m"]), edge_margin / 2.0)
+
+
+def _landing_sample_complete(sample: Mapping[str, Any], contact_latched: bool) -> bool:
+    """Accept CoSim's Landed enum or a stable verified Point-B contact."""
+
+    return int(sample["landed_state"]) == int(cosysairsim.LandedState.Landed) or (
+        contact_latched
+        and bool(sample["within_contact_height"])
+        and bool(sample["vertical_motion_settled"])
+    )
+
+
 def _command_payload(
     contract: Mapping[str, Any],
     *,
@@ -404,6 +430,57 @@ class LiveCoSimCommandAdapter:
             ),
         )
 
+    def execute_planar_velocity(
+        self,
+        *,
+        node: str,
+        vx: float,
+        vy: float,
+        requested_z: float,
+        duration_seconds: float,
+        minimum_separation_m: float,
+    ) -> tuple[Any, Any | None]:
+        """Release one measured Point-B convergence step through the same gate."""
+
+        local = _local_position(self.client, node)
+        world = _world_position(self.client, node)
+        target_local_z = _slew_limited_z_target(
+            current_z=local[2],
+            requested_z=requested_z,
+            vertical_velocity_limit_mps=float(
+                self.contract["command_limits"]["vertical_velocity_mps"]
+            ),
+            duration_seconds=duration_seconds,
+        )
+        target_world = [
+            world[0] + vx * duration_seconds,
+            world[1] + vy * duration_seconds,
+            world[2] + target_local_z - local[2],
+        ]
+        command = _command_payload(
+            self.contract,
+            target_world_ned=target_world,
+            horizontal_velocity_mps=round(math.hypot(vx, vy), 12),
+            vertical_velocity_mps=round(
+                abs(target_local_z - local[2]) / duration_seconds, 12
+            ),
+            minimum_pairwise_separation_m=minimum_separation_m,
+        )
+        return self.dispatch_mutation(
+            node=node,
+            command=command,
+            in_flight=True,
+            mutate=lambda: self.client.moveByVelocityZAsync(
+                vx,
+                vy,
+                target_local_z,
+                duration_seconds,
+                drivetrain=cosysairsim.DrivetrainType.MaxDegreeOfFreedom,
+                yaw_mode=self.yaw_mode,
+                vehicle_name=node,
+            ),
+        )
+
 
 def _emit_vehicle_state(
     events: DurableMovementEvents,
@@ -547,6 +624,77 @@ def _require_release(decision: Any, operation: str, node: str) -> None:
         )
 
 
+def _converge_point_b(
+    *,
+    client: object,
+    survivors: tuple[str, ...],
+    mission: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    adapter: LiveCoSimCommandAdapter,
+) -> dict[str, float]:
+    """Correct route integration error before descending onto the finite platform."""
+
+    route = mission["route"]
+    dx, dy = (float(value) for value in route["target_delta_ned_m"])
+    tolerance = _landing_alignment_tolerance(mission)
+    correction_velocity = float(route["arrival_correction_velocity_mps"])
+    maximum_lateral_error = float(route["maximum_lateral_error_m"])
+    control_step = float(route["control_step_seconds"])
+    deadline = time.monotonic() + float(
+        route["arrival_convergence_timeout_seconds"]
+    )
+    pending = set(survivors)
+    final_errors: dict[str, float] = {}
+    while pending:
+        if time.monotonic() > deadline:
+            details = ",".join(
+                f"{node}:{final_errors.get(node, math.inf):.3f}m"
+                for node in sorted(pending)
+            )
+            raise MovementV2Error(f"movement_v2_point_b_convergence_timeout:{details}")
+        positions = _world_positions(client, survivors)
+        separation = _gate_separation(contract, positions)
+        if separation < float(
+            contract["command_limits"]["minimum_pairwise_separation_m"]
+        ):
+            raise MovementV2Error("movement_v2_convergence_separation_breached")
+        futures = []
+        for node in tuple(sorted(pending)):
+            local = _local_position(client, node)
+            error_x, error_y = dx - local[0], dy - local[1]
+            horizontal_error = math.hypot(error_x, error_y)
+            cross_track_error = abs(dx * local[1] - dy * local[0]) / float(
+                route["horizontal_distance_m"]
+            )
+            final_errors[node] = horizontal_error
+            if horizontal_error <= tolerance and cross_track_error <= maximum_lateral_error:
+                decision, _ = adapter.execute(
+                    node=node,
+                    action="HOVER",
+                    duration_seconds=control_step,
+                    minimum_separation_m=separation,
+                )
+                _require_release(decision, "point_b_hover", node)
+                pending.remove(node)
+                continue
+            duration = min(control_step, horizontal_error / correction_velocity)
+            vx = correction_velocity * error_x / horizontal_error
+            vy = correction_velocity * error_y / horizontal_error
+            decision, future = adapter.execute_planar_velocity(
+                node=node,
+                vx=vx,
+                vy=vy,
+                requested_z=float(route["cruise_z_ned_m"]),
+                duration_seconds=duration,
+                minimum_separation_m=separation,
+            )
+            _require_release(decision, "point_b_convergence", node)
+            if future is not None:
+                futures.append(future)
+        _join_all(futures)
+    return final_errors
+
+
 def _controlled_point_b_land(
     *,
     client: object,
@@ -593,10 +741,22 @@ def _controlled_point_b_land(
     started = time.monotonic()
     stable_since: dict[str, float] = {}
     pending = set(survivors)
+    last_samples: dict[str, Mapping[str, Any]] = {}
     while pending:
         if time.monotonic() - started > float(landing["confirmation_timeout_seconds"]):
+            details = ",".join(
+                (
+                    f"{node}[landed={sample.get('landed_state')},"
+                    f"object={sample.get('collision', {}).get('object_name')},"
+                    f"height={float(sample.get('center_height_above_surface_m', math.nan)):.3f},"
+                    f"vz={float(sample.get('vertical_speed_mps', math.nan)):.3f}]"
+                )
+                for node in sorted(pending)
+                if (sample := last_samples.get(node)) is not None
+            )
             raise MovementV2Error(
-                "movement_v2_landing_contact_timeout:" + ",".join(sorted(pending))
+                "movement_v2_landing_contact_timeout:"
+                + (details or ",".join(sorted(pending)))
             )
         positions = _world_positions(client, survivors)
         if _minimum_pairwise(positions) < float(
@@ -608,6 +768,7 @@ def _controlled_point_b_land(
             sample = _landing_contact_sample(
                 client, node, landing, surface_z, baselines[node]
             )
+            last_samples[node] = sample
             if sample["new_surface_contact"]:
                 contact_timestamps[node] = int(sample["collision"]["timestamp"])
             latched = (
@@ -615,11 +776,12 @@ def _controlled_point_b_land(
                 and sample["collision"]["object_name"] == landing["collision_object_name"]
                 and int(sample["collision"]["timestamp"]) == contact_timestamps[node]
             )
-            stable = (
-                latched
-                and sample["within_contact_height"]
-                and sample["vertical_motion_settled"]
-            )
+            if int(sample["landed_state"]) == int(cosysairsim.LandedState.Landed):
+                client.armDisarm(False, vehicle_name=node)
+                armed.discard(node)
+                pending.remove(node)
+                continue
+            stable = _landing_sample_complete(sample, latched)
             if not stable:
                 stable_since.pop(node, None)
                 continue
@@ -741,6 +903,7 @@ def main() -> None:
     minimum_observed_separation = math.inf
     last_gate_decisions: dict[str, dict[str, Any]] = {}
     released_route_commands = {node: 0 for node in roster}
+    point_b_arrival_errors: dict[str, float] = {}
     water_name = _resolve_water_object(
         args.layer_result, str(flood["water_actor_id"])
     )
@@ -925,7 +1088,9 @@ def main() -> None:
         previous_loop_ms = _now_ms()
         route_started = time.monotonic()
         completed_progress: dict[str, float] = {node: 0.0 for node in roster}
+        route_stop_progress = 1.0 - float(route["arrival_tolerance_m"]) / distance
         while active and min(completed_progress[node] for node in active) < 1.0:
+            loop_cycle_started = time.monotonic()
             if time.monotonic() - route_started > float(
                 contract["command_limits"]["maximum_route_runtime_seconds"]
             ):
@@ -950,7 +1115,8 @@ def main() -> None:
                 contract["command_limits"]["minimum_pairwise_separation_m"]
             ):
                 raise MovementV2Error("movement_v2_separation_breached")
-            futures = []
+            sensor_futures = []
+            safety_futures = []
             terminal_nodes: list[tuple[str, str]] = []
             for node in tuple(sorted(active)):
                 depth = (
@@ -962,6 +1128,9 @@ def main() -> None:
                 transition_at_ms = _now_ms()
                 progress, cross_track = _route_metrics(local, dx, dy, distance)
                 completed_progress[node] = progress
+                reached_route_stop = progress >= route_stop_progress
+                if reached_route_stop:
+                    completed_progress[node] = 1.0
                 cell_id = _mark_coverage(
                     contract=contract,
                     ledger=ledger,
@@ -975,7 +1144,9 @@ def main() -> None:
                     collision["has_collided"]
                     and int(collision["timestamp"]) > collision_baseline[node]
                 )
-                if args.route_mode == "sensor":
+                if reached_route_stop:
+                    action, transitions = "HOVER", ()
+                elif args.route_mode == "sensor":
                     assert depth is not None
                     action, transitions = supervisor.decide(
                         node=node,
@@ -1016,10 +1187,19 @@ def main() -> None:
                         observed_at_ms=transition_at_ms,
                         position_ned=positions[node],
                     )
+                command_duration = control_period
+                if args.route_mode == "authorized-nominal" and action == "CONTINUE_ROUTE":
+                    remaining_distance = max(0.0, (1.0 - progress) * distance)
+                    continuous_horizon = control_period * 2.0
+                    command_duration = min(
+                        continuous_horizon,
+                        remaining_distance
+                        / float(extension["safety"]["maximum_nominal_speed_mps"]),
+                    )
                 decision, future = adapter.execute(
                     node=node,
                     action=action,
-                    duration_seconds=control_period,
+                    duration_seconds=command_duration,
                     minimum_separation_m=minimum_separation,
                 )
                 last_gate_decisions[node] = {
@@ -1042,12 +1222,17 @@ def main() -> None:
                         ledger.mark(node, cell_id, "BLOCKED")
                         movement_events.coverage(node=node, observed_at_ms=_now_ms())
                     states[node] = "HOLD"
+                elif reached_route_stop and decision.release_command:
+                    states[node] = "ARRIVED"
                 elif decision.action == "HOVER" or action == "HOVER":
                     states[node] = "HOLD"
                 else:
                     states[node] = "SEARCHING"
                 if future is not None:
-                    futures.append(future)
+                    if args.route_mode == "sensor":
+                        sensor_futures.append(future)
+                    elif decision.action == "ABORT_HOVER_LAND":
+                        safety_futures.append(future)
                 _emit_vehicle_state(
                     movement_events, client, node, states[node]
                 )
@@ -1061,7 +1246,8 @@ def main() -> None:
                     )
                 ):
                     raise MovementV2Error("hold_dispatch_deadline_missed")
-            _join_all(futures)
+            _join_all(sensor_futures)
+            _join_all(safety_futures)
             for node, reason in terminal_nodes:
                 active.discard(node)
                 if node in armed:
@@ -1080,12 +1266,23 @@ def main() -> None:
                     reason=reason,
                 )
             loop_count += 1
+            if args.route_mode == "authorized-nominal":
+                remaining_period = control_period - (
+                    time.monotonic() - loop_cycle_started
+                )
+                if remaining_period > 0.0:
+                    time.sleep(remaining_period)
 
         survivors = tuple(sorted(active))
+        if survivors:
+            point_b_arrival_errors = _converge_point_b(
+                client=client,
+                survivors=survivors,
+                mission=mission,
+                contract=contract,
+                adapter=adapter,
+            )
         for node in survivors:
-            progress, _ = _route_metrics(_local_position(client, node), dx, dy, distance)
-            if progress < 1.0 - float(route["arrival_tolerance_m"]) / distance:
-                raise MovementV2Error(f"movement_v2_arrival_failed:{node}:{progress}")
             for cell_id in tuple(sorted(ledger.assigned[node])):
                 if cell_id not in ledger.completed[node] and cell_id not in ledger.blocked[node]:
                     ledger.mark(node, cell_id, "COMPLETED")
@@ -1185,6 +1382,7 @@ def main() -> None:
             "route_mode": args.route_mode,
             "last_gate_decisions": last_gate_decisions,
             "released_route_commands": released_route_commands,
+            "point_b_arrival_errors_m": point_b_arrival_errors,
             "outbox_directory": str(args.outbox_directory),
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
