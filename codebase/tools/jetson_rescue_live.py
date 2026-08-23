@@ -14,7 +14,7 @@ import json
 import math
 import statistics
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -148,6 +148,29 @@ class AlertLatch:
         return self.active, transition
 
 
+@dataclass
+class GeolocationVoteLatch:
+    """Require repeated appearance hypotheses before exposing a fix candidate."""
+
+    required_votes: int = 3
+    recent: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.required_votes <= 0:
+            raise ValueError("required_votes must be positive")
+
+    def update(self, location: str | None, appearance_passed: bool) -> bool:
+        if location is None or not appearance_passed:
+            self.recent.clear()
+            return False
+        self.recent.append(location)
+        self.recent = self.recent[-self.required_votes :]
+        return (
+            len(self.recent) == self.required_votes
+            and len(set(self.recent)) == 1
+        )
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path)
@@ -166,6 +189,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--alert-exit-frames", type=int, default=15)
     parser.add_argument("--no-display", action="store_true")
     parser.add_argument("--no-record", action="store_true")
+    parser.add_argument("--geolocation-checkpoint", type=Path)
+    parser.add_argument("--geolocation-expected-sha256")
+    parser.add_argument("--geolocation-gallery-dir", type=Path)
+    parser.add_argument("--geolocation-gallery-cache", type=Path)
+    parser.add_argument("--geolocation-interval-frames", type=int, default=90)
+    parser.add_argument("--geolocation-votes", type=int, default=3)
+    parser.add_argument("--geolocation-top-k", type=int, default=5)
+    parser.add_argument("--geolocation-minimum-similarity", type=float)
+    parser.add_argument("--geolocation-minimum-margin", type=float)
     parser.add_argument(
         "--target-class",
         action="append",
@@ -181,6 +213,25 @@ def _parse_args() -> argparse.Namespace:
         parser.error("invalid image, warm-up, or maximum-frame count")
     if not 0.0 <= args.confidence <= 1.0:
         parser.error("--confidence must be within [0, 1]")
+    geolocation_values = (
+        args.geolocation_expected_sha256,
+        args.geolocation_gallery_dir,
+        args.geolocation_gallery_cache,
+    )
+    if args.geolocation_checkpoint is not None and not all(geolocation_values):
+        parser.error(
+            "geolocation mode requires checkpoint hash, gallery directory and cache"
+        )
+    if args.geolocation_checkpoint is None and any(geolocation_values):
+        parser.error("--geolocation-checkpoint is required for geolocation mode")
+    if args.geolocation_interval_frames <= 0 or args.geolocation_votes <= 0:
+        parser.error("geolocation interval and vote count must be positive")
+    if args.geolocation_top_k < 2:
+        parser.error("--geolocation-top-k must be at least 2")
+    if (args.geolocation_minimum_similarity is None) != (
+        args.geolocation_minimum_margin is None
+    ):
+        parser.error("configure both geolocation thresholds or neither")
     return args
 
 
@@ -192,6 +243,12 @@ def _draw_text(cv2: object, frame: object, text: str, origin: tuple[int, int], c
 
 def _camera_source(value: str) -> int | str:
     return int(value) if value.isdecimal() else value
+
+
+def _torch_device(value: str) -> str:
+    """Translate Ultralytics' numeric CUDA selector to a torch device string."""
+
+    return f"cuda:{value}" if value.isdecimal() else value
 
 
 def main() -> int:
@@ -217,6 +274,88 @@ def main() -> int:
     )
     model_hash = sha256_file(model_path)
     model = YOLO(str(model_path))
+
+    geolocation: dict[str, object] | None = None
+    geolocation_latch = GeolocationVoteLatch(args.geolocation_votes)
+    geolocation_latest: dict[str, object] | None = None
+    geolocation_query_count = 0
+    geolocation_candidate_count = 0
+    if args.geolocation_checkpoint is not None:
+        from PIL import Image  # type: ignore[import-not-found]
+
+        try:
+            from tools.university1652_retrieval import (
+                _load_cache,
+                acceptance_decision,
+                build_encoder,
+                encode_pil_images,
+                gallery_images,
+                gallery_manifest_sha256,
+                normalized_sha256,
+                rank_top_k,
+            )
+        except ModuleNotFoundError:
+            from university1652_retrieval import (  # type: ignore[no-redef]
+                _load_cache,
+                acceptance_decision,
+                build_encoder,
+                encode_pil_images,
+                gallery_images,
+                gallery_manifest_sha256,
+                normalized_sha256,
+                rank_top_k,
+            )
+
+        geolocation_checkpoint = args.geolocation_checkpoint.resolve()
+        geolocation_gallery = args.geolocation_gallery_dir.resolve()
+        geolocation_cache = args.geolocation_gallery_cache.resolve()
+        if not geolocation_checkpoint.is_file():
+            raise SystemExit(
+                f"geolocation checkpoint not found: {geolocation_checkpoint}"
+            )
+        if not geolocation_cache.is_file():
+            raise SystemExit(
+                "geolocation gallery cache must be built before live execution"
+            )
+        geolocation_hash = sha256_file(geolocation_checkpoint)
+        expected_geolocation_hash = normalized_sha256(
+            args.geolocation_expected_sha256,
+            "geolocation_expected_sha256",
+        )
+        if geolocation_hash != expected_geolocation_hash:
+            raise SystemExit(
+                "geolocation checkpoint hash mismatch: "
+                f"expected {expected_geolocation_hash}, got {geolocation_hash}"
+            )
+        geolocation_paths = gallery_images(geolocation_gallery)
+        geolocation_manifest = gallery_manifest_sha256(
+            geolocation_paths, geolocation_gallery
+        )
+        geolocation_device = _torch_device(args.device)
+        geolocation_encoder = build_encoder(
+            geolocation_checkpoint, geolocation_device
+        )
+        geo_features, geo_labels, geo_paths = _load_cache(
+            geolocation_cache, geolocation_hash, geolocation_manifest
+        )
+        if args.geolocation_top_k > len(geo_labels):
+            raise SystemExit("geolocation top-k exceeds gallery size")
+        geolocation = {
+            "checkpoint": str(geolocation_checkpoint),
+            "checkpoint_sha256": geolocation_hash,
+            "gallery": str(geolocation_gallery),
+            "gallery_manifest_sha256": geolocation_manifest,
+            "gallery_cache": str(geolocation_cache),
+            "gallery_size": len(geo_labels),
+            "encoder": geolocation_encoder,
+            "features": geo_features,
+            "labels": geo_labels,
+            "paths": geo_paths,
+            "Image": Image,
+            "encode": encode_pil_images,
+            "rank": rank_top_k,
+            "decide": acceptance_decision,
+        }
     source = _camera_source(args.camera)
     camera = cv2.VideoCapture(source, cv2.CAP_V4L2)
     camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
@@ -301,6 +440,48 @@ def main() -> int:
                 wall_elapsed_ms = (time.perf_counter() - predicted_at) * 1000.0
                 core_inference_ms = float(result.speed.get("inference", math.nan))
 
+                if (
+                    geolocation is not None
+                    and frame_count % args.geolocation_interval_frames == 0
+                ):
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    pil_image = geolocation["Image"].fromarray(rgb)
+                    try:
+                        geo_feature = geolocation["encode"](
+                            geolocation["encoder"], [pil_image], geolocation_device
+                        )[0]
+                    finally:
+                        pil_image.close()
+                    geo_hypotheses = geolocation["rank"](
+                        geo_feature,
+                        geolocation["features"],
+                        geolocation["labels"],
+                        geolocation["paths"],
+                        args.geolocation_top_k,
+                    )
+                    appearance_passed, geo_reason, geo_margin = geolocation["decide"](
+                        geo_hypotheses,
+                        minimum_similarity=args.geolocation_minimum_similarity,
+                        minimum_margin=args.geolocation_minimum_margin,
+                    )
+                    top_location = str(geo_hypotheses[0]["location_id"])
+                    temporally_stable = geolocation_latch.update(
+                        top_location, appearance_passed
+                    )
+                    geolocation_query_count += 1
+                    geolocation_candidate_count += int(temporally_stable)
+                    geolocation_latest = {
+                        "sampled_frame": frame_count,
+                        "top_k": geo_hypotheses,
+                        "appearance_passed": appearance_passed,
+                        "appearance_reason": geo_reason,
+                        "appearance_margin": geo_margin,
+                        "temporal_votes": list(geolocation_latch.recent),
+                        "temporally_stable": temporally_stable,
+                        "vio_confirmation_required": True,
+                        "position_correction_authorized": False,
+                    }
+
                 detections: list[dict[str, object]] = []
                 if result.boxes is not None:
                     class_ids = result.boxes.cls.detach().cpu().tolist()
@@ -381,6 +562,21 @@ def main() -> int:
                 )
                 _draw_text(cv2, frame, metrics, (max(18, actual_width - 740), 59), (230, 230, 230), 0.50)
                 _draw_text(cv2, frame, f"model {model_hash[:16]}  |  {args.imgsz}px  |  conf {args.confidence:.2f}", (18, actual_height - 18), (230, 230, 230), 0.48)
+                if geolocation_latest is not None:
+                    geo_top = geolocation_latest["top_k"][0]
+                    geo_text = (
+                        f"VISUAL LOCATION {geo_top['location_id']} "
+                        f"score {geo_top['cosine_similarity']:.3f} | "
+                        "VIO CONFIRMATION REQUIRED"
+                    )
+                    _draw_text(
+                        cv2,
+                        frame,
+                        geo_text,
+                        (18, 84),
+                        (255, 180, 40),
+                        0.52,
+                    )
                 if ambiguous:
                     _draw_text(cv2, frame, "OVERLAPPING BOXES: IDENTITY NOT YET RESOLVED", (18, 108), (30, 170, 255), 0.60)
 
@@ -400,6 +596,7 @@ def main() -> int:
                             "core_inference_ms": core_inference_ms,
                             "wall_ms": wall_elapsed_ms,
                             "display_fps": display_fps,
+                            "geolocation": geolocation_latest,
                         },
                         sort_keys=True,
                     )
@@ -474,6 +671,27 @@ def main() -> int:
         "mean_wall_ms": statistics.fmean(wall_ms) if wall_ms else None,
         "p95_wall_ms": percentile(wall_ms, 0.95) if wall_ms else None,
         "release_verified": release_verified,
+        "geolocation": (
+            {
+                "enabled": True,
+                "checkpoint": geolocation["checkpoint"],
+                "checkpoint_sha256": geolocation["checkpoint_sha256"],
+                "gallery_manifest_sha256": geolocation[
+                    "gallery_manifest_sha256"
+                ],
+                "gallery_size": geolocation["gallery_size"],
+                "interval_frames": args.geolocation_interval_frames,
+                "required_votes": args.geolocation_votes,
+                "minimum_similarity": args.geolocation_minimum_similarity,
+                "minimum_margin": args.geolocation_minimum_margin,
+                "query_count": geolocation_query_count,
+                "candidate_count": geolocation_candidate_count,
+                "latest": geolocation_latest,
+                "position_correction_authorized": False,
+            }
+            if geolocation is not None
+            else {"enabled": False}
+        ),
         "trace": str(trace_path),
         "annotated_video": str(video_path) if writer is not None else None,
     }

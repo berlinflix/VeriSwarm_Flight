@@ -75,6 +75,32 @@ python -m tools.university1652_validate \
 The report separates per-frame top-1/top-5 accuracy from offline temporal descriptor
 fusion. A fused match remains an appearance hypothesis and cannot directly reset pose.
 
+## Shared-camera dual-model execution
+
+Do not open the Owl camera from two processes. `jetson_rescue_live` owns the camera,
+runs the rescue detector on every frame and samples University-1652 from that same frame
+at a bounded interval. Build the gallery cache first. Replace the rescue-model placeholder
+with Samik's selected checkpoint or Jetson-built TensorRT engine only after that artifact
+exists and its class map is verified.
+
+```bash
+python -m tools.jetson_rescue_live \
+  --model ~/VeriSwarm_Models/rescue/sar-rgb-person-v1.engine \
+  --out-dir ~/VeriSwarm_Jetson_Evidence/dual-model/run-01 \
+  --imgsz 640 \
+  --confidence 0.25 \
+  --geolocation-checkpoint ~/VeriSwarm_Models/geolocation/university1652/net_119.pth \
+  --geolocation-expected-sha256 7a86d1e0be58caa27bd7945b86c750239b9211e178143642e8c316aa5ce14281 \
+  --geolocation-gallery-dir ~/VeriSwarm_Geolocation/university1652/gallery_satellite \
+  --geolocation-gallery-cache ~/VeriSwarm_Geolocation/university1652/gallery-951.fp16.npz \
+  --geolocation-interval-frames 90 \
+  --geolocation-votes 3
+```
+
+Until domain-specific similarity and margin thresholds are supplied, the location panel
+remains `VIO CONFIRMATION REQUIRED`. Even after temporal agreement, the runtime emits a
+candidate and never directly authorizes a position correction.
+
 ## Operational acceptance sequence
 
 An appearance match may become a global correction only after all of the following:

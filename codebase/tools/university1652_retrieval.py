@@ -212,13 +212,14 @@ def build_encoder(checkpoint: Path, device: str):
     return encoder
 
 
-def encode_files(encoder, paths: Sequence[Path], device: str, batch_size: int) -> np.ndarray:
+def encode_pil_images(encoder, images: Sequence[object], device: str) -> np.ndarray:
+    """Encode already-open PIL images using the frozen evaluation transform."""
+
     import torch  # type: ignore[import-not-found]
-    from PIL import Image  # type: ignore[import-not-found]
     from torchvision import transforms  # type: ignore[import-not-found]
 
-    if batch_size <= 0:
-        raise ValueError("batch_size must be positive")
+    if not images:
+        raise ValueError("at least one image is required")
     preprocess = transforms.Compose(
         [
             transforms.Resize((256, 256), interpolation=transforms.InterpolationMode.BICUBIC),
@@ -227,17 +228,29 @@ def encode_files(encoder, paths: Sequence[Path], device: str, batch_size: int) -
         ]
     )
     device_value = torch.device(device)
-    batches: list[np.ndarray] = []
+    items = [preprocess(image.convert("RGB")) for image in images]
+    tensors = torch.stack(items).to(device_value)
     with torch.inference_mode():
-        for start in range(0, len(paths), batch_size):
-            items = []
+        features = encoder(tensors) + encoder(torch.flip(tensors, dims=(3,)))
+        features = torch.nn.functional.normalize(features, p=2, dim=1)
+    return l2_normalize(features.detach().cpu().numpy().astype(np.float32, copy=False))
+
+
+def encode_files(encoder, paths: Sequence[Path], device: str, batch_size: int) -> np.ndarray:
+    from PIL import Image  # type: ignore[import-not-found]
+
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    batches: list[np.ndarray] = []
+    for start in range(0, len(paths), batch_size):
+        opened = []
+        try:
             for path in paths[start : start + batch_size]:
-                with Image.open(path) as image:
-                    items.append(preprocess(image.convert("RGB")))
-            images = torch.stack(items).to(device_value)
-            features = encoder(images) + encoder(torch.flip(images, dims=(3,)))
-            features = torch.nn.functional.normalize(features, p=2, dim=1)
-            batches.append(features.detach().cpu().numpy().astype(np.float32, copy=False))
+                opened.append(Image.open(path))
+            batches.append(encode_pil_images(encoder, opened, device))
+        finally:
+            for image in opened:
+                image.close()
     return l2_normalize(np.concatenate(batches, axis=0))
 
 

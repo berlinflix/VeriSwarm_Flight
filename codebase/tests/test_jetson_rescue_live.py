@@ -4,6 +4,8 @@ import unittest
 
 from tools.jetson_rescue_live import (
     AlertLatch,
+    GeolocationVoteLatch,
+    _torch_device,
     class_name,
     normalize_targets,
     overlap_clusters,
@@ -12,6 +14,18 @@ from tools.jetson_rescue_live import (
 
 
 class JetsonRescueLiveTests(unittest.TestCase):
+    def test_torch_device_translates_ultralytics_numeric_selector(self) -> None:
+        self.assertEqual(_torch_device("0"), "cuda:0")
+        self.assertEqual(_torch_device("cuda:1"), "cuda:1")
+
+    def test_geolocation_requires_repeated_passed_hypotheses(self) -> None:
+        latch = GeolocationVoteLatch(required_votes=3)
+        self.assertFalse(latch.update("0038", True))
+        self.assertFalse(latch.update("0038", True))
+        self.assertTrue(latch.update("0038", True))
+        self.assertFalse(latch.update("0038", False))
+        self.assertEqual(latch.recent, [])
+
     def test_default_alert_enters_on_first_observation(self) -> None:
         latch = AlertLatch()
         self.assertEqual(latch.update(True), (True, "ALERT_ENTER"))
