@@ -57,6 +57,24 @@ With no thresholds supplied, the result deliberately reports `accepted: false` a
 must be selected on a validation set for the actual gallery/domain, not copied from the
 University benchmark.
 
+Validate every labelled drone view in a directory before trusting the integration. Use a
+small batch on the 8 GB Nano to avoid transient NvMap allocation pressure:
+
+```bash
+python -m tools.university1652_validate \
+  --checkpoint ~/VeriSwarm_Models/geolocation/university1652/net_119.pth \
+  --expected-checkpoint-sha256 7a86d1e0be58caa27bd7945b86c750239b9211e178143642e8c316aa5ce14281 \
+  --gallery-dir ~/VeriSwarm_Geolocation/university1652/gallery_satellite \
+  --gallery-cache ~/VeriSwarm_Geolocation/university1652/gallery-951.fp16.npz \
+  --query-dir ~/VeriSwarm_Geolocation/university1652/query_drone/0038 \
+  --batch-size 4 \
+  --top-k 10 \
+  --out ~/VeriSwarm_Jetson_Evidence/geolocation/u1652-0038-validation.json
+```
+
+The report separates per-frame top-1/top-5 accuracy from offline temporal descriptor
+fusion. A fused match remains an appearance hypothesis and cannot directly reset pose.
+
 ## Operational acceptance sequence
 
 An appearance match may become a global correction only after all of the following:
