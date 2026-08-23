@@ -38,7 +38,12 @@ test("server-renders the VeriSwarm SIH project story", async () => {
   assert.match(html, /Operation Varuna/);
   assert.match(html, /Five coordinated roles/);
   assert.match(html, /Fail-closed safety/);
+  assert.match(html, /USB webcam/);
+  assert.match(html, /Android DroidCam/);
+  assert.match(html, /Not mockups/);
+  assert.match(html, /COCO baseline objects/);
   assert.match(html, /WORKING NOW/);
+  assert.doesNotMatch(html, /LiDAR/i);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 });
 
@@ -57,7 +62,12 @@ test("keeps project claims and presentation controls in source", async () => {
   assert.match(page, /role="tablist"/);
   assert.match(page, /PERSON CANDIDATE/);
   assert.match(page, /Illustrative interface state/);
+  assert.match(page, /\/evidence\/covis-agree\.jpg/);
+  assert.match(page, /\/evidence\/covis-dispute\.jpg/);
+  assert.match(page, /\/evidence\/model-startup\.jpg/);
+  assert.match(page, /\/evidence\/chennai-flood-rescue\.jpg/);
   assert.match(page, /NEXT INTEGRATION/);
+  assert.doesNotMatch(page, /LiDAR/i);
   assert.match(layout, /VeriSwarm Rescue/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
   assert.match(css, /@media \(max-width:\s*760px\)/);

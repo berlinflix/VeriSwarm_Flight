@@ -14,29 +14,29 @@ const workflow = [
     key: "sense",
     number: "01",
     title: "Sense",
-    kicker: "RGB · thermal-ready · depth",
-    body: "Each vehicle captures local evidence. Metric depth and LiDAR protect motion; semantic detections never directly steer a drone.",
+    kicker: "USB webcam · Android DroidCam · RGB",
+    body: "Local RGB sources capture timestamped frames, camera health and YOLO detections. Camera output remains evidence; it never directly becomes a flight command.",
   },
   {
     key: "understand",
     number: "02",
     title: "Understand",
-    kicker: "Edge perception",
-    body: "Pinned rescue models produce person candidates and supported hazard observations with model identity, confidence and timestamps.",
+    kicker: "YOLOv8n · Ultralytics · OpenCV",
+    body: "Our working camera proof uses a pinned YOLOv8n baseline. The rescue-specific person model, held-out metrics and Jetson qualification remain an active integration lane.",
   },
   {
     key: "verify",
     number: "03",
     title: "Verify",
-    kicker: "Multi-view · provenance",
-    body: "Independent views add support while signed receipts and the model allowlist expose stale, inconsistent or unapproved evidence.",
+    kicker: "RANSAC homography · model hash",
+    body: "Projected common regions support AGREE, DISPUTE and ABSTAIN while signed receipts and a model allowlist expose stale, inconsistent or unapproved evidence.",
   },
   {
     key: "coordinate",
     number: "04",
     title: "Coordinate",
-    kicker: "Offline-first swarm",
-    body: "Five drones own non-overlapping cells. When one is held or quarantined, unfinished work is deterministically reassigned.",
+    kicker: "FactoryCity · CoSys RPC",
+    body: "A measured Point A-to-B route and five-agent, ten-cell contract define the integration target. The retained authorization-aware live run is still pending.",
   },
   {
     key: "respond",
@@ -52,36 +52,36 @@ const teamProgress = [
     initials: "SU",
     owner: "Suyash",
     lane: "Trust & integration",
-    status: "Integrated",
-    detail: "Frozen event contracts, offline outbox, multi-view fusion, OP-TEE lineage and release gates.",
+    status: "Integrated core",
+    detail: "Rescue event schema, dashboard projection, SQLite outbox, multi-view fusion and OP-TEE model-trust path.",
   },
   {
     initials: "SA",
     owner: "Samik",
     lane: "Rescue perception",
-    status: "Training lane",
-    detail: "Fail-closed dataset conversion, pinned training pipeline, model provenance and person-candidate adapter.",
+    status: "Training + runtime",
+    detail: "Dataset, training and inference lane; also operates the proven Windows P2 multi-camera runtime.",
   },
   {
     initials: "PR",
     owner: "Pratik",
     lane: "Simulation & autonomy",
-    status: "Live A→B pass",
-    detail: "FactoryCity disaster scene, five-drone cell mission, measured route and monitored landing flow.",
+    status: "Route contract built",
+    detail: "FactoryCity Point A/B, measured 95.0474 m route and five-agent, ten-cell development contract; live qualification is pending.",
   },
   {
     initials: "AB",
     owner: "Abhijan",
     lane: "Security & C2",
-    status: "Integrated",
-    detail: "Command dashboard, movement policy, model-swap demonstration and deterministic heatmap projection.",
+    status: "Security gate built",
+    detail: "Dashboard proof gate, clean/model-swap stages and fail-closed movement security policy; heatmap integration follows.",
   },
   {
     initials: "AY",
     owner: "Ayush",
     lane: "Multi-view validation",
-    status: "Verified tools",
-    detail: "Variable-camera overlap, release-safe capture, dataset audit and immutable rescue-model registry adapter.",
+    status: "2-source proof",
+    detail: "USB webcam plus Android DroidCam, projected overlap, semantic states, internal evidence and release-safe capture.",
   },
 ];
 
@@ -182,6 +182,7 @@ export default function Home() {
         <div id="site-nav" className={`nav-links ${menuOpen ? "open" : ""}`}>
           <a href="#problem" onClick={handleSectionLink("problem")}>Problem</a>
           <a href="#system" onClick={handleSectionLink("system")}>System</a>
+          <a href="#evidence" onClick={handleSectionLink("evidence")}>Evidence</a>
           <a href="#progress" onClick={handleSectionLink("progress")}>Progress</a>
           <a href="#safety" onClick={handleSectionLink("safety")}>Safety</a>
           <a className="nav-cta" href="#mission" onClick={handleSectionLink("mission")}>View mission <Arrow /></a>
@@ -204,7 +205,7 @@ export default function Home() {
           </p>
           <div className="hero-actions">
             <a className="button primary" href="#system" onClick={handleSectionLink("system")}>Explore the system <Arrow /></a>
-            <a className="button ghost" href="#progress" onClick={handleSectionLink("progress")}>See what works now</a>
+            <a className="button ghost" href="#evidence" onClick={handleSectionLink("evidence")}>See the real camera proof</a>
           </div>
           <div className="proof-line">
             <span><i className="pulse" /> Integration build</span>
@@ -240,10 +241,10 @@ export default function Home() {
       </section>
 
       <section className="metric-ribbon" aria-label="Project mission facts">
-        <div><b>05</b><span>coordinated drones</span></div>
-        <div><b>10</b><span>owned search cells</span></div>
-        <div><b>LOCAL</b><span>offline-first operation</span></div>
-        <div><b>ZERO</b><span>unsafe-release target</span></div>
+        <div><b>02</b><span>proven live camera sources</span></div>
+        <div><b>03</b><span>camera evidence panels</span></div>
+        <div><b>LOCAL</b><span>no cloud camera relay</span></div>
+        <div><b>HOLD</b><span>fail-closed result</span></div>
       </section>
 
       <section id="problem" className="section problem-section">
@@ -252,10 +253,31 @@ export default function Home() {
           <h2>Disaster zones break the assumptions ordinary autonomy depends on.</h2>
         </header>
         <div className="problem-layout">
-          <p className="lead">
-            Floodwater blocks roads. Buildings hide people. Links disappear. A single camera
-            can be wrong—and a compromised model can be confidently wrong.
-          </p>
+          <div className="problem-story">
+            <p className="lead">
+              Floodwater blocks roads. Buildings hide people. Links disappear. A single camera
+              can be wrong—and a compromised model can be confidently wrong.
+            </p>
+            <figure className="problem-photo">
+              <Image
+                src="/evidence/chennai-flood-rescue.jpg"
+                alt="Indian Air Force personnel performing a winch rescue during the 2015 Chennai floods"
+                width={1600}
+                height={1437}
+              />
+              <figcaption>
+                <strong>Real disaster context—not team test evidence.</strong>
+                Chennai flood rescue by the Indian Air Force. Photo: {" "}
+                <a
+                  href="https://commons.wikimedia.org/wiki/File:Indian_Air_Force_Cheetah_helicopters_rescue_op_2015_Chennai_Flood_(cropped).jpg"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Indian Air Force / GODL-India via Wikimedia Commons
+                </a>.
+              </figcaption>
+            </figure>
+          </div>
           <div className="problem-grid">
             <article><span>01</span><h3>Limited visibility</h3><p>No one view can cover a damaged urban area or safely confirm every observation.</p></article>
             <article><span>02</span><h3>Disconnected teams</h3><p>Cloud-dependent coordination fails exactly when local responders need it most.</p></article>
@@ -297,15 +319,76 @@ export default function Home() {
         </div>
       </section>
 
+      <section id="stack" className="section stack-section">
+        <header className="section-heading split">
+          <div><span className="section-number">02 / WHAT WE ACTUALLY USE</span><h2>The real build stack.</h2></div>
+          <p>Every item is marked by its present status. “Next gate” means it is planned or under qualification—not already demonstrated.</p>
+        </header>
+        <div className="stack-grid">
+          <article>
+            <span className="stack-status used">USED IN CAMERA PROOF</span>
+            <h3>Capture + perception</h3>
+            <ul><li>USB webcam + Android DroidCam</li><li>Windows P2 · OpenCV</li><li>YOLOv8n · Ultralytics 8.4.56</li></ul>
+          </article>
+          <article>
+            <span className="stack-status used">PROVEN</span>
+            <h3>Geometry + evidence</h3>
+            <ul><li>RANSAC 2-D homography</li><li>Projected polygons · view/box IoU</li><li>JSONL, internal video + release probes</li></ul>
+          </article>
+          <article>
+            <span className="stack-status built">BUILT / INTEGRATING</span>
+            <h3>Trust + edge</h3>
+            <ul><li>Jetson Orin Nano hardware</li><li>OP-TEE signer · model SHA allowlist</li><li>Rescue TensorRT qualification pending</li></ul>
+          </article>
+          <article>
+            <span className="stack-status next">NEXT LIVE GATE</span>
+            <h3>Simulation + control</h3>
+            <ul><li>Unreal Engine FactoryCity · CoSys RPC</li><li>Python · measured Point A/B route</li><li>Five-agent, ten-cell development contract</li></ul>
+          </article>
+          <article>
+            <span className="stack-status built">BUILT</span>
+            <h3>Dashboard + data</h3>
+            <ul><li>React/Vite command dashboard</li><li>Rescue event JSON · SQLite outbox</li><li>Deterministic alerts and reports</li></ul>
+          </article>
+          <article>
+            <span className="stack-status next">IN PROGRESS</span>
+            <h3>Rescue model training</h3>
+            <ul><li>Kaggle source audit</li><li>VisDrone / HIT-UAV where applicable</li><li>PyTorch + Ultralytics held-out evaluation</li></ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="evidence" className="section evidence-section">
+        <header className="section-heading split">
+          <div><span className="section-number">03 / REAL TEAM EVIDENCE</span><h2>Not mockups. This is our camera rig running.</h2></div>
+          <p>Captured on Samik’s Windows P2 using one USB webcam and one Android phone through DroidCam.</p>
+        </header>
+        <div className="evidence-grid">
+          <figure className="evidence-card agree">
+            <Image src="/evidence/covis-agree.jpg" alt="VeriSwarm three-panel camera application showing an AGREE result" width={1600} height={1200} />
+            <figcaption><span>AGREE</span><h3>Both views support the same class.</h3><p>The third panel shows the homography-projected shared region and displayed overlap metrics.</p></figcaption>
+          </figure>
+          <figure className="evidence-card dispute">
+            <Image src="/evidence/covis-dispute.jpg" alt="VeriSwarm three-panel camera application showing a DISPUTE result" width={1600} height={1200} />
+            <figcaption><span>DISPUTE</span><h3>Co-visible views make different claims.</h3><p>The system preserves the disagreement instead of forcing a presentation-friendly pass.</p></figcaption>
+          </figure>
+          <figure className="evidence-card model">
+            <Image src="/evidence/model-startup.jpg" alt="VeriSwarm terminal output showing the semantic run mode and YOLO model SHA-256" width={1600} height={1200} />
+            <figcaption><span>MODEL IDENTITY</span><h3>The run records what actually executed.</h3><p>Startup output binds the semantic mode to a selected model and its SHA-256 identity.</p></figcaption>
+          </figure>
+        </div>
+        <div className="evidence-note"><b>Honest boundary:</b> these photos use COCO baseline objects to prove capture, projected geometry, semantic decisions and cleanup. They do not claim the final rescue-trained person model is already qualified.</div>
+      </section>
+
       <section id="mission" className="section mission-section">
         <header className="section-heading split">
-          <div><span className="section-number">02 / THE DEMONSTRATION</span><h2>Operation Varuna</h2></div>
-          <p>Five simulated drones search a flooded urban environment, retain local evidence and keep the mission moving when one vehicle is denied authorization.</p>
+          <div><span className="section-number">04 / THE MISSION INTERFACE</span><h2>Operation Varuna</h2></div>
+          <p>This interface visualizes the frozen FactoryCity route and cell-assignment design. It is an integration target, not a completed field mission.</p>
         </header>
         <div className="mission-console">
           <div className="console-topline">
-            <div><i className="pulse" /> FACTORYCITY · DEVELOPMENT REPLAY</div>
-            <div>2-D NED MISSION VIEW</div>
+            <div><i className="pulse" /> FACTORYCITY · INTERFACE PROTOTYPE</div>
+            <div>NOT RETAINED FLIGHT EVIDENCE</div>
           </div>
           <div className="mission-map">
             <div className="map-label north">N ↑</div>
@@ -329,14 +412,14 @@ export default function Home() {
               <li className="warn"><time>02:03</time><p><b>Alpha held</b><span>authorization unavailable</span></p></li>
               <li><time>02:04</time><p><b>Cell 05 reassigned</b><span>mission continuity preserved</span></p></li>
             </ol>
-            <div className="feed-note">Illustrative interface state. Final claims use retained run evidence.</div>
+            <div className="feed-note">Illustrative interface state. Frozen assets include Point A/B, a 95.0474 m route, a five-agent roster and ten-cell contract. The first retained authorization-aware live run remains pending.</div>
           </aside>
         </div>
       </section>
 
       <section className="section capability-section">
         <header className="section-heading">
-          <span className="section-number">03 / WHAT MAKES IT DIFFERENT</span>
+          <span className="section-number">05 / WHAT MAKES IT DIFFERENT</span>
           <h2>Safety is not a slogan.<br />It is visible system state.</h2>
         </header>
         <div className="capability-grid">
@@ -367,7 +450,7 @@ export default function Home() {
 
       <section id="progress" className="section progress-section">
         <header className="section-heading split">
-          <div><span className="section-number">04 / TEAM EXECUTION</span><h2>Built as five accountable workstreams.</h2></div>
+          <div><span className="section-number">06 / TEAM EXECUTION</span><h2>Built as five accountable workstreams.</h2></div>
           <p>Every claim below reflects the latest integrated code or an explicitly labelled active lane. The site can be updated as final artifacts land.</p>
         </header>
         <div className="team-list">
@@ -384,10 +467,10 @@ export default function Home() {
 
       <section id="safety" className="section safety-section">
         <div className="safety-copy">
-          <span className="section-number">05 / FAIL-CLOSED BY DESIGN</span>
+          <span className="section-number">07 / FAIL-CLOSED BY DESIGN</span>
           <h2>The dashboard never invents a green light.</h2>
           <p>Missing, stale, malformed or inconsistent evidence is shown as unavailable and resolves to HOLD—not a presentation-friendly pass.</p>
-          <div className="boundary-note">Person candidate ≠ confirmed survivor. Simulator validation ≠ certified field deployment.</div>
+          <div className="boundary-note">Person candidate ≠ confirmed survivor. Simulator validation ≠ certified field deployment. We do not claim field-proven five-drone rescue, thermal AI, calibrated 3-D localization or certified autonomy.</div>
         </div>
         <div className="decision-matrix">
           <div className="matrix-head"><span>INPUT</span><span>VISIBLE RESULT</span><span>ACTION</span></div>
@@ -401,12 +484,12 @@ export default function Home() {
       <section className="section roadmap-section">
         <div className="roadmap-card now">
           <span>WORKING NOW</span>
-          <h3>Coherent simulator thin slice</h3>
+          <h3>Proven camera + trust components</h3>
           <ul>
-            <li>Five-drone sector and cell mission</li>
-            <li>Evidence-backed rescue event plane</li>
+            <li>USB webcam + DroidCam co-visibility</li>
+            <li>YOLO boxes + projected overlap</li>
+            <li>AGREE, DISPUTE, ABSTAIN + release proof</li>
             <li>Model-swap rejection and safety HOLD</li>
-            <li>Multi-camera validation and release proof</li>
           </ul>
         </div>
         <div className="roadmap-line"><i /><i /><i /></div>
@@ -414,10 +497,10 @@ export default function Home() {
           <span>NEXT INTEGRATION</span>
           <h3>Measured edge-to-map run</h3>
           <ul>
-            <li>Selected rescue model on Jetson TensorRT</li>
-            <li>Calibrated pose/depth geolocation</li>
-            <li>Authorization-aware live movement</li>
-            <li>Two unchanged final rehearsals</li>
+            <li>Rescue-trained person model + held-out metrics</li>
+            <li>Jetson TensorRT qualification</li>
+            <li>First retained authorization-aware CoSys run</li>
+            <li>Measured camera pose/range localization</li>
           </ul>
         </div>
       </section>
