@@ -67,5 +67,4 @@ This is a fork of the implementation behind *VeriSwarm: Hardware-Attested Distri
 Inference for Adversarially-Robust UAV Autonomy* (Singh & Subbulakshmi, VIT Chennai).
 
 The paper's repo — [berlinflix/veriswarm](https://github.com/berlinflix/veriswarm) — is
-**frozen** so every number in the paper stays reproducible. All SIH development happens
-here, and the two diverge deliberately. Never push SIH changes to the paper repo.
+**frozen** so every number in the paper stays reproducible. 
