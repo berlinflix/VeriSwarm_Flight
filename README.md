@@ -3,24 +3,7 @@
 Hardware-attested distributed inference for adversarially-robust UAV autonomy, built into a
 live, judge-attackable demo.
 
-## 📌 Read in this order
 
-| # | File | What it is |
-|---|---|---|
-| 1 | **[urgent_new_changes.md](urgent_new_changes.md)** | **Read first, every time.** Overrides everything below it. Newest decisions are at the top. |
-| 2 | [SIH_2026_Build_Plan.md](SIH_2026_Build_Plan.md) | Architecture, the seven attacks, member plans, tier gates, demo run-of-show. |
-| 3 | [HARDWARE_LIST.md](HARDWARE_LIST.md) | What to buy, what not to, and the gotchas that cost a day each. |
-
-If `urgent_new_changes.md` and the build plan disagree, **the urgent file wins.**
-
-## Who does what
-
-| | Who | Platform | Owns |
-|---|---|---|---|
-| M1 | Suyash | WSL + Jetson | Protocol integration, mission loop, event bus, attack surface, OP-TEE |
-| M2 | Abhijan | Mac | Console (Streamlit), Cosys-AirSim RPC client, YOLO verification, dashboard presentation |
-| M3 | Pratik | Windows | Dark urban Unreal/Cosys-AirSim scene, rooftop/wall patches, primary live demo |
-| M4 | Samik | Windows / Unreal-capable PC | Light terrain Unreal/Cosys-AirSim scene, frame export, robustness demo |
 
 ## Repo layout
 
