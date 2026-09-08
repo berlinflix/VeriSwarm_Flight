@@ -1,7 +1,7 @@
-# VeriSwarm — SIH 2026
+# VeriSwarm 
 
 Hardware-attested distributed inference for adversarially-robust UAV autonomy, built into a
-live, judge-attackable demo for Smart India Hackathon 2026.
+live, judge-attackable demo.
 
 ## 📌 Read in this order
 
